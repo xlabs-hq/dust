@@ -17,7 +17,15 @@ defmodule DustProtocol.OpTest do
 
   describe "new/1" do
     test "builds a set op" do
-      op = Op.new(op: :set, path: "posts.hello", value: %{"title" => "Hello"}, device_id: "dev_1", client_op_id: "op_1")
+      op =
+        Op.new(
+          op: :set,
+          path: "posts.hello",
+          value: %{"title" => "Hello"},
+          device_id: "dev_1",
+          client_op_id: "op_1"
+        )
+
       assert op.op == :set
       assert op.path == "posts.hello"
       assert op.value == %{"title" => "Hello"}
