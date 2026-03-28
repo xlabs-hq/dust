@@ -1,0 +1,19 @@
+# Elixir
+_build/
+deps/
+*.beam
+*.ez
+.elixir_ls/
+
+# Node
+node_modules/
+.vite/
+
+# OS
+.DS_Store
+*.swp
+
+# Env
+.env
+.env.*
+!.env.example
