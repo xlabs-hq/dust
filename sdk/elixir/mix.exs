@@ -18,7 +18,7 @@ defmodule Dust.MixProject do
   defp deps do
     [
       {:dust_protocol, path: "../../protocol/elixir"},
-      {:mint_web_socket, "~> 1.0"},
+      {:slipstream, "~> 1.2"},
       {:msgpax, "~> 2.4"},
       {:jason, "~> 1.4"}
     ]

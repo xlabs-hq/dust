@@ -49,12 +49,34 @@ defmodule DustWeb.StoreChannelTest do
       assert_push "event", %{store_seq: 2, path: "b"}
     end
 
+    test "joins with store full name (org/name)", %{socket: socket, store: store} do
+      Sync.write(store.id, %{op: :set, path: "x", value: "1", device_id: "d", client_op_id: "o1"})
+
+      {:ok, reply, _socket} =
+        subscribe_and_join(socket, DustWeb.StoreChannel, "store:test/blog", %{
+          "last_store_seq" => 0
+        })
+
+      assert reply.store_seq == 1
+      assert_push "event", %{store_seq: 1, path: "x"}
+    end
+
     test "rejects join for wrong store_id", %{socket: socket} do
       assert {:error, %{reason: "unauthorized"}} =
                subscribe_and_join(
                  socket,
                  DustWeb.StoreChannel,
                  "store:00000000-0000-0000-0000-000000000000",
+                 %{"last_store_seq" => 0}
+               )
+    end
+
+    test "rejects join for nonexistent store name", %{socket: socket} do
+      assert {:error, %{reason: "unauthorized"}} =
+               subscribe_and_join(
+                 socket,
+                 DustWeb.StoreChannel,
+                 "store:nonexistent/store",
                  %{"last_store_seq" => 0}
                )
     end

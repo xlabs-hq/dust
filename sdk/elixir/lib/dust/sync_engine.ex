@@ -42,6 +42,10 @@ defmodule Dust.SyncEngine do
     GenServer.cast(via(store), {:server_event, event})
   end
 
+  def set_status(store, new_status) do
+    GenServer.cast(via(store), {:set_status, new_status})
+  end
+
   # Server
 
   @impl true
@@ -171,6 +175,11 @@ defmodule Dust.SyncEngine do
   end
 
   @impl true
+  def handle_cast({:set_status, new_status}, state) do
+    {:noreply, %{state | status: new_status}}
+  end
+
+  @impl true
   def handle_cast({:server_event, event}, state) do
     client_op_id = event["client_op_id"]
     path = event["path"]
@@ -214,9 +223,9 @@ defmodule Dust.SyncEngine do
   end
 
   defp send_to_connection(store, op_attrs) do
-    case Registry.lookup(Dust.ConnectionRegistry, store) do
-      [{pid, _}] -> send(pid, {:send_write, op_attrs})
-      [] -> :ok
+    case GenServer.whereis(Dust.Connection) do
+      nil -> :ok
+      pid -> send(pid, {:send_write, store, op_attrs})
     end
   end
 

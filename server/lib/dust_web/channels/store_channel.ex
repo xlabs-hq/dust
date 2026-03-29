@@ -6,18 +6,20 @@ defmodule DustWeb.StoreChannel do
   @valid_ops %{"set" => :set, "delete" => :delete, "merge" => :merge}
 
   @impl true
-  def join("store:" <> store_id, %{"last_store_seq" => last_seq}, socket) do
+  def join("store:" <> store_ref, %{"last_store_seq" => last_seq}, socket) do
     store_token = socket.assigns.store_token
 
-    if store_token.store_id == store_id and Stores.StoreToken.can_read?(store_token) do
+    # Resolve store by full name (contains "/") or by UUID
+    with {:ok, store} <- resolve_store(store_ref),
+         true <- store_token.store_id == store.id and Stores.StoreToken.can_read?(store_token) do
       send(self(), {:catch_up, last_seq})
 
-      current_seq = Sync.current_seq(store_id)
-      socket = assign(socket, :store_id, store_id)
+      current_seq = Sync.current_seq(store.id)
+      socket = assign(socket, :store_id, store.id)
 
       {:ok, %{store_seq: current_seq}, socket}
     else
-      {:error, %{reason: "unauthorized"}}
+      _ -> {:error, %{reason: "unauthorized"}}
     end
   end
 
@@ -77,6 +79,23 @@ defmodule DustWeb.StoreChannel do
     end)
 
     {:noreply, socket}
+  end
+
+  # If the store_ref contains "/", it's a full name like "org/store".
+  # Otherwise, treat it as a UUID.
+  defp resolve_store(store_ref) do
+    if String.contains?(store_ref, "/") do
+      case Stores.get_store_by_full_name(store_ref) do
+        nil -> {:error, :not_found}
+        store -> {:ok, store}
+      end
+    else
+      try do
+        {:ok, Stores.get_store!(store_ref)}
+      rescue
+        Ecto.NoResultsError -> {:error, :not_found}
+      end
+    end
   end
 
   defp unwrap_value(%{"_scalar" => scalar}), do: scalar
