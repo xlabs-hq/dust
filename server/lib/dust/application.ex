@@ -15,7 +15,8 @@ defmodule Dust.Application do
       # Start a worker by calling: Dust.Worker.start_link(arg)
       # {Dust.Worker, arg},
       # Start to serve requests, typically the last entry
-      DustWeb.Endpoint
+      DustWeb.Endpoint,
+      AdminWeb.Endpoint
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
@@ -29,6 +30,7 @@ defmodule Dust.Application do
   @impl true
   def config_change(changed, _new, removed) do
     DustWeb.Endpoint.config_change(changed, removed)
+    AdminWeb.Endpoint.config_change(changed, removed)
     :ok
   end
 end

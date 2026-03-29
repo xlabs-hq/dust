@@ -24,6 +24,13 @@ config :dust, DustWeb.Endpoint,
   pubsub_server: Dust.PubSub,
   live_view: [signing_salt: "LwuhSsXS"]
 
+# Configure the admin endpoint
+config :dust, AdminWeb.Endpoint,
+  url: [host: "localhost"],
+  adapter: Bandit.PhoenixAdapter,
+  pubsub_server: Dust.PubSub,
+  live_view: [signing_salt: "dust_admin_lv_salt"]
+
 # Configure the mailer
 #
 # By default it uses the "Local" adapter which stores the emails

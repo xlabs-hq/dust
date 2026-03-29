@@ -27,6 +27,14 @@ config :dust, DustWeb.Endpoint,
     tailwind: {Tailwind, :install_and_run, [:dust, ~w(--watch)]}
   ]
 
+# Configure the admin endpoint for development
+config :dust, AdminWeb.Endpoint,
+  http: [ip: {0, 0, 0, 0}, port: String.to_integer(System.get_env("ADMIN_PORT") || "7001")],
+  debug_errors: true,
+  code_reloader: true,
+  check_origin: false,
+  secret_key_base: "dev-secret-at-least-64-bytes-long-for-dust-admin-development-only"
+
 # ## SSL Support
 #
 # In order to use HTTPS in development, a self-signed
