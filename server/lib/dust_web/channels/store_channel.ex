@@ -54,6 +54,13 @@ defmodule DustWeb.StoreChannel do
   end
 
   @impl true
+  def handle_info({:store_event, _event}, socket) do
+    # PubSub events from the Writer are already handled by broadcast! in handle_in.
+    # Ignore them here to avoid duplicates.
+    {:noreply, socket}
+  end
+
+  @impl true
   def handle_info({:catch_up, last_seq}, socket) do
     ops = Sync.get_ops_since(socket.assigns.store_id, last_seq)
 
