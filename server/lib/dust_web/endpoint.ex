@@ -11,6 +11,12 @@ defmodule DustWeb.Endpoint do
     same_site: "Lax"
   ]
 
+  socket "/ws/sync", DustWeb.StoreSocket,
+    websocket: [
+      connect_info: [:peer_data],
+      serializer: [{Phoenix.Socket.V2.JSONSerializer, "~> 2.0.0"}]
+    ]
+
   socket "/live", Phoenix.LiveView.Socket,
     websocket: [connect_info: [session: @session_options]],
     longpoll: [connect_info: [session: @session_options]]
