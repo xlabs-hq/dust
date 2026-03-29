@@ -1,0 +1,207 @@
+asyncapi: 3.0.0
+info:
+  title: Dust Sync Protocol
+  version: 0.1.0
+  description: |
+    Wire protocol for Dust — a reactive global map.
+    Clients connect via WebSocket and sync store state
+    using MessagePack or JSON serialization.
+
+servers:
+  production:
+    host: api.dust.dev
+    protocol: wss
+    description: Production Dust server
+  development:
+    host: localhost:7000
+    protocol: ws
+    description: Local development server
+
+defaultContentType: application/x-msgpack
+
+channels:
+  storeSync:
+    address: /ws/sync
+    description: |
+      WebSocket endpoint for store synchronization.
+      Supports subprotocols: dust.msgpack (production), dust.json (development).
+    messages:
+      hello:
+        $ref: '#/components/messages/Hello'
+      helloResponse:
+        $ref: '#/components/messages/HelloResponse'
+      join:
+        $ref: '#/components/messages/Join'
+      write:
+        $ref: '#/components/messages/Write'
+      event:
+        $ref: '#/components/messages/Event'
+      error:
+        $ref: '#/components/messages/Error'
+
+operations:
+  sendHello:
+    action: send
+    channel:
+      $ref: '#/channels/storeSync'
+    messages:
+      - $ref: '#/channels/storeSync/messages/hello'
+    description: Client sends hello to authenticate and negotiate capver.
+
+  receiveHelloResponse:
+    action: receive
+    channel:
+      $ref: '#/channels/storeSync'
+    messages:
+      - $ref: '#/channels/storeSync/messages/helloResponse'
+
+  sendJoin:
+    action: send
+    channel:
+      $ref: '#/channels/storeSync'
+    messages:
+      - $ref: '#/channels/storeSync/messages/join'
+    description: Client joins a store topic, providing last known store_seq for catch-up.
+
+  sendWrite:
+    action: send
+    channel:
+      $ref: '#/channels/storeSync'
+    messages:
+      - $ref: '#/channels/storeSync/messages/write'
+    description: Client submits a write operation. Server assigns store_seq and echoes to all.
+
+  receiveEvent:
+    action: receive
+    channel:
+      $ref: '#/channels/storeSync'
+    messages:
+      - $ref: '#/channels/storeSync/messages/event'
+    description: Server broadcasts canonical events to all connected clients.
+
+  receiveError:
+    action: receive
+    channel:
+      $ref: '#/channels/storeSync'
+    messages:
+      - $ref: '#/channels/storeSync/messages/error'
+
+components:
+  messages:
+    Hello:
+      name: hello
+      contentType: application/x-msgpack
+      payload:
+        type: object
+        required: [type, capver, device_id, token]
+        properties:
+          type:
+            type: string
+            const: hello
+          capver:
+            type: integer
+            description: Client capability version
+          device_id:
+            type: string
+            description: Unique device identifier
+          token:
+            type: string
+            description: Authentication token (dust_tok_...)
+
+    HelloResponse:
+      name: hello_response
+      payload:
+        type: object
+        required: [type, capver_min, capver_max, your_capver]
+        properties:
+          type:
+            type: string
+            const: hello_response
+          capver_min:
+            type: integer
+          capver_max:
+            type: integer
+          your_capver:
+            type: integer
+          stores:
+            type: array
+            items:
+              type: string
+            description: Stores this token has access to
+
+    Join:
+      name: join
+      payload:
+        type: object
+        required: [type, store, last_store_seq]
+        properties:
+          type:
+            type: string
+            const: join
+          store:
+            type: string
+            description: Full store name (org/name) or store ID
+          last_store_seq:
+            type: integer
+            description: Last store_seq the client has seen. Server sends events after this.
+
+    Write:
+      name: write
+      payload:
+        type: object
+        required: [type, store, op, path, client_op_id]
+        properties:
+          type:
+            type: string
+            const: write
+          store:
+            type: string
+          op:
+            type: string
+            enum: [set, delete, merge]
+          path:
+            type: string
+            description: Dot-separated path (e.g. posts.hello.title)
+          value: {}
+          client_op_id:
+            type: string
+            description: Client-generated ID for optimistic reconciliation
+
+    Event:
+      name: event
+      payload:
+        type: object
+        required: [type, store, store_seq, op, path, device_id, client_op_id]
+        properties:
+          type:
+            type: string
+            const: event
+          store:
+            type: string
+          store_seq:
+            type: integer
+            description: Monotonically increasing server-assigned sequence number
+          op:
+            type: string
+            enum: [set, delete, merge]
+          path:
+            type: string
+          value: {}
+          device_id:
+            type: string
+          client_op_id:
+            type: string
+
+    Error:
+      name: error
+      payload:
+        type: object
+        required: [type, code, message]
+        properties:
+          type:
+            type: string
+            const: error
+          code:
+            type: string
+          message:
+            type: string
