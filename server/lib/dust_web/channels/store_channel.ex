@@ -3,6 +3,8 @@ defmodule DustWeb.StoreChannel do
 
   alias Dust.{Stores, Sync}
 
+  @valid_ops %{"set" => :set, "delete" => :delete, "merge" => :merge}
+
   @impl true
   def join("store:" <> store_id, %{"last_store_seq" => last_seq}, socket) do
     store_token = socket.assigns.store_token
@@ -24,40 +26,39 @@ defmodule DustWeb.StoreChannel do
     store_token = socket.assigns.store_token
 
     if Stores.StoreToken.can_write?(store_token) do
-      op_attrs = %{
-        op: String.to_existing_atom(params["op"]),
-        path: params["path"],
-        value: params["value"],
-        device_id: socket.assigns.device_id,
-        client_op_id: params["client_op_id"]
-      }
+      case Map.get(@valid_ops, params["op"]) do
+        nil ->
+          {:reply, {:error, %{reason: "invalid op"}}, socket}
 
-      case Sync.write(socket.assigns.store_id, op_attrs) do
-        {:ok, op} ->
-          broadcast!(socket, "event", %{
-            store_seq: op.store_seq,
-            op: op.op,
-            path: op.path,
+        op ->
+          op_attrs = %{
+            op: op,
+            path: params["path"],
             value: params["value"],
             device_id: socket.assigns.device_id,
             client_op_id: params["client_op_id"]
-          })
+          }
 
-          {:reply, {:ok, %{store_seq: op.store_seq}}, socket}
+          case Sync.write(socket.assigns.store_id, op_attrs) do
+            {:ok, db_op} ->
+              broadcast!(socket, "event", %{
+                store_seq: db_op.store_seq,
+                op: db_op.op,
+                path: db_op.path,
+                value: unwrap_value(db_op.value),
+                device_id: db_op.device_id,
+                client_op_id: db_op.client_op_id
+              })
 
-        {:error, reason} ->
-          {:reply, {:error, %{reason: inspect(reason)}}, socket}
+              {:reply, {:ok, %{store_seq: db_op.store_seq}}, socket}
+
+            {:error, reason} ->
+              {:reply, {:error, %{reason: inspect(reason)}}, socket}
+          end
       end
     else
       {:reply, {:error, %{reason: "unauthorized"}}, socket}
     end
-  end
-
-  @impl true
-  def handle_info({:store_event, _event}, socket) do
-    # PubSub events from the Writer are already handled by broadcast! in handle_in.
-    # Ignore them here to avoid duplicates.
-    {:noreply, socket}
   end
 
   @impl true
@@ -69,7 +70,7 @@ defmodule DustWeb.StoreChannel do
         store_seq: op.store_seq,
         op: op.op,
         path: op.path,
-        value: op.value,
+        value: unwrap_value(op.value),
         device_id: op.device_id,
         client_op_id: op.client_op_id
       })
@@ -77,4 +78,7 @@ defmodule DustWeb.StoreChannel do
 
     {:noreply, socket}
   end
+
+  defp unwrap_value(%{"_scalar" => scalar}), do: scalar
+  defp unwrap_value(value), do: value
 end

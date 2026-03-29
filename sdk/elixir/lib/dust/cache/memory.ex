@@ -8,26 +8,32 @@ defmodule Dust.Cache.Memory do
 
   # Dust.Cache implementation — pid is prepended to all callback args.
 
+  @impl Dust.Cache
   def read(pid, store, path) do
     GenServer.call(pid, {:read, store, path})
   end
 
+  @impl Dust.Cache
   def read_all(pid, store, pattern) do
     GenServer.call(pid, {:read_all, store, pattern})
   end
 
+  @impl Dust.Cache
   def write(pid, store, path, value, type, seq) do
     GenServer.call(pid, {:write, store, path, value, type, seq})
   end
 
+  @impl Dust.Cache
   def write_batch(pid, store, entries) do
     GenServer.call(pid, {:write_batch, store, entries})
   end
 
+  @impl Dust.Cache
   def delete(pid, store, path) do
     GenServer.call(pid, {:delete, store, path})
   end
 
+  @impl Dust.Cache
   def last_seq(pid, store) do
     GenServer.call(pid, {:last_seq, store})
   end

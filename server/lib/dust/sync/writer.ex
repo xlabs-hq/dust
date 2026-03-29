@@ -84,21 +84,6 @@ defmodule Dust.Sync.Writer do
       # Apply to materialized state
       apply_to_entries(store_id, next_seq, attrs)
 
-      # Broadcast via PubSub
-      Phoenix.PubSub.broadcast(
-        Dust.PubSub,
-        "store:#{store_id}",
-        {:store_event, %{
-          store_id: store_id,
-          store_seq: next_seq,
-          op: attrs.op,
-          path: attrs.path,
-          value: attrs[:value],
-          device_id: attrs.device_id,
-          client_op_id: attrs.client_op_id
-        }}
-      )
-
       op
     end)
   end
