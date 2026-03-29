@@ -12,8 +12,8 @@ defmodule Dust.Application do
       Dust.Repo,
       {DNSCluster, query: Application.get_env(:dust, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Dust.PubSub},
-      # Start a worker by calling: Dust.Worker.start_link(arg)
-      # {Dust.Worker, arg},
+      {Registry, keys: :unique, name: Dust.Sync.WriterRegistry},
+      {DynamicSupervisor, name: Dust.Sync.WriterSupervisor, strategy: :one_for_one},
       # Start to serve requests, typically the last entry
       DustWeb.Endpoint,
       AdminWeb.Endpoint
