@@ -1,83 +1,56 @@
-// If you want to use Phoenix channels, run `mix help phx.gen.channel`
-// to get started and then uncomment the line below.
-// import "./user_socket.js"
+/**
+ * Main app entry point - React + Inertia.js
+ *
+ * This is the entry point for the DustWeb endpoint (port 7000).
+ * It uses React with Inertia.js for client-side rendering.
+ */
 
-// You can include dependencies in two ways.
-//
-// The simplest option is to put them in assets/vendor and
-// import them using relative paths:
-//
-//     import "../vendor/some-package.js"
-//
-// Alternatively, you can `npm install some-package --prefix assets` and import
-// them using a path starting with the package name:
-//
-//     import "some-package"
-//
-// If you have dependencies that try to import CSS, esbuild will generate a separate `app.css` file.
-// To load it, simply add a second `<link>` to your `root.html.heex` file.
+import "vite/modulepreload-polyfill";
+import "phoenix_html";
+import { createInertiaApp } from "@inertiajs/react";
+import { createRoot } from "react-dom/client";
+import React from "react";
+import axios from "axios";
 
-// Include phoenix_html to handle method=PUT/DELETE in forms and buttons.
-import "phoenix_html"
-// Establish Phoenix Socket and LiveView configuration.
-import {Socket} from "phoenix"
-import {LiveSocket} from "phoenix_live_view"
-import {hooks as colocatedHooks} from "phoenix-colocated/dust"
-import topbar from "../vendor/topbar"
-
-const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
-const liveSocket = new LiveSocket("/live", Socket, {
-  longPollFallbackMs: 2500,
-  params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks},
-})
-
-// Show progress bar on live navigation and form submits
-topbar.config({barColors: {0: "#29d"}, shadowColor: "rgba(0, 0, 0, .3)"})
-window.addEventListener("phx:page-loading-start", _info => topbar.show(300))
-window.addEventListener("phx:page-loading-stop", _info => topbar.hide())
-
-// connect if there are any LiveViews on the page
-liveSocket.connect()
-
-// expose liveSocket on window for web console debug logs and latency simulation:
-// >> liveSocket.enableDebug()
-// >> liveSocket.enableLatencySim(1000)  // enabled for duration of browser session
-// >> liveSocket.disableLatencySim()
-window.liveSocket = liveSocket
-
-// The lines below enable quality of life phoenix_live_reload
-// development features:
-//
-//     1. stream server logs to the browser console
-//     2. click on elements to jump to their definitions in your code editor
-//
-if (process.env.NODE_ENV === "development") {
-  window.addEventListener("phx:live_reload:attached", ({detail: reloader}) => {
-    // Enable server log streaming to client.
-    // Disable with reloader.disableServerLogs()
-    reloader.enableServerLogs()
-
-    // Open configured PLUG_EDITOR at file:line of the clicked element's HEEx component
-    //
-    //   * click with "c" key pressed to open at caller location
-    //   * click with "d" key pressed to open at function component definition location
-    let keyDown
-    window.addEventListener("keydown", e => keyDown = e.key)
-    window.addEventListener("keyup", _e => keyDown = null)
-    window.addEventListener("click", e => {
-      if(keyDown === "c"){
-        e.preventDefault()
-        e.stopImmediatePropagation()
-        reloader.openEditorAtCaller(e.target)
-      } else if(keyDown === "d"){
-        e.preventDefault()
-        e.stopImmediatePropagation()
-        reloader.openEditorAtDef(e.target)
-      }
-    }, true)
-
-    window.liveReloader = reloader
-  })
+// Configure axios to include CSRF token from meta tag
+const csrfToken = document
+  .querySelector('meta[name="csrf-token"]')
+  ?.getAttribute("content");
+if (csrfToken) {
+  axios.defaults.headers.common["X-CSRF-Token"] = csrfToken;
 }
 
+// Create the Inertia app
+createInertiaApp({
+  title: (title) => (title ? `${title} — Dust` : "Dust"),
+  resolve: async (name) => {
+    // Import all page components
+    const pages = import.meta.glob("./pages/**/*.tsx", { eager: true });
+
+    const page = pages[`./pages/${name}.tsx`];
+    if (!page) {
+      throw new Error(
+        `Page not found: ${name}. Looking for ./pages/${name}.tsx`
+      );
+    }
+
+    const component = page.default || page;
+
+    // Support persistent layouts via Page.layout property
+    // Pages without an explicit layout get the Shell layout
+    if (!component.layout) {
+      const { Shell } = await import("./layouts/Shell");
+      component.layout = (page) => React.createElement(Shell, null, page);
+    }
+
+    return component;
+  },
+  setup({ el, App, props }) {
+    if (!el) {
+      console.error("Inertia mount element not found");
+      return;
+    }
+    createRoot(el).render(React.createElement(App, props));
+  },
+  progress: { color: "#4B5563" },
+});

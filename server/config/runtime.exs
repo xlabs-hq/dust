@@ -20,8 +20,10 @@ if System.get_env("PHX_SERVER") do
   config :dust, DustWeb.Endpoint, server: true
 end
 
-config :dust, DustWeb.Endpoint, http: [port: String.to_integer(System.get_env("PORT", "7000"))]
-config :dust, AdminWeb.Endpoint, http: [port: String.to_integer(System.get_env("ADMIN_PORT", "7001"))]
+config :dust, DustWeb.Endpoint, http: [port: String.to_integer(System.get_env("PORT", "7755"))]
+
+config :dust, AdminWeb.Endpoint,
+  http: [port: String.to_integer(System.get_env("ADMIN_PORT", "7766"))]
 
 if config_env() == :prod do
   database_url =

@@ -40,26 +40,20 @@ config :dust, AdminWeb.Endpoint,
 # at the `config/runtime.exs`.
 config :dust, Dust.Mailer, adapter: Swoosh.Adapters.Local
 
-# Configure esbuild (the version is required)
-config :esbuild,
-  version: "0.25.4",
-  dust: [
-    args:
-      ~w(js/app.js --bundle --target=es2022 --outdir=../priv/static/assets/js --external:/fonts/* --external:/images/* --alias:@=.),
+# Configure PhoenixVite for npm-based Vite
+config :phoenix_vite, PhoenixVite.Npm,
+  vite: [
+    args: ~w(x vite),
     cd: Path.expand("../assets", __DIR__),
-    env: %{"NODE_PATH" => [Path.expand("../deps", __DIR__), Mix.Project.build_path()]}
+    env: %{}
   ]
 
-# Configure tailwind (the version is required)
-config :tailwind,
-  version: "4.1.12",
-  dust: [
-    args: ~w(
-      --input=assets/css/app.css
-      --output=priv/static/assets/css/app.css
-    ),
-    cd: Path.expand("..", __DIR__)
-  ]
+# Configure Inertia
+config :inertia,
+  endpoint: DustWeb.Endpoint,
+  static_paths: ["/.vite/manifest.json"],
+  ssr: false,
+  raise_on_ssr_failure: true
 
 # Configure Elixir's Logger
 config :logger, :default_formatter,

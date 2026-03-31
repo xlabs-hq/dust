@@ -61,5 +61,7 @@ defmodule DustWeb.Endpoint do
   plug Plug.MethodOverride
   plug Plug.Head
   plug Plug.Session, @session_options
+  plug :fetch_session
+  plug Inertia.Plug
   plug DustWeb.Router
 end

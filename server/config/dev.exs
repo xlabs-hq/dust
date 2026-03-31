@@ -17,19 +17,19 @@ config :dust, Dust.Repo,
 # watchers to your application. For example, we can use it
 # to bundle .js and .css sources.
 config :dust, DustWeb.Endpoint,
-  http: [ip: {0, 0, 0, 0}, port: String.to_integer(System.get_env("PORT") || "7000")],
+  http: [ip: {0, 0, 0, 0}, port: String.to_integer(System.get_env("PORT") || "7755")],
   check_origin: false,
   code_reloader: true,
   debug_errors: true,
   secret_key_base: "dev-secret-at-least-64-bytes-long-for-dust-application-development-only",
   watchers: [
-    esbuild: {Esbuild, :install_and_run, [:dust, ~w(--sourcemap=inline --watch)]},
-    tailwind: {Tailwind, :install_and_run, [:dust, ~w(--watch)]}
-  ]
+    vite: {PhoenixVite.Npm, :run, [:vite, ~w(dev)]}
+  ],
+  static_url: [host: "localhost", port: 5288]
 
 # Configure the admin endpoint for development
 config :dust, AdminWeb.Endpoint,
-  http: [ip: {0, 0, 0, 0}, port: String.to_integer(System.get_env("ADMIN_PORT") || "7001")],
+  http: [ip: {0, 0, 0, 0}, port: String.to_integer(System.get_env("ADMIN_PORT") || "7766")],
   debug_errors: true,
   code_reloader: true,
   check_origin: false,
@@ -93,6 +93,9 @@ config :phoenix_live_view,
   debug_attributes: true,
   # Enable helpful, but potentially expensive runtime checks
   enable_expensive_runtime_checks: true
+
+# In dev, Vite serves assets directly - no manifest file exists
+config :inertia, static_paths: []
 
 # Disable swoosh api client as it is only required for production adapters.
 config :swoosh, :api_client, false

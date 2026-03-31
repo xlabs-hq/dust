@@ -2,6 +2,6 @@ defmodule DustWeb.PageController do
   use DustWeb, :controller
 
   def home(conn, _params) do
-    render(conn, :home)
+    render_inertia(conn, "Home")
   end
 end

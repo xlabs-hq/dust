@@ -4,33 +4,31 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="csrf-token" content={get_csrf_token()} />
-    <.live_title default="Dust" suffix=" · Phoenix Framework">
-      {assigns[:page_title]}
-    </.live_title>
-    <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
-    <script defer phx-track-static type="text/javascript" src={~p"/assets/js/app.js"}>
-    </script>
-    <script>
-      (() => {
-        const setTheme = (theme) => {
-          if (theme === "system") {
-            localStorage.removeItem("phx:theme");
-            document.documentElement.removeAttribute("data-theme");
-          } else {
-            localStorage.setItem("phx:theme", theme);
-            document.documentElement.setAttribute("data-theme", theme);
-          }
-        };
-        if (!document.documentElement.hasAttribute("data-theme")) {
-          setTheme(localStorage.getItem("phx:theme") || "system");
-        }
-        window.addEventListener("storage", (e) => e.key === "phx:theme" && setTheme(e.newValue || "system"));
-        
-        window.addEventListener("phx:set-theme", (e) => setTheme(e.target.dataset.phxTheme));
-      })();
-    </script>
+    <.inertia_title>{assigns[:page_title]}</.inertia_title>
+    <.inertia_head content={@inertia_head} />
+
+    <%= if PhoenixVite.Components.has_vite_watcher?(DustWeb.Endpoint) do %>
+      <script type="module">
+        import RefreshRuntime from "http://localhost:5288/@react-refresh";
+        RefreshRuntime.injectIntoGlobalHook(window);
+        window.$RefreshReg$ = () => {};
+        window.$RefreshSig$ = () => (type) => type;
+        window.__vite_plugin_react_preamble_installed__ = true;
+      </script>
+    <% end %>
+
+    <PhoenixVite.Components.assets
+      names={["js/app.js", "css/app.css"]}
+      manifest={{:dust, "priv/static/.vite/manifest.json"}}
+      dev_server={PhoenixVite.Components.has_vite_watcher?(DustWeb.Endpoint)}
+      to_url={
+        if PhoenixVite.Components.has_vite_watcher?(DustWeb.Endpoint),
+          do: fn p -> "http://localhost:5288#{p}" end,
+          else: &DustWeb.Endpoint.static_path/1
+      }
+    />
   </head>
-  <body>
+  <body class="bg-background text-foreground antialiased">
     {@inner_content}
   </body>
 </html>

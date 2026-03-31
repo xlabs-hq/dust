@@ -9,7 +9,7 @@ defmodule Dust.Supervisor do
   def init(opts) do
     stores = Keyword.fetch!(opts, :stores)
     cache = Keyword.fetch!(opts, :cache)
-    url = Keyword.get(opts, :url, "ws://localhost:7000/ws/sync")
+    url = Keyword.get(opts, :url, "ws://localhost:7755/ws/sync")
     token = Keyword.get(opts, :token, System.get_env("DUST_API_KEY"))
     device_id = Keyword.get(opts, :device_id)
 
