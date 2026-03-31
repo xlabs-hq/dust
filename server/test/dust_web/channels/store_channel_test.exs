@@ -100,5 +100,52 @@ defmodule DustWeb.StoreChannelTest do
       assert_reply ref, :ok, %{store_seq: 1}
       assert_broadcast "event", %{store_seq: 1, op: :set, path: "posts.hello"}
     end
+
+    test "rejects invalid path", %{socket: socket, store: store} do
+      {:ok, _, socket} =
+        subscribe_and_join(socket, DustWeb.StoreChannel, "store:#{store.id}", %{
+          "last_store_seq" => 0
+        })
+
+      ref = push(socket, "write", %{
+        "op" => "set",
+        "path" => "posts..hello",
+        "value" => "v",
+        "client_op_id" => "o1"
+      })
+
+      assert_reply ref, :error, %{reason: "empty_segment"}
+    end
+
+    test "rejects missing path", %{socket: socket, store: store} do
+      {:ok, _, socket} =
+        subscribe_and_join(socket, DustWeb.StoreChannel, "store:#{store.id}", %{
+          "last_store_seq" => 0
+        })
+
+      ref = push(socket, "write", %{
+        "op" => "set",
+        "value" => "v",
+        "client_op_id" => "o1"
+      })
+
+      assert_reply ref, :error, %{reason: "missing_path"}
+    end
+
+    test "rejects merge with non-map value", %{socket: socket, store: store} do
+      {:ok, _, socket} =
+        subscribe_and_join(socket, DustWeb.StoreChannel, "store:#{store.id}", %{
+          "last_store_seq" => 0
+        })
+
+      ref = push(socket, "write", %{
+        "op" => "merge",
+        "path" => "settings",
+        "value" => "not_a_map",
+        "client_op_id" => "o1"
+      })
+
+      assert_reply ref, :error, %{reason: "merge_requires_map_value"}
+    end
   end
 end

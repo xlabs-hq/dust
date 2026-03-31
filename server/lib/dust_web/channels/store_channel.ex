@@ -33,15 +33,17 @@ defmodule DustWeb.StoreChannel do
           {:reply, {:error, %{reason: "invalid op"}}, socket}
 
         op ->
-          op_attrs = %{
-            op: op,
-            path: params["path"],
-            value: params["value"],
-            device_id: socket.assigns.device_id,
-            client_op_id: params["client_op_id"]
-          }
+          with {:ok, _} <- validate_path(params["path"]),
+               :ok <- validate_merge_value(op, params["value"]) do
+            op_attrs = %{
+              op: op,
+              path: params["path"],
+              value: params["value"],
+              device_id: socket.assigns.device_id,
+              client_op_id: params["client_op_id"]
+            }
 
-          case Sync.write(socket.assigns.store_id, op_attrs) do
+            case Sync.write(socket.assigns.store_id, op_attrs) do
             {:ok, db_op} ->
               broadcast!(socket, "event", %{
                 store_seq: db_op.store_seq,
@@ -56,6 +58,10 @@ defmodule DustWeb.StoreChannel do
 
             {:error, reason} ->
               {:reply, {:error, %{reason: inspect(reason)}}, socket}
+            end
+          else
+            {:error, reason} ->
+              {:reply, {:error, %{reason: to_string(reason)}}, socket}
           end
       end
     else
@@ -97,6 +103,14 @@ defmodule DustWeb.StoreChannel do
       end
     end
   end
+
+  defp validate_path(nil), do: {:error, :missing_path}
+  defp validate_path(path) when is_binary(path), do: DustProtocol.Path.parse(path)
+  defp validate_path(_), do: {:error, :invalid_path}
+
+  defp validate_merge_value(:merge, value) when is_map(value), do: :ok
+  defp validate_merge_value(:merge, _), do: {:error, :merge_requires_map_value}
+  defp validate_merge_value(_, _), do: :ok
 
   defp unwrap_value(%{"_scalar" => scalar}), do: scalar
   defp unwrap_value(value), do: value
