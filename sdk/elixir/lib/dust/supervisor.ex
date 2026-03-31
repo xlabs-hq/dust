@@ -54,10 +54,20 @@ defmodule Dust.Supervisor do
           !Process.whereis(name),
           do: spec
 
+    subscribers = Keyword.get(opts, :subscribers, [])
+
+    subscriber_children =
+      if subscribers == [] do
+        []
+      else
+        [{Dust.SubscriberRegistrar, subscribers: subscribers}]
+      end
+
     children =
       registry_children ++
         engine_children ++
-        connection_children
+        connection_children ++
+        subscriber_children
 
     Supervisor.init(children, strategy: :one_for_one)
   end
