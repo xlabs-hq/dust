@@ -26,6 +26,18 @@ defmodule Dust.SyncEngine do
     GenServer.call(via(store), {:merge, path, map})
   end
 
+  def increment(store, path, delta \\ 1) do
+    GenServer.call(via(store), {:increment, path, delta})
+  end
+
+  def add(store, path, member) do
+    GenServer.call(via(store), {:add, path, member})
+  end
+
+  def remove(store, path, member) do
+    GenServer.call(via(store), {:remove, path, member})
+  end
+
   def enum(store, pattern) do
     GenServer.call(via(store), {:enum, pattern})
   end
@@ -159,6 +171,90 @@ defmodule Dust.SyncEngine do
   end
 
   @impl true
+  def handle_call({:increment, path, delta}, _from, state) do
+    client_op_id = generate_op_id()
+
+    # Optimistic: read current value and add delta
+    current =
+      case state.cache.read(state.cache_target, state.store, path) do
+        {:ok, val} when is_number(val) -> val
+        _ -> 0
+      end
+
+    new_value = current + delta
+    :ok = state.cache.write(state.cache_target, state.store, path, new_value, "counter", 0)
+
+    dispatch_callbacks(state, path, %{
+      store: state.store, path: path, op: :increment, value: delta,
+      committed: false, source: :local, client_op_id: client_op_id
+    })
+
+    op_msg = %{op: :increment, path: path, value: delta, client_op_id: client_op_id}
+    pending = Map.put(state.pending_ops, client_op_id, op_msg)
+    state = %{state | pending_ops: pending}
+
+    send_to_connection(state.store, op_msg)
+
+    {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_call({:add, path, member}, _from, state) do
+    client_op_id = generate_op_id()
+
+    # Optimistic: read current set and add member
+    current_set =
+      case state.cache.read(state.cache_target, state.store, path) do
+        {:ok, list} when is_list(list) -> list
+        _ -> []
+      end
+
+    new_set = Enum.uniq([member | current_set])
+    :ok = state.cache.write(state.cache_target, state.store, path, new_set, "set", 0)
+
+    dispatch_callbacks(state, path, %{
+      store: state.store, path: path, op: :add, value: member,
+      committed: false, source: :local, client_op_id: client_op_id
+    })
+
+    op_msg = %{op: :add, path: path, value: member, client_op_id: client_op_id}
+    pending = Map.put(state.pending_ops, client_op_id, op_msg)
+    state = %{state | pending_ops: pending}
+
+    send_to_connection(state.store, op_msg)
+
+    {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_call({:remove, path, member}, _from, state) do
+    client_op_id = generate_op_id()
+
+    # Optimistic: read current set and remove member
+    current_set =
+      case state.cache.read(state.cache_target, state.store, path) do
+        {:ok, list} when is_list(list) -> list
+        _ -> []
+      end
+
+    new_set = List.delete(current_set, member)
+    :ok = state.cache.write(state.cache_target, state.store, path, new_set, "set", 0)
+
+    dispatch_callbacks(state, path, %{
+      store: state.store, path: path, op: :remove, value: member,
+      committed: false, source: :local, client_op_id: client_op_id
+    })
+
+    op_msg = %{op: :remove, path: path, value: member, client_op_id: client_op_id}
+    pending = Map.put(state.pending_ops, client_op_id, op_msg)
+    state = %{state | pending_ops: pending}
+
+    send_to_connection(state.store, op_msg)
+
+    {:reply, :ok, state}
+  end
+
+  @impl true
   def handle_call({:enum, pattern}, _from, state) do
     results = state.cache.read_all(state.cache_target, state.store, pattern)
     {:reply, results, state}
@@ -211,6 +307,13 @@ defmodule Dust.SyncEngine do
           child_path = "#{path}.#{key}"
           state.cache.write(state.cache_target, state.store, child_path, v, detect_type(v), store_seq)
         end)
+      :increment ->
+        # Server sends the materialized value (not the delta) for cache reconciliation
+        state.cache.write(state.cache_target, state.store, path, value, "counter", store_seq)
+      :add ->
+        state.cache.write(state.cache_target, state.store, path, value, "set", store_seq)
+      :remove ->
+        state.cache.write(state.cache_target, state.store, path, value, "set", store_seq)
     end
 
     # Reconcile pending ops

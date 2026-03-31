@@ -3,7 +3,14 @@ defmodule DustWeb.StoreChannel do
 
   alias Dust.{Stores, Sync}
 
-  @valid_ops %{"set" => :set, "delete" => :delete, "merge" => :merge}
+  @valid_ops %{
+    "set" => :set,
+    "delete" => :delete,
+    "merge" => :merge,
+    "increment" => :increment,
+    "add" => :add,
+    "remove" => :remove
+  }
 
   @impl true
   def join("store:" <> store_ref, %{"last_store_seq" => last_seq}, socket) do
@@ -44,20 +51,20 @@ defmodule DustWeb.StoreChannel do
             }
 
             case Sync.write(socket.assigns.store_id, op_attrs) do
-            {:ok, db_op} ->
-              broadcast!(socket, "event", %{
-                store_seq: db_op.store_seq,
-                op: db_op.op,
-                path: db_op.path,
-                value: unwrap_value(db_op.value),
-                device_id: db_op.device_id,
-                client_op_id: db_op.client_op_id
-              })
+              {:ok, db_op} ->
+                broadcast!(socket, "event", %{
+                  store_seq: db_op.store_seq,
+                  op: db_op.op,
+                  path: db_op.path,
+                  value: unwrap_value(db_op.value),
+                  device_id: db_op.device_id,
+                  client_op_id: db_op.client_op_id
+                })
 
-              {:reply, {:ok, %{store_seq: db_op.store_seq}}, socket}
+                {:reply, {:ok, %{store_seq: db_op.store_seq}}, socket}
 
-            {:error, reason} ->
-              {:reply, {:error, %{reason: inspect(reason)}}, socket}
+              {:error, reason} ->
+                {:reply, {:error, %{reason: inspect(reason)}}, socket}
             end
           else
             {:error, reason} ->
@@ -110,6 +117,12 @@ defmodule DustWeb.StoreChannel do
 
   defp validate_merge_value(:merge, value) when is_map(value), do: :ok
   defp validate_merge_value(:merge, _), do: {:error, :merge_requires_map_value}
+  defp validate_merge_value(:increment, value) when is_number(value), do: :ok
+  defp validate_merge_value(:increment, _), do: {:error, :increment_requires_number_value}
+  defp validate_merge_value(:add, nil), do: {:error, :add_requires_value}
+  defp validate_merge_value(:add, _), do: :ok
+  defp validate_merge_value(:remove, nil), do: {:error, :remove_requires_value}
+  defp validate_merge_value(:remove, _), do: :ok
   defp validate_merge_value(_, _), do: :ok
 
   defp unwrap_value(%{"_scalar" => scalar}), do: scalar

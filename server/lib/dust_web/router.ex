@@ -63,6 +63,9 @@ defmodule DustWeb.Router do
         Dust.MCP.Tools.DustMerge,
         Dust.MCP.Tools.DustDelete,
         Dust.MCP.Tools.DustEnum,
+        Dust.MCP.Tools.DustIncrement,
+        Dust.MCP.Tools.DustAdd,
+        Dust.MCP.Tools.DustRemove,
         Dust.MCP.Tools.DustStores,
         Dust.MCP.Tools.DustStatus,
         Dust.MCP.Tools.DustLog

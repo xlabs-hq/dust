@@ -118,11 +118,83 @@ defmodule Dust.Sync.Writer do
       type = detect_type(value)
 
       Repo.insert!(
-        %StoreEntry{store_id: store_id, path: child_path, value: wrap_value(value), type: type, seq: seq},
+        %StoreEntry{
+          store_id: store_id,
+          path: child_path,
+          value: wrap_value(value),
+          type: type,
+          seq: seq
+        },
         on_conflict: [set: [value: wrap_value(value), type: type, seq: seq]],
         conflict_target: [:store_id, :path]
       )
     end)
+  end
+
+  defp apply_to_entries(store_id, seq, %{op: :increment, path: path, value: delta}) do
+    current =
+      case Repo.get_by(StoreEntry, store_id: store_id, path: path) do
+        nil -> 0
+        entry -> unwrap_scalar(entry.value)
+      end
+
+    new_value = current + delta
+
+    Repo.insert!(
+      %StoreEntry{
+        store_id: store_id,
+        path: path,
+        value: wrap_value(new_value),
+        type: "counter",
+        seq: seq
+      },
+      on_conflict: [set: [value: wrap_value(new_value), type: "counter", seq: seq]],
+      conflict_target: [:store_id, :path]
+    )
+  end
+
+  defp apply_to_entries(store_id, seq, %{op: :add, path: path, value: member}) do
+    current_set =
+      case Repo.get_by(StoreEntry, store_id: store_id, path: path) do
+        nil -> []
+        entry -> unwrap_set(entry.value)
+      end
+
+    new_set = Enum.uniq([member | current_set])
+
+    Repo.insert!(
+      %StoreEntry{
+        store_id: store_id,
+        path: path,
+        value: wrap_value(new_set),
+        type: "set",
+        seq: seq
+      },
+      on_conflict: [set: [value: wrap_value(new_set), type: "set", seq: seq]],
+      conflict_target: [:store_id, :path]
+    )
+  end
+
+  defp apply_to_entries(store_id, seq, %{op: :remove, path: path, value: member}) do
+    current_set =
+      case Repo.get_by(StoreEntry, store_id: store_id, path: path) do
+        nil -> []
+        entry -> unwrap_set(entry.value)
+      end
+
+    new_set = List.delete(current_set, member)
+
+    Repo.insert!(
+      %StoreEntry{
+        store_id: store_id,
+        path: path,
+        value: wrap_value(new_set),
+        type: "set",
+        seq: seq
+      },
+      on_conflict: [set: [value: wrap_value(new_set), type: "set", seq: seq]],
+      conflict_target: [:store_id, :path]
+    )
   end
 
   defp delete_descendants(store_id, ancestor_segments) do
@@ -145,4 +217,11 @@ defmodule Dust.Sync.Writer do
   # StoreEntry.value is :map type, so wrap scalars
   defp wrap_value(value) when is_map(value), do: value
   defp wrap_value(value), do: %{"_scalar" => value}
+
+  defp unwrap_scalar(%{"_scalar" => scalar}), do: scalar
+  defp unwrap_scalar(value), do: value
+
+  defp unwrap_set(%{"_scalar" => list}) when is_list(list), do: list
+  defp unwrap_set(%{"_scalar" => _}), do: []
+  defp unwrap_set(_), do: []
 end

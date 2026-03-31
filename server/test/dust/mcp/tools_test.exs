@@ -338,6 +338,100 @@ defmodule Dust.MCP.ToolsTest do
     end
   end
 
+  describe "dust_increment" do
+    test "increments a counter from nothing", ctx do
+      req = make_req(%{"store" => ctx.store_full_name, "path" => "stats.views", "delta" => 3})
+      {:result, result, _} = Dust.MCP.Tools.DustIncrement.call(req, ctx.channel, [])
+
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
+      assert text =~ "Incremented stats.views by 3"
+
+      get_req = make_req(%{"store" => ctx.store_full_name, "path" => "stats.views"})
+      {:result, get_result, _} = Dust.MCP.Tools.DustGet.call(get_req, ctx.channel, [])
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = get_result
+      assert Jason.decode!(text) == 3
+    end
+
+    test "defaults delta to 1", ctx do
+      req = make_req(%{"store" => ctx.store_full_name, "path" => "stats.hits"})
+      {:result, result, _} = Dust.MCP.Tools.DustIncrement.call(req, ctx.channel, [])
+
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
+      assert text =~ "by 1"
+
+      get_req = make_req(%{"store" => ctx.store_full_name, "path" => "stats.hits"})
+      {:result, get_result, _} = Dust.MCP.Tools.DustGet.call(get_req, ctx.channel, [])
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = get_result
+      assert Jason.decode!(text) == 1
+    end
+
+    test "accumulates increments", ctx do
+      req1 = make_req(%{"store" => ctx.store_full_name, "path" => "stats.views", "delta" => 3})
+      {:result, _, _} = Dust.MCP.Tools.DustIncrement.call(req1, ctx.channel, [])
+
+      req2 = make_req(%{"store" => ctx.store_full_name, "path" => "stats.views", "delta" => 5})
+      {:result, _, _} = Dust.MCP.Tools.DustIncrement.call(req2, ctx.channel, [])
+
+      get_req = make_req(%{"store" => ctx.store_full_name, "path" => "stats.views"})
+      {:result, get_result, _} = Dust.MCP.Tools.DustGet.call(get_req, ctx.channel, [])
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = get_result
+      assert Jason.decode!(text) == 8
+    end
+  end
+
+  describe "dust_add" do
+    test "adds a member to a set", ctx do
+      req = make_req(%{"store" => ctx.store_full_name, "path" => "post.tags", "member" => "elixir"})
+      {:result, result, _} = Dust.MCP.Tools.DustAdd.call(req, ctx.channel, [])
+
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
+      assert text =~ "Added"
+
+      get_req = make_req(%{"store" => ctx.store_full_name, "path" => "post.tags"})
+      {:result, get_result, _} = Dust.MCP.Tools.DustGet.call(get_req, ctx.channel, [])
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = get_result
+      assert Jason.decode!(text) == ["elixir"]
+    end
+
+    test "adding multiple members", ctx do
+      req1 = make_req(%{"store" => ctx.store_full_name, "path" => "post.tags", "member" => "elixir"})
+      {:result, _, _} = Dust.MCP.Tools.DustAdd.call(req1, ctx.channel, [])
+
+      req2 = make_req(%{"store" => ctx.store_full_name, "path" => "post.tags", "member" => "rust"})
+      {:result, _, _} = Dust.MCP.Tools.DustAdd.call(req2, ctx.channel, [])
+
+      get_req = make_req(%{"store" => ctx.store_full_name, "path" => "post.tags"})
+      {:result, get_result, _} = Dust.MCP.Tools.DustGet.call(get_req, ctx.channel, [])
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = get_result
+      members = Jason.decode!(text)
+      assert "elixir" in members
+      assert "rust" in members
+    end
+  end
+
+  describe "dust_remove" do
+    test "removes a member from a set", ctx do
+      # Add first
+      req1 = make_req(%{"store" => ctx.store_full_name, "path" => "post.tags", "member" => "elixir"})
+      {:result, _, _} = Dust.MCP.Tools.DustAdd.call(req1, ctx.channel, [])
+
+      req2 = make_req(%{"store" => ctx.store_full_name, "path" => "post.tags", "member" => "rust"})
+      {:result, _, _} = Dust.MCP.Tools.DustAdd.call(req2, ctx.channel, [])
+
+      # Remove
+      req3 = make_req(%{"store" => ctx.store_full_name, "path" => "post.tags", "member" => "elixir"})
+      {:result, result, _} = Dust.MCP.Tools.DustRemove.call(req3, ctx.channel, [])
+
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
+      assert text =~ "Removed"
+
+      get_req = make_req(%{"store" => ctx.store_full_name, "path" => "post.tags"})
+      {:result, get_result, _} = Dust.MCP.Tools.DustGet.call(get_req, ctx.channel, [])
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = get_result
+      assert Jason.decode!(text) == ["rust"]
+    end
+  end
+
   describe "permission checks" do
     test "read-only token cannot write", ctx do
       # Create a read-only token

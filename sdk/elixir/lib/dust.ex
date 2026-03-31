@@ -13,6 +13,9 @@ defmodule Dust do
   defdelegate put(store, path, value), to: Dust.SyncEngine
   defdelegate delete(store, path), to: Dust.SyncEngine
   defdelegate merge(store, path, map), to: Dust.SyncEngine
+  defdelegate increment(store, path, delta \\ 1), to: Dust.SyncEngine
+  defdelegate add(store, path, member), to: Dust.SyncEngine
+  defdelegate remove(store, path, member), to: Dust.SyncEngine
   defdelegate on(store, pattern, callback, opts \\ []), to: Dust.SyncEngine
   defdelegate enum(store, pattern), to: Dust.SyncEngine
   defdelegate status(store), to: Dust.SyncEngine

@@ -73,4 +73,83 @@ defmodule Dust.SyncEngineTest do
     :ok = SyncEngine.put("ecto/store", "key", "value")
     assert {:ok, "value"} = SyncEngine.get("ecto/store", "key")
   end
+
+  # Counter tests
+
+  test "increment creates counter from nothing" do
+    :ok = SyncEngine.increment("test/store", "stats.views", 5)
+    assert {:ok, 5} = SyncEngine.get("test/store", "stats.views")
+  end
+
+  test "increment accumulates" do
+    :ok = SyncEngine.increment("test/store", "stats.views", 3)
+    :ok = SyncEngine.increment("test/store", "stats.views", 7)
+    assert {:ok, 10} = SyncEngine.get("test/store", "stats.views")
+  end
+
+  test "increment defaults to 1" do
+    :ok = SyncEngine.increment("test/store", "counter.default")
+    assert {:ok, 1} = SyncEngine.get("test/store", "counter.default")
+  end
+
+  test "increment by negative (decrement)" do
+    :ok = SyncEngine.increment("test/store", "stats.views", 10)
+    :ok = SyncEngine.increment("test/store", "stats.views", -3)
+    assert {:ok, 7} = SyncEngine.get("test/store", "stats.views")
+  end
+
+  test "increment fires callback" do
+    test_pid = self()
+    SyncEngine.on("test/store", "stats.*", fn event -> send(test_pid, {:event, event}) end)
+    SyncEngine.increment("test/store", "stats.views", 5)
+    assert_receive {:event, %{path: "stats.views", op: :increment, value: 5, committed: false}}, 500
+  end
+
+  # Set tests
+
+  test "add creates set from nothing" do
+    :ok = SyncEngine.add("test/store", "post.tags", "elixir")
+    assert {:ok, ["elixir"]} = SyncEngine.get("test/store", "post.tags")
+  end
+
+  test "add is idempotent" do
+    :ok = SyncEngine.add("test/store", "post.tags", "elixir")
+    :ok = SyncEngine.add("test/store", "post.tags", "elixir")
+    assert {:ok, ["elixir"]} = SyncEngine.get("test/store", "post.tags")
+  end
+
+  test "add multiple members" do
+    :ok = SyncEngine.add("test/store", "post.tags", "elixir")
+    :ok = SyncEngine.add("test/store", "post.tags", "rust")
+    {:ok, tags} = SyncEngine.get("test/store", "post.tags")
+    assert "elixir" in tags
+    assert "rust" in tags
+  end
+
+  test "remove deletes member" do
+    :ok = SyncEngine.add("test/store", "post.tags", "elixir")
+    :ok = SyncEngine.add("test/store", "post.tags", "rust")
+    :ok = SyncEngine.remove("test/store", "post.tags", "elixir")
+    assert {:ok, ["rust"]} = SyncEngine.get("test/store", "post.tags")
+  end
+
+  test "remove from nonexistent set" do
+    :ok = SyncEngine.remove("test/store", "post.tags", "elixir")
+    assert {:ok, []} = SyncEngine.get("test/store", "post.tags")
+  end
+
+  test "add fires callback" do
+    test_pid = self()
+    SyncEngine.on("test/store", "post.*", fn event -> send(test_pid, {:event, event}) end)
+    SyncEngine.add("test/store", "post.tags", "elixir")
+    assert_receive {:event, %{path: "post.tags", op: :add, value: "elixir", committed: false}}, 500
+  end
+
+  test "remove fires callback" do
+    test_pid = self()
+    SyncEngine.add("test/store", "post.tags", "elixir")
+    SyncEngine.on("test/store", "post.*", fn event -> send(test_pid, {:event, event}) end)
+    SyncEngine.remove("test/store", "post.tags", "elixir")
+    assert_receive {:event, %{path: "post.tags", op: :remove, value: "elixir", committed: false}}, 500
+  end
 end
