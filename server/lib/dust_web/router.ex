@@ -22,6 +22,11 @@ defmodule DustWeb.Router do
     plug :accepts, ["json"]
   end
 
+  pipeline :mcp do
+    plug :accepts, ["json"]
+    plug DustWeb.Plugs.MCPAuth
+  end
+
   # Public auth routes
   scope "/auth", DustWeb do
     pipe_through [:browser, :inertia]
@@ -40,6 +45,26 @@ defmodule DustWeb.Router do
     resources "/stores", StoreController, only: [:index, :show, :new, :create], param: "name"
     resources "/tokens", TokenController, only: [:index, :new, :create, :delete]
     get "/settings", SettingsController, :index
+  end
+
+  # MCP endpoint for AI tool access
+  scope "/mcp" do
+    pipe_through :mcp
+
+    forward "/", DustWeb.MCPTransport,
+      server: GenMCP.Suite,
+      server_name: "Dust",
+      server_version: "0.1.0",
+      copy_assigns: [:store_token],
+      tools: [
+        Dust.MCP.Tools.DustGet,
+        Dust.MCP.Tools.DustPut,
+        Dust.MCP.Tools.DustMerge,
+        Dust.MCP.Tools.DustDelete,
+        Dust.MCP.Tools.DustEnum,
+        Dust.MCP.Tools.DustStores,
+        Dust.MCP.Tools.DustStatus
+      ]
   end
 
   # Enable LiveDashboard and Swoosh mailbox preview in development

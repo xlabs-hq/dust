@@ -67,6 +67,9 @@ defmodule Dust.MixProject do
       {:cloak_ecto, "~> 1.3"},
       {:cloak, "~> 1.1"},
 
+      # MCP
+      {:gen_mcp, github: "lud/gen_mcp"},
+
       # Protocol (shared with SDK)
       {:dust_protocol, path: "../protocol/elixir"},
 
