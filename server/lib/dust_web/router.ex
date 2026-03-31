@@ -1,6 +1,8 @@
 defmodule DustWeb.Router do
   use DustWeb, :router
 
+  import DustWeb.Plugs.Auth
+
   pipeline :browser do
     plug :accepts, ["html"]
     plug :fetch_session
@@ -8,22 +10,30 @@ defmodule DustWeb.Router do
     plug :put_root_layout, html: {DustWeb.Layouts, :root}
     plug :protect_from_forgery
     plug :put_secure_browser_headers
+    plug :fetch_current_scope_for_user
+    plug DustWeb.Plugs.InertiaShare
   end
 
   pipeline :api do
     plug :accepts, ["json"]
   end
 
-  scope "/", DustWeb do
+  # Public auth routes
+  scope "/auth", DustWeb do
     pipe_through :browser
+
+    get "/login", WorkOSAuthController, :login
+    get "/authorize", WorkOSAuthController, :authorize
+    get "/callback", WorkOSAuthController, :callback
+    delete "/logout", WorkOSAuthController, :logout
+  end
+
+  # Protected routes scoped to an organization
+  scope "/:org", DustWeb do
+    pipe_through [:browser, :require_authenticated_user, :assign_org_to_scope]
 
     get "/", PageController, :home
   end
-
-  # Other scopes may use custom stacks.
-  # scope "/api", DustWeb do
-  #   pipe_through :api
-  # end
 
   # Enable LiveDashboard and Swoosh mailbox preview in development
   if Application.compile_env(:dust, :dev_routes) do

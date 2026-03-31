@@ -99,3 +99,6 @@ config :inertia, static_paths: []
 
 # Disable swoosh api client as it is only required for production adapters.
 config :swoosh, :api_client, false
+
+# Enable dev bypass for WorkOS auth (auto-login as dev@dust.local)
+config :dust, :dev_bypass_auth, !System.get_env("WORKOS_API_KEY")

@@ -31,6 +31,11 @@ config :dust, AdminWeb.Endpoint,
   pubsub_server: Dust.PubSub,
   live_view: [signing_salt: "dust_admin_lv_salt"]
 
+# Configure WorkOS
+config :workos, WorkOS.Client,
+  api_key: System.get_env("WORKOS_API_KEY"),
+  client_id: System.get_env("WORKOS_CLIENT_ID")
+
 # Configure the mailer
 #
 # By default it uses the "Local" adapter which stores the emails
