@@ -1,0 +1,6 @@
+defmodule <%= module_prefix %>.Repo.Migrations.CreateDustCache do
+  use Ecto.Migration
+
+  def up, do: Dust.Cache.Ecto.Migration.up()
+  def down, do: Dust.Cache.Ecto.Migration.down()
+end
