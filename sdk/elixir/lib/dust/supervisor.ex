@@ -55,12 +55,17 @@ defmodule Dust.Supervisor do
           do: spec
 
     subscribers = Keyword.get(opts, :subscribers, [])
+    pubsub = Keyword.get(opts, :pubsub)
+
+    registrar_opts =
+      [subscribers: subscribers, pubsub: pubsub, stores: stores]
+      |> Enum.reject(fn {_k, v} -> is_nil(v) end)
 
     subscriber_children =
-      if subscribers == [] do
+      if subscribers == [] and is_nil(pubsub) do
         []
       else
-        [{Dust.SubscriberRegistrar, subscribers: subscribers}]
+        [{Dust.SubscriberRegistrar, registrar_opts}]
       end
 
     children =

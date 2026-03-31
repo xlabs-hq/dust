@@ -23,6 +23,14 @@ defmodule Dust.SubscriberRegistrar do
       subscriber_module.__dust_register__()
     end)
 
+    # Register PubSub bridge if configured
+    pubsub = Keyword.get(opts, :pubsub)
+    stores = Keyword.get(opts, :stores, [])
+
+    if pubsub do
+      Dust.PubSubBridge.register(pubsub, stores)
+    end
+
     # We don't need to stay alive — registration is done.
     :ignore
   end

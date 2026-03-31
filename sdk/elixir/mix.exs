@@ -27,6 +27,7 @@ defmodule Dust.MixProject do
       {:jason, "~> 1.4"},
       {:decimal, "~> 2.0"},
       {:req, "~> 0.5"},
+      {:phoenix_pubsub, "~> 2.0", optional: true},
       {:ecto_sql, "~> 3.10", optional: true},
       {:ecto_sqlite3, "~> 0.17", only: :test}
     ]
