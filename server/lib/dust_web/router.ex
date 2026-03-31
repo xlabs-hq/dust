@@ -27,6 +27,12 @@ defmodule DustWeb.Router do
     plug DustWeb.Plugs.MCPAuth
   end
 
+  # Public landing page
+  scope "/", DustWeb do
+    pipe_through [:browser, :inertia]
+    get "/", LandingController, :index
+  end
+
   # Public auth routes
   scope "/auth", DustWeb do
     pipe_through [:browser, :inertia]
