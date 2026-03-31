@@ -152,42 +152,51 @@ export default function StoreShow() {
                 </p>
               </div>
             ) : (
-              <div className="rounded-lg border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="text-right">Seq</TableHead>
-                      <TableHead>Op</TableHead>
-                      <TableHead>Path</TableHead>
-                      <TableHead>Device</TableHead>
-                      <TableHead>Time</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {ops.map((op) => (
-                      <TableRow key={op.store_seq}>
-                        <TableCell className="text-right tabular-nums">
-                          {op.store_seq}
-                        </TableCell>
-                        <TableCell>
-                          <OpBadge op={op.op} />
-                        </TableCell>
-                        <TableCell className="font-mono text-sm">
-                          {op.path}
-                        </TableCell>
-                        <TableCell className="font-mono text-xs text-muted-foreground">
-                          {op.device_id
-                            ? op.device_id.slice(0, 8) + "..."
-                            : "--"}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {formatDateTime(op.inserted_at)}
-                        </TableCell>
+              <>
+                <div className="rounded-lg border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="text-right">Seq</TableHead>
+                        <TableHead>Op</TableHead>
+                        <TableHead>Path</TableHead>
+                        <TableHead>Device</TableHead>
+                        <TableHead>Time</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                    </TableHeader>
+                    <TableBody>
+                      {ops.map((op) => (
+                        <TableRow key={op.store_seq}>
+                          <TableCell className="text-right tabular-nums">
+                            {op.store_seq}
+                          </TableCell>
+                          <TableCell>
+                            <OpBadge op={op.op} />
+                          </TableCell>
+                          <TableCell className="font-mono text-sm">
+                            {op.path}
+                          </TableCell>
+                          <TableCell className="font-mono text-xs text-muted-foreground">
+                            {op.device_id
+                              ? op.device_id.slice(0, 8) + "..."
+                              : "--"}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {formatDateTime(op.inserted_at)}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="mt-3">
+                  <Button variant="outline" size="sm" asChild>
+                    <Link href={`/${orgSlug}/stores/${store.name}/log`}>
+                      View full audit log
+                    </Link>
+                  </Button>
+                </div>
+              </>
             )}
           </TabsContent>
         </Tabs>

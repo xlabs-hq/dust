@@ -43,6 +43,7 @@ defmodule DustWeb.Router do
 
     get "/", DashboardController, :index
     resources "/stores", StoreController, only: [:index, :show, :new, :create], param: "name"
+    get "/stores/:name/log", AuditController, :index
     resources "/tokens", TokenController, only: [:index, :new, :create, :delete]
     get "/settings", SettingsController, :index
   end
@@ -63,7 +64,8 @@ defmodule DustWeb.Router do
         Dust.MCP.Tools.DustDelete,
         Dust.MCP.Tools.DustEnum,
         Dust.MCP.Tools.DustStores,
-        Dust.MCP.Tools.DustStatus
+        Dust.MCP.Tools.DustStatus,
+        Dust.MCP.Tools.DustLog
       ]
   end
 

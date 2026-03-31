@@ -243,6 +243,101 @@ defmodule Dust.MCP.ToolsTest do
     end
   end
 
+  describe "dust_log" do
+    test "returns ops for a store", ctx do
+      # Write some data first
+      for i <- 1..3 do
+        req =
+          make_req(%{
+            "store" => ctx.store_full_name,
+            "path" => "key#{i}",
+            "value" => "val#{i}"
+          })
+
+        {:result, _, _} = Dust.MCP.Tools.DustPut.call(req, ctx.channel, [])
+      end
+
+      log_req = make_req(%{"store" => ctx.store_full_name})
+      {:result, result, _} = Dust.MCP.Tools.DustLog.call(log_req, ctx.channel, [])
+
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
+      ops = Jason.decode!(text)
+      assert length(ops) == 3
+      # Descending seq order
+      seqs = Enum.map(ops, & &1["seq"])
+      assert seqs == Enum.sort(seqs, :desc)
+    end
+
+    test "filters by path", ctx do
+      for path <- ["a.x", "a.y", "b.z"] do
+        req =
+          make_req(%{
+            "store" => ctx.store_full_name,
+            "path" => path,
+            "value" => "v"
+          })
+
+        {:result, _, _} = Dust.MCP.Tools.DustPut.call(req, ctx.channel, [])
+      end
+
+      log_req = make_req(%{"store" => ctx.store_full_name, "path" => "a.x"})
+      {:result, result, _} = Dust.MCP.Tools.DustLog.call(log_req, ctx.channel, [])
+
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
+      ops = Jason.decode!(text)
+      assert length(ops) == 1
+      assert hd(ops)["path"] == "a.x"
+    end
+
+    test "filters by op type", ctx do
+      put_req =
+        make_req(%{
+          "store" => ctx.store_full_name,
+          "path" => "to_del",
+          "value" => "v"
+        })
+
+      {:result, _, _} = Dust.MCP.Tools.DustPut.call(put_req, ctx.channel, [])
+
+      del_req = make_req(%{"store" => ctx.store_full_name, "path" => "to_del"})
+      {:result, _, _} = Dust.MCP.Tools.DustDelete.call(del_req, ctx.channel, [])
+
+      log_req = make_req(%{"store" => ctx.store_full_name, "op" => "delete"})
+      {:result, result, _} = Dust.MCP.Tools.DustLog.call(log_req, ctx.channel, [])
+
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
+      ops = Jason.decode!(text)
+      assert length(ops) == 1
+      assert hd(ops)["op"] == "delete"
+    end
+
+    test "respects limit", ctx do
+      for i <- 1..5 do
+        req =
+          make_req(%{
+            "store" => ctx.store_full_name,
+            "path" => "item#{i}",
+            "value" => "v"
+          })
+
+        {:result, _, _} = Dust.MCP.Tools.DustPut.call(req, ctx.channel, [])
+      end
+
+      log_req = make_req(%{"store" => ctx.store_full_name, "limit" => 2})
+      {:result, result, _} = Dust.MCP.Tools.DustLog.call(log_req, ctx.channel, [])
+
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
+      ops = Jason.decode!(text)
+      assert length(ops) == 2
+    end
+
+    test "returns error for wrong store", ctx do
+      req = make_req(%{"store" => "other/store"})
+      {:error, reason, _} = Dust.MCP.Tools.DustLog.call(req, ctx.channel, [])
+      assert reason =~ "not found"
+    end
+  end
+
   describe "permission checks" do
     test "read-only token cannot write", ctx do
       # Create a read-only token
