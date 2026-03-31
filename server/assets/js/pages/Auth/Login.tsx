@@ -1,7 +1,7 @@
 import React from "react";
 import { Head } from "@inertiajs/react";
 
-export default function Login() {
+function Login() {
   return (
     <>
       <Head title="Sign in" />
@@ -31,3 +31,8 @@ export default function Login() {
     </>
   );
 }
+
+// Opt out of the Shell layout — Login uses its own full-screen layout
+Login.layout = (page: React.ReactNode) => page;
+
+export default Login;

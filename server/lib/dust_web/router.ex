@@ -11,6 +11,10 @@ defmodule DustWeb.Router do
     plug :protect_from_forgery
     plug :put_secure_browser_headers
     plug :fetch_current_scope_for_user
+  end
+
+  # Shares Inertia props after all scope plugs have run
+  pipeline :inertia do
     plug DustWeb.Plugs.InertiaShare
   end
 
@@ -20,7 +24,7 @@ defmodule DustWeb.Router do
 
   # Public auth routes
   scope "/auth", DustWeb do
-    pipe_through :browser
+    pipe_through [:browser, :inertia]
 
     get "/login", WorkOSAuthController, :login
     get "/authorize", WorkOSAuthController, :authorize
@@ -30,7 +34,7 @@ defmodule DustWeb.Router do
 
   # Protected routes scoped to an organization
   scope "/:org", DustWeb do
-    pipe_through [:browser, :require_authenticated_user, :assign_org_to_scope]
+    pipe_through [:browser, :require_authenticated_user, :assign_org_to_scope, :inertia]
 
     get "/", PageController, :home
   end
