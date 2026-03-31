@@ -54,6 +54,12 @@ defmodule DustWeb.Router do
     get "/settings", SettingsController, :index
   end
 
+  # File download endpoint (authenticated via Bearer token)
+  scope "/api/files", DustWeb do
+    pipe_through :api
+    get "/:hash", FileController, :show
+  end
+
   # MCP endpoint for AI tool access
   scope "/mcp" do
     pipe_through :mcp
@@ -74,7 +80,9 @@ defmodule DustWeb.Router do
         Dust.MCP.Tools.DustRemove,
         Dust.MCP.Tools.DustStores,
         Dust.MCP.Tools.DustStatus,
-        Dust.MCP.Tools.DustLog
+        Dust.MCP.Tools.DustLog,
+        Dust.MCP.Tools.DustPutFile,
+        Dust.MCP.Tools.DustFetchFile
       ]
   end
 

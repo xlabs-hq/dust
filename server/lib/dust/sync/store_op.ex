@@ -3,7 +3,7 @@ defmodule Dust.Sync.StoreOp do
 
   schema "store_ops" do
     field :store_seq, :integer
-    field :op, Ecto.Enum, values: [:set, :delete, :merge, :increment, :add, :remove]
+    field :op, Ecto.Enum, values: [:set, :delete, :merge, :increment, :add, :remove, :put_file]
     field :path, :string
     field :value, :map
     field :type, :string, default: "map"

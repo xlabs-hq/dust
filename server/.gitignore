@@ -22,6 +22,9 @@ erl_crash.dump
 # Temporary files, for example, from tests.
 /tmp/
 
+# Content-addressed blob storage (local dev/test)
+/priv/blobs/
+
 # Ignore package tarball (built via "mix hex.build").
 dust-*.tar
 

@@ -197,6 +197,24 @@ defmodule Dust.Sync.Writer do
     )
   end
 
+  defp apply_to_entries(store_id, seq, %{op: :put_file, path: path, value: ref})
+       when is_map(ref) do
+    {:ok, segments} = DustProtocol.Path.parse(path)
+    delete_descendants(store_id, segments)
+
+    Repo.insert!(
+      %StoreEntry{
+        store_id: store_id,
+        path: path,
+        value: ref,
+        type: "file",
+        seq: seq
+      },
+      on_conflict: [set: [value: ref, type: "file", seq: seq]],
+      conflict_target: [:store_id, :path]
+    )
+  end
+
   defp delete_descendants(store_id, ancestor_segments) do
     prefix = Enum.join(ancestor_segments, ".") <> "."
 
@@ -219,7 +237,10 @@ defmodule Dust.Sync.Writer do
   # StoreEntry.value is :map type, so wrap scalars.
   # Decimal and DateTime get a typed envelope for lossless round-tripping through jsonb.
   defp wrap_value(%Decimal{} = d), do: %{"_typed" => Decimal.to_string(d), "_type" => "decimal"}
-  defp wrap_value(%DateTime{} = dt), do: %{"_typed" => DateTime.to_iso8601(dt), "_type" => "datetime"}
+
+  defp wrap_value(%DateTime{} = dt),
+    do: %{"_typed" => DateTime.to_iso8601(dt), "_type" => "datetime"}
+
   defp wrap_value(value) when is_map(value), do: value
   defp wrap_value(value), do: %{"_scalar" => value}
 

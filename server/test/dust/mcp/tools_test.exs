@@ -381,7 +381,9 @@ defmodule Dust.MCP.ToolsTest do
 
   describe "dust_add" do
     test "adds a member to a set", ctx do
-      req = make_req(%{"store" => ctx.store_full_name, "path" => "post.tags", "member" => "elixir"})
+      req =
+        make_req(%{"store" => ctx.store_full_name, "path" => "post.tags", "member" => "elixir"})
+
       {:result, result, _} = Dust.MCP.Tools.DustAdd.call(req, ctx.channel, [])
 
       assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
@@ -394,10 +396,14 @@ defmodule Dust.MCP.ToolsTest do
     end
 
     test "adding multiple members", ctx do
-      req1 = make_req(%{"store" => ctx.store_full_name, "path" => "post.tags", "member" => "elixir"})
+      req1 =
+        make_req(%{"store" => ctx.store_full_name, "path" => "post.tags", "member" => "elixir"})
+
       {:result, _, _} = Dust.MCP.Tools.DustAdd.call(req1, ctx.channel, [])
 
-      req2 = make_req(%{"store" => ctx.store_full_name, "path" => "post.tags", "member" => "rust"})
+      req2 =
+        make_req(%{"store" => ctx.store_full_name, "path" => "post.tags", "member" => "rust"})
+
       {:result, _, _} = Dust.MCP.Tools.DustAdd.call(req2, ctx.channel, [])
 
       get_req = make_req(%{"store" => ctx.store_full_name, "path" => "post.tags"})
@@ -412,14 +418,20 @@ defmodule Dust.MCP.ToolsTest do
   describe "dust_remove" do
     test "removes a member from a set", ctx do
       # Add first
-      req1 = make_req(%{"store" => ctx.store_full_name, "path" => "post.tags", "member" => "elixir"})
+      req1 =
+        make_req(%{"store" => ctx.store_full_name, "path" => "post.tags", "member" => "elixir"})
+
       {:result, _, _} = Dust.MCP.Tools.DustAdd.call(req1, ctx.channel, [])
 
-      req2 = make_req(%{"store" => ctx.store_full_name, "path" => "post.tags", "member" => "rust"})
+      req2 =
+        make_req(%{"store" => ctx.store_full_name, "path" => "post.tags", "member" => "rust"})
+
       {:result, _, _} = Dust.MCP.Tools.DustAdd.call(req2, ctx.channel, [])
 
       # Remove
-      req3 = make_req(%{"store" => ctx.store_full_name, "path" => "post.tags", "member" => "elixir"})
+      req3 =
+        make_req(%{"store" => ctx.store_full_name, "path" => "post.tags", "member" => "elixir"})
+
       {:result, result, _} = Dust.MCP.Tools.DustRemove.call(req3, ctx.channel, [])
 
       assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
@@ -522,6 +534,138 @@ defmodule Dust.MCP.ToolsTest do
 
       {:error, reason, _} = Dust.MCP.Tools.DustRollback.call(rb_req, ro_channel, [])
       assert reason =~ "write permission"
+    end
+  end
+
+  describe "dust_put_file" do
+    setup do
+      blob_dir = Dust.Files.blob_dir()
+      File.rm_rf!(blob_dir)
+      on_exit(fn -> File.rm_rf!(blob_dir) end)
+      :ok
+    end
+
+    test "uploads a file and stores reference", ctx do
+      content = Base.encode64("hello world")
+
+      req =
+        make_req(%{
+          "store" => ctx.store_full_name,
+          "path" => "docs.readme",
+          "content" => content,
+          "filename" => "readme.txt",
+          "content_type" => "text/plain"
+        })
+
+      {:result, result, _} = Dust.MCP.Tools.DustPutFile.call(req, ctx.channel, [])
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
+      assert text =~ "Uploaded file to docs.readme"
+      assert text =~ "sha256:"
+
+      # Read back the reference
+      get_req = make_req(%{"store" => ctx.store_full_name, "path" => "docs.readme"})
+      {:result, get_result, _} = Dust.MCP.Tools.DustGet.call(get_req, ctx.channel, [])
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = get_result
+      ref = Jason.decode!(text)
+      assert ref["_type"] == "file"
+      assert ref["filename"] == "readme.txt"
+    end
+
+    test "rejects invalid base64", ctx do
+      req =
+        make_req(%{
+          "store" => ctx.store_full_name,
+          "path" => "docs.bad",
+          "content" => "not-valid-base64!!!"
+        })
+
+      {:error, reason, _} = Dust.MCP.Tools.DustPutFile.call(req, ctx.channel, [])
+      assert reason =~ "base64"
+    end
+  end
+
+  describe "dust_fetch_file" do
+    setup do
+      blob_dir = Dust.Files.blob_dir()
+      File.rm_rf!(blob_dir)
+      on_exit(fn -> File.rm_rf!(blob_dir) end)
+      :ok
+    end
+
+    test "returns file metadata", ctx do
+      # Upload a file first
+      content = Base.encode64("fetch me")
+
+      put_req =
+        make_req(%{
+          "store" => ctx.store_full_name,
+          "path" => "docs.fetchable",
+          "content" => content,
+          "filename" => "fetchable.txt",
+          "content_type" => "text/plain"
+        })
+
+      {:result, _, _} = Dust.MCP.Tools.DustPutFile.call(put_req, ctx.channel, [])
+
+      # Fetch metadata only
+      fetch_req =
+        make_req(%{"store" => ctx.store_full_name, "path" => "docs.fetchable"})
+
+      {:result, result, _} = Dust.MCP.Tools.DustFetchFile.call(fetch_req, ctx.channel, [])
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
+      ref = Jason.decode!(text)
+      assert ref["_type"] == "file"
+      assert ref["filename"] == "fetchable.txt"
+      refute Map.has_key?(ref, "content")
+    end
+
+    test "returns file content when include_content is true", ctx do
+      content = Base.encode64("content here")
+
+      put_req =
+        make_req(%{
+          "store" => ctx.store_full_name,
+          "path" => "docs.withcontent",
+          "content" => content,
+          "filename" => "withcontent.txt"
+        })
+
+      {:result, _, _} = Dust.MCP.Tools.DustPutFile.call(put_req, ctx.channel, [])
+
+      fetch_req =
+        make_req(%{
+          "store" => ctx.store_full_name,
+          "path" => "docs.withcontent",
+          "include_content" => true
+        })
+
+      {:result, result, _} = Dust.MCP.Tools.DustFetchFile.call(fetch_req, ctx.channel, [])
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
+      ref = Jason.decode!(text)
+      assert ref["content"] == content
+    end
+
+    test "returns null for nonexistent path", ctx do
+      fetch_req =
+        make_req(%{"store" => ctx.store_full_name, "path" => "nonexistent"})
+
+      {:result, result, _} = Dust.MCP.Tools.DustFetchFile.call(fetch_req, ctx.channel, [])
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
+      assert Jason.decode!(text) == nil
+    end
+
+    test "returns error for non-file path", ctx do
+      # Write a regular value
+      put_req =
+        make_req(%{"store" => ctx.store_full_name, "path" => "plain", "value" => "not a file"})
+
+      {:result, _, _} = Dust.MCP.Tools.DustPut.call(put_req, ctx.channel, [])
+
+      fetch_req =
+        make_req(%{"store" => ctx.store_full_name, "path" => "plain"})
+
+      {:error, reason, _} = Dust.MCP.Tools.DustFetchFile.call(fetch_req, ctx.channel, [])
+      assert reason =~ "not a file"
     end
   end
 

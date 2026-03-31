@@ -1,7 +1,7 @@
 defmodule DustWeb.StoreChannel do
   use Phoenix.Channel
 
-  alias Dust.{Stores, Sync}
+  alias Dust.{Stores, Sync, Files}
   alias Dust.Sync.Rollback
 
   @valid_ops %{
@@ -10,7 +10,8 @@ defmodule DustWeb.StoreChannel do
     "merge" => :merge,
     "increment" => :increment,
     "add" => :add,
-    "remove" => :remove
+    "remove" => :remove,
+    "put_file" => :put_file
   }
 
   @impl true
@@ -71,6 +72,62 @@ defmodule DustWeb.StoreChannel do
             {:error, reason} ->
               {:reply, {:error, %{reason: to_string(reason)}}, socket}
           end
+      end
+    else
+      {:reply, {:error, %{reason: "unauthorized"}}, socket}
+    end
+  end
+
+  @impl true
+  def handle_in(
+        "put_file",
+        %{
+          "path" => path,
+          "content" => base64_content,
+          "client_op_id" => client_op_id
+        } = params,
+        socket
+      ) do
+    store_token = socket.assigns.store_token
+
+    if Stores.StoreToken.can_write?(store_token) do
+      with {:ok, _} <- validate_path(path),
+           {:ok, content} <- Base.decode64(base64_content) do
+        filename = params["filename"]
+        content_type = params["content_type"] || "application/octet-stream"
+
+        {:ok, ref} = Files.upload(content, filename: filename, content_type: content_type)
+
+        op_attrs = %{
+          op: :put_file,
+          path: path,
+          value: ref,
+          device_id: socket.assigns.device_id,
+          client_op_id: client_op_id
+        }
+
+        case Sync.write(socket.assigns.store_id, op_attrs) do
+          {:ok, db_op} ->
+            broadcast!(socket, "event", %{
+              store_seq: db_op.store_seq,
+              op: db_op.op,
+              path: db_op.path,
+              value: unwrap_value(db_op.value),
+              device_id: db_op.device_id,
+              client_op_id: db_op.client_op_id
+            })
+
+            {:reply, {:ok, %{store_seq: db_op.store_seq, hash: ref["hash"]}}, socket}
+
+          {:error, reason} ->
+            {:reply, {:error, %{reason: inspect(reason)}}, socket}
+        end
+      else
+        :error ->
+          {:reply, {:error, %{reason: "invalid_base64"}}, socket}
+
+        {:error, reason} ->
+          {:reply, {:error, %{reason: to_string(reason)}}, socket}
       end
     else
       {:reply, {:error, %{reason: "unauthorized"}}, socket}
@@ -173,10 +230,12 @@ defmodule DustWeb.StoreChannel do
   defp validate_merge_value(_, _), do: :ok
 
   defp unwrap_value(%{"_typed" => v, "_type" => "decimal"}), do: Decimal.new(v)
+
   defp unwrap_value(%{"_typed" => v, "_type" => "datetime"}) do
     {:ok, dt, _} = DateTime.from_iso8601(v)
     dt
   end
+
   defp unwrap_value(%{"_scalar" => scalar}), do: scalar
   defp unwrap_value(value), do: value
 end

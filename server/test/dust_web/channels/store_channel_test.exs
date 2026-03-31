@@ -82,6 +82,73 @@ defmodule DustWeb.StoreChannelTest do
     end
   end
 
+  describe "put_file" do
+    setup %{socket: socket, store: store} do
+      # Clean up test blobs directory
+      blob_dir = Dust.Files.blob_dir()
+      File.rm_rf!(blob_dir)
+      on_exit(fn -> File.rm_rf!(blob_dir) end)
+
+      {:ok, _, socket} =
+        subscribe_and_join(socket, DustWeb.StoreChannel, "store:#{store.id}", %{
+          "last_store_seq" => 0
+        })
+
+      %{joined_socket: socket}
+    end
+
+    test "uploads a file and stores reference", %{joined_socket: socket} do
+      content = "hello world"
+      base64 = Base.encode64(content)
+
+      ref =
+        push(socket, "put_file", %{
+          "path" => "docs.readme",
+          "content" => base64,
+          "filename" => "readme.txt",
+          "content_type" => "text/plain",
+          "client_op_id" => "file_op_1"
+        })
+
+      assert_reply ref, :ok, %{store_seq: 1, hash: hash}
+      assert String.starts_with?(hash, "sha256:")
+
+      # Verify the event was broadcast
+      assert_broadcast "event", %{
+        store_seq: 1,
+        op: :put_file,
+        path: "docs.readme",
+        value: %{"_type" => "file", "hash" => ^hash}
+      }
+
+      # Verify blob exists on disk
+      assert Dust.Files.exists?(hash)
+      assert {:ok, ^content} = Dust.Files.download(hash)
+    end
+
+    test "rejects invalid base64", %{joined_socket: socket} do
+      ref =
+        push(socket, "put_file", %{
+          "path" => "docs.bad",
+          "content" => "not valid base64!!!",
+          "client_op_id" => "file_op_2"
+        })
+
+      assert_reply ref, :error, %{reason: "invalid_base64"}
+    end
+
+    test "rejects invalid path", %{joined_socket: socket} do
+      ref =
+        push(socket, "put_file", %{
+          "path" => "docs..bad",
+          "content" => Base.encode64("test"),
+          "client_op_id" => "file_op_3"
+        })
+
+      assert_reply ref, :error, %{reason: "empty_segment"}
+    end
+  end
+
   describe "write" do
     test "write broadcasts to all subscribers", %{socket: socket, store: store} do
       {:ok, _, socket} =
@@ -107,12 +174,13 @@ defmodule DustWeb.StoreChannelTest do
           "last_store_seq" => 0
         })
 
-      ref = push(socket, "write", %{
-        "op" => "set",
-        "path" => "posts..hello",
-        "value" => "v",
-        "client_op_id" => "o1"
-      })
+      ref =
+        push(socket, "write", %{
+          "op" => "set",
+          "path" => "posts..hello",
+          "value" => "v",
+          "client_op_id" => "o1"
+        })
 
       assert_reply ref, :error, %{reason: "empty_segment"}
     end
@@ -123,11 +191,12 @@ defmodule DustWeb.StoreChannelTest do
           "last_store_seq" => 0
         })
 
-      ref = push(socket, "write", %{
-        "op" => "set",
-        "value" => "v",
-        "client_op_id" => "o1"
-      })
+      ref =
+        push(socket, "write", %{
+          "op" => "set",
+          "value" => "v",
+          "client_op_id" => "o1"
+        })
 
       assert_reply ref, :error, %{reason: "missing_path"}
     end
@@ -138,12 +207,13 @@ defmodule DustWeb.StoreChannelTest do
           "last_store_seq" => 0
         })
 
-      ref = push(socket, "write", %{
-        "op" => "merge",
-        "path" => "settings",
-        "value" => "not_a_map",
-        "client_op_id" => "o1"
-      })
+      ref =
+        push(socket, "write", %{
+          "op" => "merge",
+          "path" => "settings",
+          "value" => "not_a_map",
+          "client_op_id" => "o1"
+        })
 
       assert_reply ref, :error, %{reason: "merge_requires_map_value"}
     end

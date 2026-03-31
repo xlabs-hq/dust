@@ -26,6 +26,9 @@ config :dust, Dust.Mailer, adapter: Swoosh.Adapters.Test
 # Disable swoosh api client as it is only required for production adapters
 config :swoosh, :api_client, false
 
+# Use a temporary directory for blob storage in tests
+config :dust, :blob_dir, Path.expand("../tmp/test_blobs", __DIR__)
+
 # Print only warnings and errors during test
 config :logger, level: :warning
 
