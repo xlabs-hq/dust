@@ -28,6 +28,7 @@ defmodule Dust.Connection do
       |> assign(:device_id, device_id)
       |> assign(:stores, stores)
       |> assign(:joined_stores, MapSet.new())
+      |> assign(:outbox, %{})
 
     if test_mode? do
       {:ok, socket}
@@ -80,7 +81,10 @@ defmodule Dust.Connection do
     joined = MapSet.put(socket.assigns.joined_stores, store_name)
     socket = assign(socket, :joined_stores, joined)
 
-    # Update the SyncEngine's status to :connected
+    # Flush any queued writes for this store
+    socket = flush_outbox(socket, store_name)
+
+    # Update the SyncEngine's status to :connected (also triggers resend of pending_ops)
     Dust.SyncEngine.set_status(store_name, :connected)
 
     {:ok, socket}
@@ -143,12 +147,35 @@ defmodule Dust.Connection do
       "client_op_id" => op_attrs.client_op_id
     }
 
-    push(socket, topic, "write", params)
-
-    {:noreply, socket}
+    if MapSet.member?(socket.assigns.joined_stores, store_name) do
+      push(socket, topic, "write", params)
+      {:noreply, socket}
+    else
+      # Not yet joined — queue the write for flush after join
+      outbox = Map.get(socket.assigns, :outbox, %{})
+      store_queue = Map.get(outbox, store_name, :queue.new())
+      store_queue = :queue.in(params, store_queue)
+      outbox = Map.put(outbox, store_name, store_queue)
+      {:noreply, assign(socket, :outbox, outbox)}
+    end
   end
 
   # -- Private helpers --
+
+  defp flush_outbox(socket, store_name) do
+    outbox = Map.get(socket.assigns, :outbox, %{})
+    store_queue = Map.get(outbox, store_name, :queue.new())
+    topic = "store:#{store_name}"
+
+    socket =
+      Enum.reduce(:queue.to_list(store_queue), socket, fn params, sock ->
+        push(sock, topic, "write", params)
+        sock
+      end)
+
+    outbox = Map.delete(outbox, store_name)
+    assign(socket, :outbox, outbox)
+  end
 
   defp get_last_store_seq(store_name) do
     case Registry.lookup(Dust.SyncEngineRegistry, store_name) do

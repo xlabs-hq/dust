@@ -104,13 +104,12 @@ defmodule Dust.SyncEngine do
     })
 
     # Queue for server
-    pending = Map.put(state.pending_ops, client_op_id, %{op: :set, path: path, value: value})
+    op_msg = %{op: :set, path: path, value: value, client_op_id: client_op_id}
+    pending = Map.put(state.pending_ops, client_op_id, op_msg)
     state = %{state | pending_ops: pending}
 
     # Notify connection to send
-    send_to_connection(state.store, %{
-      op: :set, path: path, value: value, client_op_id: client_op_id
-    })
+    send_to_connection(state.store, op_msg)
 
     {:reply, :ok, state}
   end
@@ -126,10 +125,11 @@ defmodule Dust.SyncEngine do
       committed: false, source: :local, client_op_id: client_op_id
     })
 
-    pending = Map.put(state.pending_ops, client_op_id, %{op: :delete, path: path})
+    op_msg = %{op: :delete, path: path, client_op_id: client_op_id}
+    pending = Map.put(state.pending_ops, client_op_id, op_msg)
     state = %{state | pending_ops: pending}
 
-    send_to_connection(state.store, %{op: :delete, path: path, client_op_id: client_op_id})
+    send_to_connection(state.store, op_msg)
 
     {:reply, :ok, state}
   end
@@ -149,10 +149,11 @@ defmodule Dust.SyncEngine do
       committed: false, source: :local, client_op_id: client_op_id
     })
 
-    pending = Map.put(state.pending_ops, client_op_id, %{op: :merge, path: path, value: map})
+    op_msg = %{op: :merge, path: path, value: map, client_op_id: client_op_id}
+    pending = Map.put(state.pending_ops, client_op_id, op_msg)
     state = %{state | pending_ops: pending}
 
-    send_to_connection(state.store, %{op: :merge, path: path, value: map, client_op_id: client_op_id})
+    send_to_connection(state.store, op_msg)
 
     {:reply, :ok, state}
   end
@@ -181,6 +182,13 @@ defmodule Dust.SyncEngine do
 
   @impl true
   def handle_cast({:set_status, new_status}, state) do
+    # When becoming connected, resend all pending ops
+    if new_status == :connected and map_size(state.pending_ops) > 0 do
+      Enum.each(state.pending_ops, fn {_client_op_id, op_attrs} ->
+        send_to_connection(state.store, op_attrs)
+      end)
+    end
+
     {:noreply, %{state | status: new_status}}
   end
 
