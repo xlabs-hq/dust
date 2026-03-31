@@ -1,7 +1,7 @@
 defmodule Dust.SyncEngine do
   use GenServer
 
-  defstruct [:store, :cache, :cache_pid, :callbacks, :pending_ops, :status, :last_store_seq]
+  defstruct [:store, :cache, :cache_target, :callbacks, :pending_ops, :status, :last_store_seq]
 
   def start_link(opts) do
     store = Keyword.fetch!(opts, :store)
@@ -53,22 +53,27 @@ defmodule Dust.SyncEngine do
     store = Keyword.fetch!(opts, :store)
     {cache_mod, cache_opts} = Keyword.fetch!(opts, :cache)
 
-    cache_pid =
+    cache_target =
       case cache_opts do
         opts when is_list(opts) ->
           {:ok, pid} = cache_mod.start_link(opts)
           pid
+
         pid when is_pid(pid) ->
           pid
+
+        module when is_atom(module) ->
+          # Stateless adapter (e.g., Ecto) — the target is the module itself (a Repo)
+          module
       end
 
     callbacks = Dust.CallbackRegistry.new()
-    last_seq = cache_mod.last_seq(cache_pid, store)
+    last_seq = cache_mod.last_seq(cache_target, store)
 
     state = %__MODULE__{
       store: store,
       cache: cache_mod,
-      cache_pid: cache_pid,
+      cache_target: cache_target,
       callbacks: callbacks,
       pending_ops: %{},
       status: :disconnected,
@@ -80,7 +85,7 @@ defmodule Dust.SyncEngine do
 
   @impl true
   def handle_call({:get, path}, _from, state) do
-    result = state.cache.read(state.cache_pid, state.store, path)
+    result = state.cache.read(state.cache_target, state.store, path)
     {:reply, result, state}
   end
 
@@ -90,7 +95,7 @@ defmodule Dust.SyncEngine do
     type = detect_type(value)
 
     # Optimistic local write
-    :ok = state.cache.write(state.cache_pid, state.store, path, value, type, 0)
+    :ok = state.cache.write(state.cache_target, state.store, path, value, type, 0)
 
     # Fire local callbacks
     dispatch_callbacks(state, path, %{
@@ -114,7 +119,7 @@ defmodule Dust.SyncEngine do
   def handle_call({:delete, path}, _from, state) do
     client_op_id = generate_op_id()
 
-    state.cache.delete(state.cache_pid, state.store, path)
+    state.cache.delete(state.cache_target, state.store, path)
 
     dispatch_callbacks(state, path, %{
       store: state.store, path: path, op: :delete, value: nil,
@@ -136,7 +141,7 @@ defmodule Dust.SyncEngine do
     # Optimistic: write each child
     Enum.each(map, fn {key, value} ->
       child_path = "#{path}.#{key}"
-      state.cache.write(state.cache_pid, state.store, child_path, value, detect_type(value), 0)
+      state.cache.write(state.cache_target, state.store, child_path, value, detect_type(value), 0)
     end)
 
     dispatch_callbacks(state, path, %{
@@ -154,7 +159,7 @@ defmodule Dust.SyncEngine do
 
   @impl true
   def handle_call({:enum, pattern}, _from, state) do
-    results = state.cache.read_all(state.cache_pid, state.store, pattern)
+    results = state.cache.read_all(state.cache_target, state.store, pattern)
     {:reply, results, state}
   end
 
@@ -190,13 +195,13 @@ defmodule Dust.SyncEngine do
     # Update cache with canonical state
     case op do
       :set ->
-        state.cache.write(state.cache_pid, state.store, path, value, detect_type(value), store_seq)
+        state.cache.write(state.cache_target, state.store, path, value, detect_type(value), store_seq)
       :delete ->
-        state.cache.delete(state.cache_pid, state.store, path)
+        state.cache.delete(state.cache_target, state.store, path)
       :merge when is_map(value) ->
         Enum.each(value, fn {key, v} ->
           child_path = "#{path}.#{key}"
-          state.cache.write(state.cache_pid, state.store, child_path, v, detect_type(v), store_seq)
+          state.cache.write(state.cache_target, state.store, child_path, v, detect_type(v), store_seq)
         end)
     end
 

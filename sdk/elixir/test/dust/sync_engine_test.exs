@@ -62,4 +62,15 @@ defmodule Dust.SyncEngineTest do
     assert status.last_store_seq == 0
     assert status.pending_ops >= 0
   end
+
+  test "works with Ecto cache adapter (module target)" do
+    {:ok, _pid} =
+      SyncEngine.start_link(
+        store: "ecto/store",
+        cache: {Dust.Cache.Ecto, Dust.TestRepo}
+      )
+
+    :ok = SyncEngine.put("ecto/store", "key", "value")
+    assert {:ok, "value"} = SyncEngine.get("ecto/store", "key")
+  end
 end
