@@ -14,5 +14,8 @@ defmodule AdminWeb.Router do
     pipe_through :browser
 
     live "/", DashboardLive, :index
+    live "/stores", StoresLive, :index
+    live "/stores/:id", StoreDetailLive, :show
+    live "/ops", OpsLive, :index
   end
 end

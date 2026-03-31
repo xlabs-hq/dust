@@ -7,8 +7,39 @@
     <.live_title default="Dust Admin">
       {assigns[:page_title]}
     </.live_title>
+    <script src="https://cdn.tailwindcss.com">
+    </script>
   </head>
-  <body>
+  <body class="bg-gray-50 min-h-screen">
+    <nav class="bg-gray-900 text-white">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="flex items-center justify-between h-14">
+          <div class="flex items-center space-x-8">
+            <span class="text-lg font-semibold tracking-tight">Dust Admin</span>
+            <div class="flex space-x-1">
+              <a
+                href="/"
+                class="px-3 py-2 rounded text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700"
+              >
+                Dashboard
+              </a>
+              <a
+                href="/stores"
+                class="px-3 py-2 rounded text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700"
+              >
+                Stores
+              </a>
+              <a
+                href="/ops"
+                class="px-3 py-2 rounded text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700"
+              >
+                Ops
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </nav>
     {@inner_content}
   </body>
 </html>

@@ -60,6 +60,11 @@ config :inertia,
   ssr: false,
   raise_on_ssr_failure: true
 
+# Configure Oban
+config :dust, Oban,
+  repo: Dust.Repo,
+  queues: [default: 10]
+
 # Configure Elixir's Logger
 config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",

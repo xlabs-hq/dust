@@ -29,6 +29,9 @@ config :swoosh, :api_client, false
 # Use a temporary directory for blob storage in tests
 config :dust, :blob_dir, Path.expand("../tmp/test_blobs", __DIR__)
 
+# Disable Oban in tests
+config :dust, Oban, testing: :manual
+
 # Print only warnings and errors during test
 config :logger, level: :warning
 

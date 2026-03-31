@@ -14,6 +14,7 @@ defmodule Dust.Application do
       {Phoenix.PubSub, name: Dust.PubSub},
       {Registry, keys: :unique, name: Dust.Sync.WriterRegistry},
       {DynamicSupervisor, name: Dust.Sync.WriterSupervisor, strategy: :one_for_one},
+      {Oban, Application.fetch_env!(:dust, Oban)},
       # Start to serve requests, typically the last entry
       DustWeb.Endpoint,
       AdminWeb.Endpoint
