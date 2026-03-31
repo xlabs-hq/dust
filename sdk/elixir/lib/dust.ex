@@ -1,6 +1,12 @@
 defmodule Dust do
   @moduledoc "Dust SDK — reactive global map client."
 
+  defmacro __using__(opts) do
+    quote do
+      use Dust.Instance, unquote(opts)
+    end
+  end
+
   def child_spec(opts) do
     %{
       id: __MODULE__,
