@@ -137,6 +137,30 @@ defmodule Dust.Connection do
   end
 
   @impl Slipstream
+  def handle_info({:send_write, store_name, %{op: :put_file} = op_attrs}, socket) do
+    topic = "store:#{store_name}"
+
+    params = %{
+      "path" => op_attrs.path,
+      "content" => op_attrs.content,
+      "filename" => op_attrs.filename,
+      "content_type" => op_attrs.content_type,
+      "client_op_id" => op_attrs.client_op_id
+    }
+
+    if MapSet.member?(socket.assigns.joined_stores, store_name) do
+      push(socket, topic, "put_file", params)
+      {:noreply, socket}
+    else
+      outbox = Map.get(socket.assigns, :outbox, %{})
+      store_queue = Map.get(outbox, store_name, :queue.new())
+      store_queue = :queue.in({:put_file, params}, store_queue)
+      outbox = Map.put(outbox, store_name, store_queue)
+      {:noreply, assign(socket, :outbox, outbox)}
+    end
+  end
+
+  @impl Slipstream
   def handle_info({:send_write, store_name, op_attrs}, socket) do
     topic = "store:#{store_name}"
 
@@ -168,9 +192,14 @@ defmodule Dust.Connection do
     topic = "store:#{store_name}"
 
     socket =
-      Enum.reduce(:queue.to_list(store_queue), socket, fn params, sock ->
-        push(sock, topic, "write", params)
-        sock
+      Enum.reduce(:queue.to_list(store_queue), socket, fn
+        {:put_file, params}, sock ->
+          push(sock, topic, "put_file", params)
+          sock
+
+        params, sock ->
+          push(sock, topic, "write", params)
+          sock
       end)
 
     outbox = Map.delete(outbox, store_name)

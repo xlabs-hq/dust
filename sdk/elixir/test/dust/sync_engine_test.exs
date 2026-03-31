@@ -182,4 +182,82 @@ defmodule Dust.SyncEngineTest do
     SyncEngine.put("test/store", "event.starts_at", ~U[2026-03-31 12:00:00Z])
     assert_receive {:event, %{path: "event.starts_at", op: :set, value: %DateTime{}, committed: false}}, 500
   end
+
+  # File tests
+
+  test "put_file stores reference in cache" do
+    # Create a temp file
+    tmp = Path.join(System.tmp_dir!(), "dust_test_#{System.unique_integer([:positive])}.txt")
+    File.write!(tmp, "hello world")
+
+    :ok = SyncEngine.put_file("test/store", "docs.readme", tmp)
+
+    {:ok, ref} = SyncEngine.get("test/store", "docs.readme")
+    assert %Dust.FileRef{} = ref
+    assert ref.hash == "sha256:" <> (:crypto.hash(:sha256, "hello world") |> Base.encode16(case: :lower))
+    assert ref.size == 11
+    assert ref.filename == Path.basename(tmp)
+    assert ref.content_type == "application/octet-stream"
+  after
+    File.rm(Path.join(System.tmp_dir!(), "dust_test_*.txt"))
+  end
+
+  test "put_file accepts filename and content_type opts" do
+    tmp = Path.join(System.tmp_dir!(), "dust_test_upload_#{System.unique_integer([:positive])}.bin")
+    File.write!(tmp, <<0, 1, 2, 3>>)
+
+    :ok = SyncEngine.put_file("test/store", "files.data", tmp,
+      filename: "custom.dat",
+      content_type: "application/octet-stream"
+    )
+
+    {:ok, ref} = SyncEngine.get("test/store", "files.data")
+    assert ref.filename == "custom.dat"
+    assert ref.content_type == "application/octet-stream"
+  after
+    File.rm(Path.join(System.tmp_dir!(), "dust_test_upload_*.bin"))
+  end
+
+  test "get returns FileRef for file entries" do
+    file_map = %{
+      "_type" => "file",
+      "hash" => "sha256:abc123",
+      "size" => 100,
+      "content_type" => "text/plain",
+      "filename" => "test.txt",
+      "uploaded_at" => "2026-03-31T12:00:00Z"
+    }
+
+    # Write a file reference directly into cache
+    SyncEngine.put("test/store", "files.doc", file_map)
+
+    {:ok, ref} = SyncEngine.get("test/store", "files.doc")
+    assert %Dust.FileRef{} = ref
+    assert ref.hash == "sha256:abc123"
+    assert ref.filename == "test.txt"
+  end
+
+  test "get returns plain value for non-file entries" do
+    SyncEngine.put("test/store", "plain.key", "just a string")
+    assert {:ok, "just a string"} = SyncEngine.get("test/store", "plain.key")
+
+    SyncEngine.put("test/store", "plain.num", 42)
+    assert {:ok, 42} = SyncEngine.get("test/store", "plain.num")
+
+    SyncEngine.put("test/store", "plain.map", %{"foo" => "bar"})
+    assert {:ok, %{"foo" => "bar"}} = SyncEngine.get("test/store", "plain.map")
+  end
+
+  test "put_file fires callback" do
+    tmp = Path.join(System.tmp_dir!(), "dust_test_cb_#{System.unique_integer([:positive])}.txt")
+    File.write!(tmp, "callback test")
+
+    test_pid = self()
+    SyncEngine.on("test/store", "uploads.*", fn event -> send(test_pid, {:event, event}) end)
+    SyncEngine.put_file("test/store", "uploads.file1", tmp)
+
+    assert_receive {:event, %{path: "uploads.file1", op: :put_file, committed: false}}, 500
+  after
+    File.rm(Path.join(System.tmp_dir!(), "dust_test_cb_*.txt"))
+  end
 end

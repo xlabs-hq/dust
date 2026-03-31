@@ -38,6 +38,10 @@ defmodule Dust.SyncEngine do
     GenServer.call(via(store), {:remove, path, member})
   end
 
+  def put_file(store, path, source_path, opts \\ []) do
+    GenServer.call(via(store), {:put_file, path, source_path, opts})
+  end
+
   def enum(store, pattern) do
     GenServer.call(via(store), {:enum, pattern})
   end
@@ -98,6 +102,13 @@ defmodule Dust.SyncEngine do
   @impl true
   def handle_call({:get, path}, _from, state) do
     result = state.cache.read(state.cache_target, state.store, path)
+
+    result =
+      case result do
+        {:ok, %{"_type" => "file"} = map} -> {:ok, Dust.FileRef.from_map(map)}
+        other -> other
+      end
+
     {:reply, result, state}
   end
 
@@ -255,6 +266,51 @@ defmodule Dust.SyncEngine do
   end
 
   @impl true
+  def handle_call({:put_file, path, source_path, opts}, _from, state) do
+    client_op_id = generate_op_id()
+
+    # Read file and encode
+    content = File.read!(source_path)
+    base64_content = Base.encode64(content)
+    filename = opts[:filename] || Path.basename(source_path)
+    content_type = opts[:content_type] || "application/octet-stream"
+
+    # Build optimistic file reference (we know the hash before upload)
+    hash = "sha256:" <> (:crypto.hash(:sha256, content) |> Base.encode16(case: :lower))
+
+    ref = %{
+      "_type" => "file",
+      "hash" => hash,
+      "size" => byte_size(content),
+      "content_type" => content_type,
+      "filename" => filename,
+      "uploaded_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+    }
+
+    # Optimistic local write (store the reference)
+    :ok = state.cache.write(state.cache_target, state.store, path, ref, "file", 0)
+
+    # Fire local callback
+    dispatch_callbacks(state, path, %{
+      store: state.store, path: path, op: :put_file, value: ref,
+      committed: false, source: :local, client_op_id: client_op_id
+    })
+
+    # Queue for server (connection sends put_file message with base64 content)
+    op_msg = %{
+      op: :put_file, path: path, client_op_id: client_op_id,
+      content: base64_content, filename: filename, content_type: content_type
+    }
+
+    pending = Map.put(state.pending_ops, client_op_id, op_msg)
+    state = %{state | pending_ops: pending}
+
+    send_to_connection(state.store, op_msg)
+
+    {:reply, :ok, state}
+  end
+
+  @impl true
   def handle_call({:enum, pattern}, _from, state) do
     results = state.cache.read_all(state.cache_target, state.store, pattern)
     {:reply, results, state}
@@ -314,6 +370,8 @@ defmodule Dust.SyncEngine do
         state.cache.write(state.cache_target, state.store, path, value, "set", store_seq)
       :remove ->
         state.cache.write(state.cache_target, state.store, path, value, "set", store_seq)
+      :put_file ->
+        state.cache.write(state.cache_target, state.store, path, value, "file", store_seq)
     end
 
     # Reconcile pending ops
