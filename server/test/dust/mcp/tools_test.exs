@@ -432,6 +432,99 @@ defmodule Dust.MCP.ToolsTest do
     end
   end
 
+  describe "dust_rollback" do
+    test "rolls back a path to a previous seq", ctx do
+      # Write initial value
+      put_req =
+        make_req(%{"store" => ctx.store_full_name, "path" => "title", "value" => "Hello"})
+
+      {:result, _, _} = Dust.MCP.Tools.DustPut.call(put_req, ctx.channel, [])
+
+      # Overwrite
+      put_req2 =
+        make_req(%{"store" => ctx.store_full_name, "path" => "title", "value" => "Changed"})
+
+      {:result, _, _} = Dust.MCP.Tools.DustPut.call(put_req2, ctx.channel, [])
+
+      # Rollback path to seq 1
+      rb_req =
+        make_req(%{"store" => ctx.store_full_name, "path" => "title", "to_seq" => 1})
+
+      {:result, result, _} = Dust.MCP.Tools.DustRollback.call(rb_req, ctx.channel, [])
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
+      assert text =~ "Rolled back title to seq 1"
+
+      # Verify value was restored
+      get_req = make_req(%{"store" => ctx.store_full_name, "path" => "title"})
+      {:result, get_result, _} = Dust.MCP.Tools.DustGet.call(get_req, ctx.channel, [])
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = get_result
+      assert Jason.decode!(text) == "Hello"
+    end
+
+    test "rolls back entire store", ctx do
+      put_req =
+        make_req(%{"store" => ctx.store_full_name, "path" => "a", "value" => "1"})
+
+      {:result, _, _} = Dust.MCP.Tools.DustPut.call(put_req, ctx.channel, [])
+
+      put_req2 =
+        make_req(%{"store" => ctx.store_full_name, "path" => "b", "value" => "2"})
+
+      {:result, _, _} = Dust.MCP.Tools.DustPut.call(put_req2, ctx.channel, [])
+
+      # Rollback to seq 1 (only "a" existed)
+      rb_req = make_req(%{"store" => ctx.store_full_name, "to_seq" => 1})
+      {:result, result, _} = Dust.MCP.Tools.DustRollback.call(rb_req, ctx.channel, [])
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
+      assert text =~ "1 ops written"
+
+      # "b" should be gone
+      get_req = make_req(%{"store" => ctx.store_full_name, "path" => "b"})
+      {:result, get_result, _} = Dust.MCP.Tools.DustGet.call(get_req, ctx.channel, [])
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = get_result
+      assert Jason.decode!(text) == nil
+    end
+
+    test "returns error for beyond retention", ctx do
+      put_req =
+        make_req(%{"store" => ctx.store_full_name, "path" => "key", "value" => "v"})
+
+      {:result, _, _} = Dust.MCP.Tools.DustPut.call(put_req, ctx.channel, [])
+
+      rb_req =
+        make_req(%{"store" => ctx.store_full_name, "path" => "key", "to_seq" => 0})
+
+      {:error, reason, _} = Dust.MCP.Tools.DustRollback.call(rb_req, ctx.channel, [])
+      assert reason =~ "Rollback failed"
+    end
+
+    test "read-only token cannot rollback", ctx do
+      {:ok, ro_token} =
+        Dust.Stores.create_store_token(ctx.store, %{
+          name: "readonly",
+          read: true,
+          write: false,
+          created_by_id: ctx.token.created_by_id
+        })
+
+      {:ok, ro_token} = Dust.Stores.authenticate_token(ro_token.raw_token)
+
+      ro_channel = %GenMCP.Mux.Channel{
+        client: self(),
+        progress_token: nil,
+        status: :request,
+        assigns: %{store_token: ro_token},
+        log_level: :notice
+      }
+
+      rb_req =
+        make_req(%{"store" => ctx.store_full_name, "path" => "key", "to_seq" => 1})
+
+      {:error, reason, _} = Dust.MCP.Tools.DustRollback.call(rb_req, ro_channel, [])
+      assert reason =~ "write permission"
+    end
+  end
+
   describe "permission checks" do
     test "read-only token cannot write", ctx do
       # Create a read-only token

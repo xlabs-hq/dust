@@ -1,7 +1,7 @@
 defmodule Dust.Sync do
   import Ecto.Query
   alias Dust.Repo
-  alias Dust.Sync.{Writer, StoreOp, StoreEntry}
+  alias Dust.Sync.{Writer, Rollback, StoreOp, StoreEntry}
 
   def write(store_id, op_attrs) do
     Writer.write(store_id, op_attrs)
@@ -65,6 +65,24 @@ defmodule Dust.Sync do
       select: count()
     )
     |> Repo.one()
+  end
+
+  @doc """
+  Rollback a single path to its value at `to_seq`.
+
+  Returns `{:ok, op}` or `{:ok, :noop}` if already at that state.
+  """
+  def rollback(store_id, path, to_seq) do
+    Rollback.rollback_path(store_id, path, to_seq)
+  end
+
+  @doc """
+  Rollback the entire store to its state at `to_seq`.
+
+  Returns `{:ok, count}` where count is the number of ops written.
+  """
+  def rollback(store_id, to_seq) do
+    Rollback.rollback_store(store_id, to_seq)
   end
 
   defp unwrap_entry(%StoreEntry{value: %{"_typed" => v, "_type" => "decimal"}} = entry) do

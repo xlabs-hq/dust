@@ -2,6 +2,7 @@ defmodule DustWeb.StoreChannel do
   use Phoenix.Channel
 
   alias Dust.{Stores, Sync}
+  alias Dust.Sync.Rollback
 
   @valid_ops %{
     "set" => :set,
@@ -70,6 +71,52 @@ defmodule DustWeb.StoreChannel do
             {:error, reason} ->
               {:reply, {:error, %{reason: to_string(reason)}}, socket}
           end
+      end
+    else
+      {:reply, {:error, %{reason: "unauthorized"}}, socket}
+    end
+  end
+
+  @impl true
+  def handle_in("rollback", %{"path" => path, "to_seq" => to_seq}, socket) do
+    store_token = socket.assigns.store_token
+
+    if Stores.StoreToken.can_write?(store_token) do
+      case Rollback.rollback_path(socket.assigns.store_id, path, to_seq) do
+        {:ok, :noop} ->
+          {:reply, {:ok, %{store_seq: Sync.current_seq(socket.assigns.store_id), noop: true}},
+           socket}
+
+        {:ok, op} ->
+          broadcast!(socket, "event", %{
+            store_seq: op.store_seq,
+            op: op.op,
+            path: op.path,
+            value: unwrap_value(op.value),
+            device_id: op.device_id,
+            client_op_id: op.client_op_id
+          })
+
+          {:reply, {:ok, %{store_seq: op.store_seq}}, socket}
+
+        {:error, reason} ->
+          {:reply, {:error, %{reason: to_string(reason)}}, socket}
+      end
+    else
+      {:reply, {:error, %{reason: "unauthorized"}}, socket}
+    end
+  end
+
+  def handle_in("rollback", %{"to_seq" => to_seq}, socket) do
+    store_token = socket.assigns.store_token
+
+    if Stores.StoreToken.can_write?(store_token) do
+      case Rollback.rollback_store(socket.assigns.store_id, to_seq) do
+        {:ok, count} ->
+          {:reply, {:ok, %{ops_written: count}}, socket}
+
+        {:error, reason} ->
+          {:reply, {:error, %{reason: to_string(reason)}}, socket}
       end
     else
       {:reply, {:error, %{reason: "unauthorized"}}, socket}
