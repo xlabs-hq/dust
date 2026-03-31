@@ -85,6 +85,25 @@ defmodule Dust.Cache.EctoTest do
       assert 100 = EctoCache.last_seq(Dust.TestRepo, "store-a")
       assert 5 = EctoCache.last_seq(Dust.TestRepo, "store-b")
     end
+
+    test "survives deletion of the latest entry" do
+      :ok = EctoCache.write(Dust.TestRepo, @store, "a", "v1", "string", 5)
+      :ok = EctoCache.write(Dust.TestRepo, @store, "b", "v2", "string", 10)
+
+      # Delete the entry with the highest seq
+      :ok = EctoCache.delete(Dust.TestRepo, @store, "b")
+
+      # last_seq should still be 10, not drop to 5
+      assert 10 = EctoCache.last_seq(Dust.TestRepo, @store)
+    end
+
+    test "survives deletion of all entries" do
+      :ok = EctoCache.write(Dust.TestRepo, @store, "only", "v", "string", 7)
+      :ok = EctoCache.delete(Dust.TestRepo, @store, "only")
+
+      # last_seq should still be 7, not drop to 0
+      assert 7 = EctoCache.last_seq(Dust.TestRepo, @store)
+    end
   end
 
   describe "read_all" do

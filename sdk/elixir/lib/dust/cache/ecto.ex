@@ -5,6 +5,8 @@ defmodule Dust.Cache.Ecto do
 
   alias Dust.Cache.Ecto.CacheEntry
 
+  @seq_sentinel_path "_dust:last_seq"
+
   @impl Dust.Cache
   def read(repo, store, path) do
     query =
@@ -25,7 +27,7 @@ defmodule Dust.Cache.Ecto do
 
     query =
       from(c in CacheEntry,
-        where: c.store == ^store,
+        where: c.store == ^store and c.path != ^@seq_sentinel_path,
         select: {c.path, c.value}
       )
 
@@ -51,6 +53,7 @@ defmodule Dust.Cache.Ecto do
       conflict_target: [:store, :path]
     )
 
+    update_seq_sentinel(repo, store, seq)
     :ok
   end
 
@@ -67,14 +70,16 @@ defmodule Dust.Cache.Ecto do
         }
       end)
 
-    # Process one at a time to handle upsert correctly across all databases
-    Enum.each(rows, fn row ->
-      repo.insert_all(CacheEntry, [row],
-        on_conflict: [set: [value: row.value, type: row.type, seq: row.seq]],
-        conflict_target: [:store, :path]
-      )
-    end)
+    max_seq =
+      Enum.reduce(rows, 0, fn row, acc ->
+        repo.insert_all(CacheEntry, [row],
+          on_conflict: [set: [value: row.value, type: row.type, seq: row.seq]],
+          conflict_target: [:store, :path]
+        )
+        max(acc, row.seq)
+      end)
 
+    if max_seq > 0, do: update_seq_sentinel(repo, store, max_seq)
     :ok
   end
 
@@ -93,10 +98,32 @@ defmodule Dust.Cache.Ecto do
   def last_seq(repo, store) do
     query =
       from(c in CacheEntry,
-        where: c.store == ^store,
-        select: max(c.seq)
+        where: c.store == ^store and c.path == ^@seq_sentinel_path,
+        select: c.seq
       )
 
     repo.one(query) || 0
+  end
+
+  defp update_seq_sentinel(repo, store, seq) do
+    import Ecto.Query
+
+    sentinel = %{
+      store: store,
+      path: @seq_sentinel_path,
+      value: Jason.encode!(seq),
+      type: "integer",
+      seq: seq
+    }
+
+    # Try insert; on conflict only update if new seq is higher
+    repo.insert_all(CacheEntry, [sentinel],
+      on_conflict:
+        from(c in CacheEntry,
+          update: [set: [seq: ^seq, value: ^Jason.encode!(seq)]],
+          where: c.seq < ^seq
+        ),
+      conflict_target: [:store, :path]
+    )
   end
 end
