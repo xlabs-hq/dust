@@ -115,6 +115,16 @@ defmodule Dust.Accounts do
     end
   end
 
+  def list_organization_members(%Organization{} = org) do
+    from(m in OrganizationMembership,
+      where: m.organization_id == ^org.id and is_nil(m.deleted_at),
+      join: u in assoc(m, :user),
+      preload: [:user],
+      order_by: [asc: m.inserted_at]
+    )
+    |> Repo.all()
+  end
+
   def list_user_organizations(%User{} = user) do
     from(o in Organization,
       join: m in OrganizationMembership,

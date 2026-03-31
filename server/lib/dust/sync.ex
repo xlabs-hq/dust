@@ -36,6 +36,37 @@ defmodule Dust.Sync do
     |> Repo.one() || 0
   end
 
+  def get_entries_page(store_id, opts \\ []) do
+    limit = Keyword.get(opts, :limit, 100)
+
+    from(e in StoreEntry,
+      where: e.store_id == ^store_id,
+      order_by: e.path,
+      limit: ^limit
+    )
+    |> Repo.all()
+    |> Enum.map(&unwrap_entry/1)
+  end
+
+  def get_ops_page(store_id, opts \\ []) do
+    limit = Keyword.get(opts, :limit, 50)
+
+    from(o in StoreOp,
+      where: o.store_id == ^store_id,
+      order_by: [desc: o.store_seq],
+      limit: ^limit
+    )
+    |> Repo.all()
+  end
+
+  def entry_count(store_id) do
+    from(e in StoreEntry,
+      where: e.store_id == ^store_id,
+      select: count()
+    )
+    |> Repo.one()
+  end
+
   defp unwrap_entry(%StoreEntry{value: %{"_scalar" => scalar}} = entry) do
     %{entry | value: scalar}
   end

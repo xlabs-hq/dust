@@ -36,7 +36,10 @@ defmodule DustWeb.Router do
   scope "/:org", DustWeb do
     pipe_through [:browser, :require_authenticated_user, :assign_org_to_scope, :inertia]
 
-    get "/", PageController, :home
+    get "/", DashboardController, :index
+    resources "/stores", StoreController, only: [:index, :show, :new, :create], param: "name"
+    resources "/tokens", TokenController, only: [:index, :new, :create, :delete]
+    get "/settings", SettingsController, :index
   end
 
   # Enable LiveDashboard and Swoosh mailbox preview in development

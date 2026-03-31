@@ -15,6 +15,22 @@ defmodule Dust.Stores do
 
   def get_store!(id), do: Repo.get!(Store, id)
 
+  def list_stores(organization) do
+    from(s in Store,
+      where: s.organization_id == ^organization.id,
+      order_by: s.name
+    )
+    |> Repo.all()
+  end
+
+  def get_store_by_org_and_name!(organization, name) do
+    Repo.one!(
+      from(s in Store,
+        where: s.organization_id == ^organization.id and s.name == ^name
+      )
+    )
+  end
+
   def get_store_by_full_name(full_name) do
     case String.split(full_name, "/", parts: 2) do
       [org_slug, store_name] ->
@@ -78,12 +94,56 @@ defmodule Dust.Stores do
 
   def authenticate_token(_), do: {:error, :invalid_token}
 
+  def list_org_tokens(organization) do
+    from(t in StoreToken,
+      join: s in Store,
+      on: t.store_id == s.id,
+      where: s.organization_id == ^organization.id,
+      order_by: [desc: t.inserted_at],
+      preload: [:store]
+    )
+    |> Repo.all()
+  end
+
+  def get_token!(id), do: Repo.get!(StoreToken, id)
+
+  def revoke_token(token_id) do
+    token = Repo.get!(StoreToken, token_id)
+    Repo.delete(token)
+  end
+
   defp generate_token do
     @token_prefix <> Base.url_encode64(:crypto.strong_rand_bytes(32), padding: false)
   end
 
   defp hash_token(raw_token) do
     :crypto.hash(:sha256, raw_token)
+  end
+
+  def get_org_stats(organization) do
+    store_ids =
+      from(s in Store, where: s.organization_id == ^organization.id, select: s.id)
+      |> Repo.all()
+
+    stores_count = length(store_ids)
+
+    tokens_count =
+      if store_ids == [] do
+        0
+      else
+        from(t in StoreToken, where: t.store_id in ^store_ids, select: count(t.id))
+        |> Repo.one()
+      end
+
+    entries_count =
+      if store_ids == [] do
+        0
+      else
+        from(e in Dust.Sync.StoreEntry, where: e.store_id in ^store_ids, select: count())
+        |> Repo.one()
+      end
+
+    %{stores: stores_count, tokens: tokens_count, entries: entries_count}
   end
 
   # Devices
