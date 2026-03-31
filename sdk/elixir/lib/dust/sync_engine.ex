@@ -363,6 +363,8 @@ defmodule Dust.SyncEngine do
     "op_" <> Base.url_encode64(:crypto.strong_rand_bytes(12), padding: false)
   end
 
+  defp detect_type(%Decimal{}), do: "decimal"
+  defp detect_type(%DateTime{}), do: "datetime"
   defp detect_type(value) when is_boolean(value), do: "boolean"
   defp detect_type(value) when is_map(value), do: "map"
   defp detect_type(value) when is_binary(value), do: "string"

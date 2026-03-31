@@ -206,6 +206,8 @@ defmodule Dust.Sync.Writer do
     |> Repo.delete_all()
   end
 
+  defp detect_type(%Decimal{}), do: "decimal"
+  defp detect_type(%DateTime{}), do: "datetime"
   defp detect_type(value) when is_map(value), do: "map"
   defp detect_type(value) when is_binary(value), do: "string"
   defp detect_type(value) when is_integer(value), do: "integer"
@@ -214,7 +216,10 @@ defmodule Dust.Sync.Writer do
   defp detect_type(nil), do: "null"
   defp detect_type(_), do: "string"
 
-  # StoreEntry.value is :map type, so wrap scalars
+  # StoreEntry.value is :map type, so wrap scalars.
+  # Decimal and DateTime get a typed envelope for lossless round-tripping through jsonb.
+  defp wrap_value(%Decimal{} = d), do: %{"_typed" => Decimal.to_string(d), "_type" => "decimal"}
+  defp wrap_value(%DateTime{} = dt), do: %{"_typed" => DateTime.to_iso8601(dt), "_type" => "datetime"}
   defp wrap_value(value) when is_map(value), do: value
   defp wrap_value(value), do: %{"_scalar" => value}
 

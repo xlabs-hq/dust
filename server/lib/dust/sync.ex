@@ -67,6 +67,15 @@ defmodule Dust.Sync do
     |> Repo.one()
   end
 
+  defp unwrap_entry(%StoreEntry{value: %{"_typed" => v, "_type" => "decimal"}} = entry) do
+    %{entry | value: Decimal.new(v)}
+  end
+
+  defp unwrap_entry(%StoreEntry{value: %{"_typed" => v, "_type" => "datetime"}} = entry) do
+    {:ok, dt, _} = DateTime.from_iso8601(v)
+    %{entry | value: dt}
+  end
+
   defp unwrap_entry(%StoreEntry{value: %{"_scalar" => scalar}} = entry) do
     %{entry | value: scalar}
   end

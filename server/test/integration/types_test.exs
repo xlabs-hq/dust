@@ -67,6 +67,50 @@ defmodule Dust.Integration.TypesTest do
     end
   end
 
+  describe "decimal and datetime via catch-up" do
+    test "catch-up delivers Decimal values unwrapped" do
+      %{token: token, store: store} = create_test_store("dec", "dec_store")
+
+      # Write a Decimal directly via Sync (simulates server-side write)
+      Dust.Sync.write(store.id, %{
+        op: :set,
+        path: "product.price",
+        value: Decimal.new("29.99"),
+        device_id: "server",
+        client_op_id: "o1"
+      })
+
+      # Now connect a client at seq 0 — should get catch-up with the typed value
+      {_socket, _reply} = connect_client(token, store, "dev_1", 0)
+
+      assert_push "event", event
+      assert event.path == "product.price"
+      assert %Decimal{} = event.value
+      assert Decimal.equal?(event.value, Decimal.new("29.99"))
+    end
+
+    test "catch-up delivers DateTime values unwrapped" do
+      %{token: token, store: store} = create_test_store("dtc", "dtc_store")
+
+      dt = ~U[2026-03-31 12:00:00Z]
+
+      Dust.Sync.write(store.id, %{
+        op: :set,
+        path: "event.starts_at",
+        value: dt,
+        device_id: "server",
+        client_op_id: "o1"
+      })
+
+      {_socket, _reply} = connect_client(token, store, "dev_1", 0)
+
+      assert_push "event", event
+      assert event.path == "event.starts_at"
+      assert %DateTime{} = event.value
+      assert DateTime.compare(event.value, dt) == :eq
+    end
+  end
+
   describe "set via channel" do
     test "add op works through channel" do
       %{token: token, store: store} = create_test_store("setc", "setc_store")

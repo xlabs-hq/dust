@@ -152,4 +152,34 @@ defmodule Dust.SyncEngineTest do
     SyncEngine.remove("test/store", "post.tags", "elixir")
     assert_receive {:event, %{path: "post.tags", op: :remove, value: "elixir", committed: false}}, 500
   end
+
+  # Decimal tests
+
+  test "put and get Decimal value" do
+    price = Decimal.new("29.99")
+    :ok = SyncEngine.put("test/store", "product.price", price)
+    assert {:ok, ^price} = SyncEngine.get("test/store", "product.price")
+  end
+
+  test "Decimal detect_type returns decimal" do
+    test_pid = self()
+    SyncEngine.on("test/store", "item.*", fn event -> send(test_pid, {:event, event}) end)
+    SyncEngine.put("test/store", "item.price", Decimal.new("9.99"))
+    assert_receive {:event, %{path: "item.price", op: :set, value: %Decimal{}, committed: false}}, 500
+  end
+
+  # DateTime tests
+
+  test "put and get DateTime value" do
+    dt = ~U[2026-03-31 12:00:00Z]
+    :ok = SyncEngine.put("test/store", "event.starts_at", dt)
+    assert {:ok, ^dt} = SyncEngine.get("test/store", "event.starts_at")
+  end
+
+  test "DateTime detect_type returns datetime" do
+    test_pid = self()
+    SyncEngine.on("test/store", "event.*", fn event -> send(test_pid, {:event, event}) end)
+    SyncEngine.put("test/store", "event.starts_at", ~U[2026-03-31 12:00:00Z])
+    assert_receive {:event, %{path: "event.starts_at", op: :set, value: %DateTime{}, committed: false}}, 500
+  end
 end

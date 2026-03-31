@@ -125,6 +125,11 @@ defmodule DustWeb.StoreChannel do
   defp validate_merge_value(:remove, _), do: :ok
   defp validate_merge_value(_, _), do: :ok
 
+  defp unwrap_value(%{"_typed" => v, "_type" => "decimal"}), do: Decimal.new(v)
+  defp unwrap_value(%{"_typed" => v, "_type" => "datetime"}) do
+    {:ok, dt, _} = DateTime.from_iso8601(v)
+    dt
+  end
   defp unwrap_value(%{"_scalar" => scalar}), do: scalar
   defp unwrap_value(value), do: value
 end
