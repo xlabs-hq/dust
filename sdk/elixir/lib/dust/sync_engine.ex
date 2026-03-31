@@ -62,6 +62,16 @@ defmodule Dust.SyncEngine do
     GenServer.cast(via(store), {:set_status, new_status})
   end
 
+  @doc "Write directly to cache without the write pipeline. For test seeding only."
+  def seed_entry(store, path, value, type) do
+    GenServer.call(via(store), {:seed_entry, path, value, type})
+  end
+
+  @doc "Update last_store_seq in state. For test harness only."
+  def set_store_seq(store, seq) do
+    GenServer.cast(via(store), {:set_store_seq, seq})
+  end
+
   # Server
 
   @impl true
@@ -330,6 +340,17 @@ defmodule Dust.SyncEngine do
   def handle_call({:on, pattern, callback, opts}, _from, state) do
     ref = Dust.CallbackRegistry.register(state.callbacks, state.store, pattern, callback, opts)
     {:reply, ref, state}
+  end
+
+  @impl true
+  def handle_call({:seed_entry, path, value, type}, _from, state) do
+    :ok = state.cache.write(state.cache_target, state.store, path, value, type, 0)
+    {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_cast({:set_store_seq, seq}, state) do
+    {:noreply, %{state | last_store_seq: seq}}
   end
 
   @impl true
