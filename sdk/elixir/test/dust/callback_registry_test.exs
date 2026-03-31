@@ -15,11 +15,13 @@ defmodule Dust.CallbackRegistryTest do
     ref = CallbackRegistry.register(table, "james/blog", "posts.*", callback)
     assert is_reference(ref)
 
-    callbacks = CallbackRegistry.match(table, "james/blog", "posts.hello")
-    assert length(callbacks) == 1
+    subscriptions = CallbackRegistry.match(table, "james/blog", "posts.hello")
+    assert length(subscriptions) == 1
 
-    hd(callbacks).(%{path: "posts.hello"})
-    assert_receive {:callback, %{path: "posts.hello"}}
+    {worker_pid, _ref, _max, _resync} = hd(subscriptions)
+    Dust.CallbackWorker.dispatch(worker_pid, %{path: "posts.hello"})
+    # Worker processes events asynchronously, give it a moment
+    assert_receive {:callback, %{path: "posts.hello"}}, 500
   end
 
   test "does not match wrong store", %{table: table} do
@@ -32,9 +34,16 @@ defmodule Dust.CallbackRegistryTest do
     assert CallbackRegistry.match(table, "james/blog", "config.x") == []
   end
 
-  test "unregister removes callback", %{table: table} do
+  test "unregister removes callback and stops worker", %{table: table} do
     ref = CallbackRegistry.register(table, "james/blog", "posts.*", fn _ -> :ok end)
+
+    [{pid, _, _, _}] = CallbackRegistry.match(table, "james/blog", "posts.hello")
+    assert Process.alive?(pid)
+
     CallbackRegistry.unregister(table, ref)
     assert CallbackRegistry.match(table, "james/blog", "posts.hello") == []
+    # Worker should be stopped
+    Process.sleep(10)
+    refute Process.alive?(pid)
   end
 end

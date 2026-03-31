@@ -34,8 +34,8 @@ defmodule Dust.SyncEngine do
     GenServer.call(via(store), :status)
   end
 
-  def on(store, pattern, callback) do
-    GenServer.call(via(store), {:on, pattern, callback})
+  def on(store, pattern, callback, opts \\ []) do
+    GenServer.call(via(store), {:on, pattern, callback, opts})
   end
 
   def handle_server_event(store, event) do
@@ -169,8 +169,8 @@ defmodule Dust.SyncEngine do
   end
 
   @impl true
-  def handle_call({:on, pattern, callback}, _from, state) do
-    ref = Dust.CallbackRegistry.register(state.callbacks, state.store, pattern, callback)
+  def handle_call({:on, pattern, callback, opts}, _from, state) do
+    ref = Dust.CallbackRegistry.register(state.callbacks, state.store, pattern, callback, opts)
     {:reply, ref, state}
   end
 
@@ -218,8 +218,22 @@ defmodule Dust.SyncEngine do
   end
 
   defp dispatch_callbacks(state, path, event) do
-    callbacks = Dust.CallbackRegistry.match(state.callbacks, state.store, path)
-    Enum.each(callbacks, fn callback -> callback.(event) end)
+    subscriptions = Dust.CallbackRegistry.match(state.callbacks, state.store, path)
+
+    Enum.each(subscriptions, fn {worker_pid, ref, max_queue_size, on_resync} ->
+      queue_len = Dust.CallbackWorker.queue_len(worker_pid)
+
+      if queue_len >= max_queue_size do
+        # Subscription has fallen behind — drop it and notify
+        Dust.CallbackRegistry.unregister(state.callbacks, ref)
+
+        if is_function(on_resync, 1) do
+          on_resync.(%{error: :resync_required, ref: ref})
+        end
+      else
+        Dust.CallbackWorker.dispatch(worker_pid, event)
+      end
+    end)
   end
 
   defp send_to_connection(store, op_attrs) do

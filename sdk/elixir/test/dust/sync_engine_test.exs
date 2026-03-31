@@ -46,7 +46,7 @@ defmodule Dust.SyncEngineTest do
     test_pid = self()
     SyncEngine.on("test/store", "posts.*", fn event -> send(test_pid, {:event, event}) end)
     SyncEngine.put("test/store", "posts.hello", "value")
-    assert_receive {:event, %{path: "posts.hello", committed: false, source: :local}}
+    assert_receive {:event, %{path: "posts.hello", committed: false, source: :local}}, 500
   end
 
   test "on does not fire for non-matching writes" do
