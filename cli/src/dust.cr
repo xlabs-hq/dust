@@ -7,6 +7,11 @@ require "./dust/client/connection"
 require "./dust/commands/auth"
 require "./dust/commands/store"
 require "./dust/commands/data"
+require "./dust/commands/types"
+require "./dust/commands/files"
+require "./dust/commands/watch"
+require "./dust/commands/log"
+require "./dust/commands/token"
 require "./dust/cli"
 
 Dust::CLI.run(ARGV)

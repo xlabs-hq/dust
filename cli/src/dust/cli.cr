@@ -31,26 +31,21 @@ module Dust
         when "merge"      then Commands::Data.merge(config, rest)
         when "delete"     then Commands::Data.delete(config, rest)
         when "enum"       then Commands::Data.enum(config, rest)
-        when "watch"      then not_yet("watch")
-        when "log"        then not_yet("log")
-        when "rollback"   then not_yet("rollback")
-        when "increment"  then not_yet("increment")
-        when "add"        then not_yet("add")
-        when "remove"     then not_yet("remove")
-        when "put-file"   then not_yet("put-file")
-        when "fetch-file" then not_yet("fetch-file")
-        when "token"      then not_yet("token")
+        when "watch"      then Commands::Watch.watch(config, rest)
+        when "log"        then Commands::Log.log(config, rest)
+        when "rollback"   then Commands::Log.rollback(config, rest)
+        when "increment"  then Commands::Types.increment(config, rest)
+        when "add"        then Commands::Types.add(config, rest)
+        when "remove"     then Commands::Types.remove(config, rest)
+        when "put-file"   then Commands::Files.put_file(config, rest)
+        when "fetch-file" then Commands::Files.fetch_file(config, rest)
+        when "token"      then Commands::Token.token(config, rest)
         else
           STDERR.puts "Unknown command: #{command}"
           print_usage
           exit 1
         end
       end
-    end
-
-    private def self.not_yet(command : String)
-      STDERR.puts "Command '#{command}' is not yet implemented."
-      exit 1
     end
 
     def self.print_usage
