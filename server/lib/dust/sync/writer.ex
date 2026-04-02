@@ -81,10 +81,10 @@ defmodule Dust.Sync.Writer do
         }
         |> Repo.insert!()
 
-      # Apply to materialized state
-      apply_to_entries(store_id, next_seq, attrs)
+      # Apply to materialized state and attach the result to the op
+      materialized = apply_to_entries(store_id, next_seq, attrs)
 
-      op
+      %{op | materialized_value: materialized}
     end)
   end
 
@@ -101,6 +101,8 @@ defmodule Dust.Sync.Writer do
       on_conflict: [set: [value: ValueCodec.wrap(value), type: type, seq: seq]],
       conflict_target: [:store_id, :path]
     )
+
+    value
   end
 
   defp apply_to_entries(store_id, _seq, %{op: :delete, path: path}) do
@@ -110,6 +112,7 @@ defmodule Dust.Sync.Writer do
     |> Repo.delete_all()
 
     delete_descendants(store_id, segments)
+    nil
   end
 
   defp apply_to_entries(store_id, seq, %{op: :merge, path: path, value: map}) when is_map(map) do
@@ -129,6 +132,8 @@ defmodule Dust.Sync.Writer do
         conflict_target: [:store_id, :path]
       )
     end)
+
+    map
   end
 
   defp apply_to_entries(store_id, seq, %{op: :increment, path: path, value: delta}) do
@@ -151,6 +156,8 @@ defmodule Dust.Sync.Writer do
       on_conflict: [set: [value: ValueCodec.wrap(new_value), type: "counter", seq: seq]],
       conflict_target: [:store_id, :path]
     )
+
+    new_value
   end
 
   defp apply_to_entries(store_id, seq, %{op: :add, path: path, value: member}) do
@@ -173,6 +180,8 @@ defmodule Dust.Sync.Writer do
       on_conflict: [set: [value: ValueCodec.wrap(new_set), type: "set", seq: seq]],
       conflict_target: [:store_id, :path]
     )
+
+    new_set
   end
 
   defp apply_to_entries(store_id, seq, %{op: :remove, path: path, value: member}) do
@@ -195,6 +204,8 @@ defmodule Dust.Sync.Writer do
       on_conflict: [set: [value: ValueCodec.wrap(new_set), type: "set", seq: seq]],
       conflict_target: [:store_id, :path]
     )
+
+    new_set
   end
 
   defp apply_to_entries(store_id, seq, %{op: :put_file, path: path, value: ref})
@@ -213,6 +224,8 @@ defmodule Dust.Sync.Writer do
       on_conflict: [set: [value: ref, type: "file", seq: seq]],
       conflict_target: [:store_id, :path]
     )
+
+    ref
   end
 
   defp delete_descendants(store_id, ancestor_segments) do

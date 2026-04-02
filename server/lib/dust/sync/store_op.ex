@@ -9,6 +9,7 @@ defmodule Dust.Sync.StoreOp do
     field :type, :string, default: "map"
     field :device_id, :string
     field :client_op_id, :string
+    field :materialized_value, :any, virtual: true
 
     belongs_to :store, Dust.Stores.Store
 

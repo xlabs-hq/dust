@@ -158,10 +158,11 @@ defmodule DustWeb.StoreChannel do
 
   @impl true
   def handle_info({:catch_up, last_seq}, socket) do
-    ops = Sync.get_ops_since(socket.assigns.store_id, last_seq)
+    store_id = socket.assigns.store_id
+    ops = Sync.get_ops_since(store_id, last_seq)
 
     Enum.each(ops, fn op ->
-      push(socket, "event", format_event(op))
+      push(socket, "event", format_catch_up_event(store_id, op))
     end)
 
     # If we got a full batch, there may be more ops to send
@@ -173,15 +174,46 @@ defmodule DustWeb.StoreChannel do
     {:noreply, socket}
   end
 
+  # For live writes, use the materialized_value virtual field (set by Writer)
   defp format_event(op) do
+    value =
+      if op.materialized_value do
+        op.materialized_value
+      else
+        ValueCodec.unwrap(op.value)
+      end
+
     %{
       store_seq: op.store_seq,
       op: op.op,
       path: op.path,
-      value: ValueCodec.unwrap(op.value),
+      value: value,
       device_id: op.device_id,
       client_op_id: op.client_op_id
     }
+  end
+
+  # For catch-up events (historical ops from DB), read materialized values
+  # for counter/set ops so clients get the correct state, not raw deltas.
+  defp format_catch_up_event(store_id, op) when op.op in [:increment, :add, :remove] do
+    materialized =
+      case Sync.get_entry(store_id, op.path) do
+        nil -> ValueCodec.unwrap(op.value)
+        entry -> entry.value
+      end
+
+    %{
+      store_seq: op.store_seq,
+      op: op.op,
+      path: op.path,
+      value: materialized,
+      device_id: op.device_id,
+      client_op_id: op.client_op_id
+    }
+  end
+
+  defp format_catch_up_event(_store_id, op) do
+    format_event(op)
   end
 
   # If the store_ref contains "/", it's a full name like "org/store".
