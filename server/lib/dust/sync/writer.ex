@@ -89,7 +89,7 @@ defmodule Dust.Sync.Writer do
           :ok = Exqlite.Sqlite3.execute(db, "COMMIT")
 
           # Update cached metadata in Postgres
-          update_store_metadata(store_id, next_seq)
+          update_store_metadata(store_id, next_seq, db)
 
           # Build a result map that looks like the old StoreOp struct
           op = %{
@@ -259,12 +259,14 @@ defmodule Dust.Sync.Writer do
   defp encode_value(value), do: Jason.encode!(ValueCodec.wrap(value))
 
   # Update cached metadata in Postgres stores table
-  defp update_store_metadata(store_id, current_seq) do
+  defp update_store_metadata(store_id, current_seq, db) do
     import Ecto.Query
+
+    entry_count = query_one_int(db, "SELECT count(*) FROM store_entries")
 
     Dust.Repo.update_all(
       from(s in Dust.Stores.Store, where: s.id == ^store_id),
-      set: [current_seq: current_seq],
+      set: [current_seq: current_seq, entry_count: entry_count],
       inc: [op_count: 1]
     )
   end

@@ -8,19 +8,14 @@ defmodule AdminWeb.StoresLive do
     stores =
       from(s in Dust.Stores.Store,
         join: o in assoc(s, :organization),
-        left_join: e in Dust.Sync.StoreEntry,
-        on: e.store_id == s.id,
-        left_join: op in Dust.Sync.StoreOp,
-        on: op.store_id == s.id,
-        group_by: [s.id, o.slug],
         select: %{
           id: s.id,
           name: s.name,
           status: s.status,
           org_slug: o.slug,
-          entry_count: count(e.path, :distinct),
-          op_count: count(op.id, :distinct),
-          current_seq: max(op.store_seq),
+          entry_count: s.entry_count,
+          op_count: s.op_count,
+          current_seq: s.current_seq,
           inserted_at: s.inserted_at
         },
         order_by: [desc: s.inserted_at]

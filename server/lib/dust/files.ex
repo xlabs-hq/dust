@@ -89,13 +89,45 @@ defmodule Dust.Files do
 
   @doc "Total file storage bytes for all blobs referenced by a store's entries."
   def store_usage_bytes(store_id) do
-    from(b in Blob,
-      join: e in Dust.Sync.StoreEntry,
-      on: fragment("?->>'hash' = ?", e.value, b.hash),
-      where: e.store_id == ^store_id and e.type == "file",
-      select: coalesce(sum(b.size), 0)
-    )
-    |> Repo.one()
+    # Read file hashes from the store's SQLite, then sum sizes from Postgres blobs
+    hashes = file_hashes_for_store(store_id)
+
+    if hashes == [] do
+      0
+    else
+      from(b in Blob, where: b.hash in ^hashes, select: coalesce(sum(b.size), 0))
+      |> Repo.one()
+    end
+  end
+
+  defp file_hashes_for_store(store_id) do
+    case Dust.Sync.StoreDB.read_conn(store_id) do
+      {:ok, conn} ->
+        {:ok, stmt} = Exqlite.Sqlite3.prepare(conn,
+          "SELECT value FROM store_entries WHERE type = 'file'")
+
+        hashes = collect_hashes(conn, stmt, [])
+        Exqlite.Sqlite3.release(conn, stmt)
+        Dust.Sync.StoreDB.close(conn)
+        hashes
+
+      _ ->
+        []
+    end
+  end
+
+  defp collect_hashes(conn, stmt, acc) do
+    case Exqlite.Sqlite3.step(conn, stmt) do
+      {:row, [json]} ->
+        hash = case Jason.decode!(json) do
+          %{"hash" => h} -> h
+          _ -> nil
+        end
+        collect_hashes(conn, stmt, if(hash, do: [hash | acc], else: acc))
+
+      :done ->
+        acc
+    end
   end
 
   @doc "Download blob content by hash."

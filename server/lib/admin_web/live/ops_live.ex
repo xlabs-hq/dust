@@ -61,37 +61,34 @@ defmodule AdminWeb.OpsLive do
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   defp load_ops(filters, page) do
-    from(o in Dust.Sync.StoreOp,
-      join: s in assoc(o, :store),
-      join: org in assoc(s, :organization),
-      select: %{
-        id: o.id,
-        store_seq: o.store_seq,
-        op: o.op,
-        path: o.path,
-        value: o.value,
-        type: o.type,
-        device_id: o.device_id,
-        inserted_at: o.inserted_at,
-        store_name: s.name,
-        store_id: s.id,
-        org_slug: org.slug
-      },
-      order_by: [desc: o.inserted_at, desc: o.store_seq],
-      offset: ^(page * @per_page),
-      limit: @per_page
-    )
-    |> apply_filters(filters)
-    |> Repo.all()
+    store_id = filters[:store_id]
+
+    if store_id && store_id != "" do
+      # Get store metadata for display
+      store = Repo.get(Dust.Stores.Store, store_id) |> Repo.preload(:organization)
+
+      audit_opts =
+        [limit: @per_page, offset: page * @per_page]
+        |> maybe_add_filter(:device_id, filters[:device_id])
+        |> maybe_add_filter(:op, filters[:op])
+
+      Dust.Sync.Audit.query_ops(store_id, audit_opts)
+      |> Enum.map(fn op ->
+        Map.merge(op, %{
+          store_name: store && store.name,
+          store_id: store_id,
+          org_slug: store && store.organization.slug
+        })
+      end)
+    else
+      # No store selected — show empty (can't query all SQLite files efficiently)
+      []
+    end
   end
 
-  defp apply_filters(query, filters) do
-    Enum.reduce(filters, query, fn
-      {:store_id, store_id}, q -> where(q, [o], o.store_id == ^store_id)
-      {:device_id, device_id}, q -> where(q, [o], o.device_id == ^device_id)
-      {:op, op}, q -> where(q, [o], o.op == ^op)
-    end)
-  end
+  defp maybe_add_filter(opts, _key, nil), do: opts
+  defp maybe_add_filter(opts, _key, ""), do: opts
+  defp maybe_add_filter(opts, key, value), do: Keyword.put(opts, key, value)
 
   def render(assigns) do
     ~H"""
@@ -184,7 +181,10 @@ defmodule AdminWeb.OpsLive do
         </tbody>
       </table>
 
-      <div :if={@ops == []} class="p-8 text-center text-gray-500">
+      <div :if={@ops == [] && (!@filters[:store_id] || @filters[:store_id] == "")} class="p-8 text-center text-gray-500">
+        Select a store to view ops.
+      </div>
+      <div :if={@ops == [] && @filters[:store_id] && @filters[:store_id] != ""} class="p-8 text-center text-gray-500">
         No ops found.
       </div>
 

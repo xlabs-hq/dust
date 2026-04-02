@@ -83,9 +83,10 @@ defmodule Dust.Sync do
 
   def get_entries_page(store_id, opts \\ []) do
     limit = Keyword.get(opts, :limit, 100)
+    offset = Keyword.get(opts, :offset, 0)
 
     with_read_conn(store_id, fn conn ->
-      query_all(conn, "SELECT path, value, type, seq FROM store_entries ORDER BY path LIMIT ?", [limit])
+      query_all(conn, "SELECT path, value, type, seq FROM store_entries ORDER BY path LIMIT ? OFFSET ?", [limit, offset])
       |> Enum.map(fn [path, json, type, seq] ->
         %{path: path, value: json |> Jason.decode!() |> ValueCodec.unwrap(), type: type, seq: seq}
       end)
@@ -94,13 +95,14 @@ defmodule Dust.Sync do
 
   def get_ops_page(store_id, opts \\ []) do
     limit = Keyword.get(opts, :limit, 50)
+    offset = Keyword.get(opts, :offset, 0)
 
     with_read_conn(store_id, fn conn ->
       query_all(conn, """
-        SELECT store_seq, op, path, value, type, device_id, client_op_id
-        FROM store_ops ORDER BY store_seq DESC LIMIT ?
-      """, [limit])
-      |> Enum.map(&row_to_op/1)
+        SELECT store_seq, op, path, value, type, device_id, client_op_id, inserted_at
+        FROM store_ops ORDER BY store_seq DESC LIMIT ? OFFSET ?
+      """, [limit, offset])
+      |> Enum.map(&row_to_op_with_time/1)
     end) || []
   end
 
@@ -166,10 +168,7 @@ defmodule Dust.Sync do
   end
 
   defp row_to_op([store_seq, op, path, value_json, type, device_id, client_op_id]) do
-    value =
-      if value_json do
-        Jason.decode!(value_json)
-      end
+    value = if value_json, do: Jason.decode!(value_json)
 
     %{
       store_seq: store_seq,
@@ -179,6 +178,21 @@ defmodule Dust.Sync do
       type: type,
       device_id: device_id,
       client_op_id: client_op_id
+    }
+  end
+
+  defp row_to_op_with_time([store_seq, op, path, value_json, type, device_id, client_op_id, inserted_at]) do
+    value = if value_json, do: Jason.decode!(value_json)
+
+    %{
+      store_seq: store_seq,
+      op: String.to_existing_atom(op),
+      path: path,
+      value: value,
+      type: type,
+      device_id: device_id,
+      client_op_id: client_op_id,
+      inserted_at: inserted_at
     }
   end
 

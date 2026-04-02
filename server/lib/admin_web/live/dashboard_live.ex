@@ -1,6 +1,7 @@
 defmodule AdminWeb.DashboardLive do
   use AdminWeb, :live_view
 
+  import Ecto.Query
   alias Dust.Repo
 
   def mount(_params, _session, socket) do
@@ -8,8 +9,8 @@ defmodule AdminWeb.DashboardLive do
       users: Repo.aggregate(Dust.Accounts.User, :count),
       organizations: Repo.aggregate(Dust.Accounts.Organization, :count),
       stores: Repo.aggregate(Dust.Stores.Store, :count),
-      ops: Repo.aggregate(Dust.Sync.StoreOp, :count),
-      entries: Repo.aggregate(Dust.Sync.StoreEntry, :count)
+      ops: Repo.one(from(s in Dust.Stores.Store, select: coalesce(sum(s.op_count), 0))),
+      entries: Repo.one(from(s in Dust.Stores.Store, select: coalesce(sum(s.entry_count), 0)))
     }
 
     {:ok, assign(socket, page_title: "Dashboard", stats: stats)}

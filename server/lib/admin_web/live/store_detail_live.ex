@@ -16,17 +16,8 @@ defmodule AdminWeb.StoreDetailLive do
     entries = load_entries(id, 0)
     ops = load_ops(id, 0)
 
-    entry_count =
-      Repo.aggregate(
-        from(e in Dust.Sync.StoreEntry, where: e.store_id == ^id),
-        :count
-      )
-
-    op_count =
-      Repo.aggregate(
-        from(o in Dust.Sync.StoreOp, where: o.store_id == ^id),
-        :count
-      )
+    entry_count = store.entry_count
+    op_count = store.op_count
 
     {:ok,
      assign(socket,
@@ -78,23 +69,11 @@ defmodule AdminWeb.StoreDetailLive do
   end
 
   defp load_entries(store_id, page) do
-    from(e in Dust.Sync.StoreEntry,
-      where: e.store_id == ^store_id,
-      order_by: [asc: e.path],
-      offset: ^(page * @entries_per_page),
-      limit: @entries_per_page
-    )
-    |> Repo.all()
+    Dust.Sync.get_entries_page(store_id, limit: @entries_per_page, offset: page * @entries_per_page)
   end
 
   defp load_ops(store_id, page) do
-    from(o in Dust.Sync.StoreOp,
-      where: o.store_id == ^store_id,
-      order_by: [desc: o.store_seq],
-      offset: ^(page * @ops_per_page),
-      limit: @ops_per_page
-    )
-    |> Repo.all()
+    Dust.Sync.get_ops_page(store_id, limit: @ops_per_page, offset: page * @ops_per_page)
   end
 
   def render(assigns) do
