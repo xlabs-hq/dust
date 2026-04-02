@@ -1,7 +1,11 @@
 defmodule DustProtocol do
   @moduledoc "Shared wire protocol types for Dust server and SDKs."
 
-  @capver 1
+  # Capability version history
+  # 1: Initial protocol — JSON wire format, all current op types
+  @current_capver 1
+  @min_capver 1
 
-  def capver, do: @capver
+  def current_capver, do: @current_capver
+  def min_capver, do: @min_capver
 end
