@@ -66,6 +66,7 @@ defmodule DustWeb.Router do
     post "/tokens", TokenApiController, :create
     delete "/tokens/:id", TokenApiController, :delete
     get "/stores/:org/:store/export", ExportController, :show
+    post "/stores/:org/:store/import", ImportController, :create
   end
 
   # Protected routes scoped to an organization
