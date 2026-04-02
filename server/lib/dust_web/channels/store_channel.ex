@@ -34,7 +34,7 @@ defmodule DustWeb.StoreChannel do
       Logger.metadata(store_id: store.id, device_id: socket.assigns.device_id)
       :telemetry.execute([:dust, :connection, :join], %{}, %{store_id: store.id, device_id: socket.assigns.device_id})
 
-      {:ok, %{store_seq: current_seq}, socket}
+      {:ok, %{store_seq: current_seq, capver: DustProtocol.current_capver(), capver_min: DustProtocol.min_capver()}, socket}
     else
       _ -> {:error, %{reason: "unauthorized"}}
     end

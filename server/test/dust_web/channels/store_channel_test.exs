@@ -43,6 +43,8 @@ defmodule DustWeb.StoreChannelTest do
         })
 
       assert reply.store_seq == 2
+      assert reply.capver == DustProtocol.current_capver()
+      assert reply.capver_min == DustProtocol.min_capver()
 
       # Should receive catch-up events followed by catch_up_complete
       assert_push "event", %{store_seq: 1, path: "a"}

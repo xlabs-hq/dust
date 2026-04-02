@@ -4,25 +4,22 @@ defmodule DustWeb.StoreSocket do
   channel "store:*", DustWeb.StoreChannel
 
   @impl true
-  def connect(
-        %{"token" => token, "device_id" => device_id, "capver" => capver},
-        socket,
-        _connect_info
-      ) do
-    case Dust.Stores.authenticate_token(token) do
-      {:ok, store_token} ->
-        Dust.Stores.ensure_device(device_id)
+  def connect(%{"token" => token, "device_id" => device_id} = params, socket, _connect_info) do
+    capver = parse_capver(params["capver"])
 
-        socket =
-          socket
-          |> assign(:store_token, store_token)
-          |> assign(:device_id, device_id)
-          |> assign(:capver, capver)
+    with {:ok, store_token} <- Dust.Stores.authenticate_token(token),
+         :ok <- check_capver(capver) do
+      Dust.Stores.ensure_device(device_id)
 
-        {:ok, socket}
+      socket =
+        socket
+        |> assign(:store_token, store_token)
+        |> assign(:device_id, device_id)
+        |> assign(:capver, capver)
 
-      {:error, _} ->
-        :error
+      {:ok, socket}
+    else
+      _ -> :error
     end
   end
 
@@ -30,4 +27,22 @@ defmodule DustWeb.StoreSocket do
 
   @impl true
   def id(socket), do: "store_socket:#{socket.assigns.device_id}"
+
+  defp parse_capver(nil), do: 1
+
+  defp parse_capver(capver) when is_binary(capver) do
+    case Integer.parse(capver) do
+      {int, ""} -> int
+      _ -> 1
+    end
+  end
+
+  defp parse_capver(capver) when is_integer(capver), do: capver
+  defp parse_capver(_), do: 1
+
+  defp check_capver(capver) when capver >= 1 do
+    if capver >= DustProtocol.min_capver(), do: :ok, else: {:error, :capver_too_low}
+  end
+
+  defp check_capver(_), do: {:error, :capver_too_low}
 end
