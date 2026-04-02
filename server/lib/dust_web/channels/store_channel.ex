@@ -1,5 +1,6 @@
 defmodule DustWeb.StoreChannel do
   use Phoenix.Channel
+  require Logger
 
   alias Dust.{Stores, Sync, Files}
   alias Dust.Sync.{Rollback, ValueCodec}
@@ -29,6 +30,9 @@ defmodule DustWeb.StoreChannel do
         socket
         |> assign(:store_id, store.id)
         |> assign(:last_acked_seq, last_seq)
+
+      Logger.metadata(store_id: store.id, device_id: socket.assigns.device_id)
+      :telemetry.execute([:dust, :connection, :join], %{}, %{store_id: store.id, device_id: socket.assigns.device_id})
 
       {:ok, %{store_seq: current_seq}, socket}
     else
@@ -265,4 +269,16 @@ defmodule DustWeb.StoreChannel do
   defp validate_merge_value(:remove, nil), do: {:error, :remove_requires_value}
   defp validate_merge_value(:remove, _), do: :ok
   defp validate_merge_value(_, _), do: :ok
+
+  @impl true
+  def terminate(_reason, socket) do
+    if store_id = socket.assigns[:store_id] do
+      :telemetry.execute([:dust, :connection, :leave], %{}, %{
+        store_id: store_id,
+        device_id: socket.assigns[:device_id]
+      })
+    end
+
+    :ok
+  end
 end

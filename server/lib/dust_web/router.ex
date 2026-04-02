@@ -43,6 +43,13 @@ defmodule DustWeb.Router do
     delete "/logout", WorkOSAuthController, :logout
   end
 
+  # Health check endpoints (no auth)
+  scope "/", DustWeb do
+    pipe_through :api
+    get "/healthz", HealthController, :healthz
+    get "/readyz", HealthController, :readyz
+  end
+
   pipeline :api_auth do
     plug :accepts, ["json"]
     plug DustWeb.Plugs.ApiTokenAuth

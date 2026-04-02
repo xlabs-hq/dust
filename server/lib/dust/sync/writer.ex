@@ -56,35 +56,42 @@ defmodule Dust.Sync.Writer do
   end
 
   defp do_write(store_id, attrs) do
-    Repo.transaction(fn ->
-      # Get current max store_seq
-      current_seq =
-        from(o in StoreOp,
-          where: o.store_id == ^store_id,
-          select: max(o.store_seq)
-        )
-        |> Repo.one() || 0
+    metadata = %{store_id: store_id, op: attrs.op, path: attrs.path}
 
-      next_seq = current_seq + 1
+    :telemetry.span([:dust, :write], metadata, fn ->
+      result =
+        Repo.transaction(fn ->
+          # Get current max store_seq
+          current_seq =
+            from(o in StoreOp,
+              where: o.store_id == ^store_id,
+              select: max(o.store_seq)
+            )
+            |> Repo.one() || 0
 
-      # Insert op
-      op =
-        %StoreOp{
-          store_seq: next_seq,
-          op: attrs.op,
-          path: attrs.path,
-          value: ValueCodec.wrap(attrs[:value]),
-          type: attrs[:type] || ValueCodec.detect_type(attrs[:value]),
-          device_id: attrs.device_id,
-          client_op_id: attrs.client_op_id,
-          store_id: store_id
-        }
-        |> Repo.insert!()
+          next_seq = current_seq + 1
 
-      # Apply to materialized state and attach the result to the op
-      materialized = apply_to_entries(store_id, next_seq, attrs)
+          # Insert op
+          op =
+            %StoreOp{
+              store_seq: next_seq,
+              op: attrs.op,
+              path: attrs.path,
+              value: ValueCodec.wrap(attrs[:value]),
+              type: attrs[:type] || ValueCodec.detect_type(attrs[:value]),
+              device_id: attrs.device_id,
+              client_op_id: attrs.client_op_id,
+              store_id: store_id
+            }
+            |> Repo.insert!()
 
-      %{op | materialized_value: materialized}
+          # Apply to materialized state and attach the result to the op
+          materialized = apply_to_entries(store_id, next_seq, attrs)
+
+          %{op | materialized_value: materialized}
+        end)
+
+      {result, metadata}
     end)
   end
 
