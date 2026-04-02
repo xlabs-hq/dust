@@ -2,7 +2,7 @@ defmodule Dust.Sync.Writer do
   use GenServer
 
   alias Dust.Repo
-  alias Dust.Sync.{StoreOp, StoreEntry, ValueCodec}
+  alias Dust.Sync.{StoreOp, StoreEntry, StoreSnapshot, ValueCodec}
 
   import Ecto.Query
 
@@ -61,14 +61,22 @@ defmodule Dust.Sync.Writer do
     :telemetry.span([:dust, :write], metadata, fn ->
       result =
         Repo.transaction(fn ->
-          # Get current max store_seq
-          current_seq =
+          # Get current max store_seq from ops AND snapshot (whichever is higher)
+          ops_seq =
             from(o in StoreOp,
               where: o.store_id == ^store_id,
               select: max(o.store_seq)
             )
             |> Repo.one() || 0
 
+          snapshot_seq =
+            from(s in StoreSnapshot,
+              where: s.store_id == ^store_id,
+              select: max(s.snapshot_seq)
+            )
+            |> Repo.one() || 0
+
+          current_seq = max(ops_seq, snapshot_seq)
           next_seq = current_seq + 1
 
           # Insert op

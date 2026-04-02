@@ -98,6 +98,13 @@ defmodule Dust.Connection do
   end
 
   @impl Slipstream
+  def handle_message("store:" <> store_name, "snapshot", payload, socket) do
+    Logger.info("[Dust.Connection] Received snapshot for #{store_name}")
+    Dust.SyncEngine.handle_snapshot(store_name, payload)
+    {:ok, socket}
+  end
+
+  @impl Slipstream
   def handle_message("store:" <> store_name, "catch_up_complete", payload, socket) do
     through_seq = payload["through_seq"]
     Logger.debug("[Dust.Connection] Catch-up complete for #{store_name}, through_seq=#{through_seq}")

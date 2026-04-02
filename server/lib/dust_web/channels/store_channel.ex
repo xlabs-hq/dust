@@ -193,6 +193,31 @@ defmodule DustWeb.StoreChannel do
   @impl true
   def handle_info({:catch_up, last_seq}, socket) do
     store_id = socket.assigns.store_id
+
+    # Check if client is behind a snapshot
+    case Sync.get_latest_snapshot(store_id) do
+      %{snapshot_seq: snap_seq} = snapshot when snap_seq > last_seq ->
+        # Client is behind the snapshot — send full snapshot first
+        push(socket, "snapshot", %{
+          snapshot_seq: snap_seq,
+          entries: snapshot.snapshot_data
+        })
+
+        # Then send any ops after the snapshot
+        send(self(), {:catch_up_after_snapshot, snap_seq})
+        {:noreply, socket}
+
+      _ ->
+        do_catch_up(store_id, last_seq, socket)
+    end
+  end
+
+  @impl true
+  def handle_info({:catch_up_after_snapshot, last_seq}, socket) do
+    do_catch_up(socket.assigns.store_id, last_seq, socket)
+  end
+
+  defp do_catch_up(store_id, last_seq, socket) do
     ops = Sync.get_ops_since(store_id, last_seq)
 
     last_sent_seq =

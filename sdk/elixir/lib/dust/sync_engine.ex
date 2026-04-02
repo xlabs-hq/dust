@@ -70,6 +70,10 @@ defmodule Dust.SyncEngine do
     GenServer.cast(via(store), {:catch_up_complete, through_seq})
   end
 
+  def handle_snapshot(store, snapshot) do
+    GenServer.cast(via(store), {:snapshot, snapshot})
+  end
+
   @doc "Write directly to cache without the write pipeline. For test seeding only."
   def seed_entry(store, path, value, type) do
     GenServer.call(via(store), {:seed_entry, path, value, type})
@@ -374,6 +378,19 @@ defmodule Dust.SyncEngine do
     end
 
     {:noreply, %{state | status: new_status}}
+  end
+
+  @impl true
+  def handle_cast({:snapshot, snapshot}, state) do
+    snapshot_seq = snapshot["snapshot_seq"]
+    entries = snapshot["entries"]
+
+    # Bulk replace cache with snapshot data
+    Enum.each(entries, fn {path, %{"value" => value, "type" => type}} ->
+      state.cache.write(state.cache_target, state.store, path, value, type, snapshot_seq)
+    end)
+
+    {:noreply, %{state | last_store_seq: snapshot_seq}}
   end
 
   @impl true

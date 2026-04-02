@@ -124,6 +124,15 @@ defmodule Dust.Sync do
     |> is_boolean()
   end
 
+  def get_latest_snapshot(store_id) do
+    from(s in Dust.Sync.StoreSnapshot,
+      where: s.store_id == ^store_id,
+      order_by: [desc: s.snapshot_seq],
+      limit: 1
+    )
+    |> Repo.one()
+  end
+
   def entry_count(store_id) do
     from(e in StoreEntry,
       where: e.store_id == ^store_id,
