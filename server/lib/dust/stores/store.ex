@@ -4,6 +4,10 @@ defmodule Dust.Stores.Store do
   schema "stores" do
     field :name, :string
     field :status, Ecto.Enum, values: [:active, :archived], default: :active
+    field :entry_count, :integer, default: 0
+    field :op_count, :integer, default: 0
+    field :current_seq, :integer, default: 0
+    field :file_storage_bytes, :integer, default: 0
 
     belongs_to :organization, Dust.Accounts.Organization
 

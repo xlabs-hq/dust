@@ -246,10 +246,9 @@ defmodule DustWeb.StoreChannel do
   # For live writes, use the materialized_value virtual field (set by Writer)
   defp format_event(op) do
     value =
-      if op.materialized_value do
-        op.materialized_value
-      else
-        ValueCodec.unwrap(op.value)
+      case Map.get(op, :materialized_value) do
+        nil -> ValueCodec.unwrap(op.value)
+        mat -> mat
       end
 
     %{

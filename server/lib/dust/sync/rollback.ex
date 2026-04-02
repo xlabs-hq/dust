@@ -11,19 +11,11 @@ defmodule Dust.Sync.Rollback do
   - Store-level: restores the entire store to a given seq
   """
 
-  import Ecto.Query
-  alias Dust.Repo
   alias Dust.Sync
-  alias Dust.Sync.{StoreOp, StoreEntry, ValueCodec}
+  alias Dust.Sync.{StoreDB, ValueCodec}
 
   @rollback_device_id "system:rollback"
 
-  @doc """
-  Roll back a single path to its value at `to_seq`.
-
-  Returns `{:ok, op}` with the new op that was written, or
-  `{:error, reason}` if the rollback is not possible.
-  """
   def rollback_path(store_id, path, to_seq) do
     with :ok <- validate_retention(store_id, to_seq) do
       historical_value = compute_historical_value(store_id, path, to_seq)
@@ -37,32 +29,24 @@ defmodule Dust.Sync.Rollback do
     end
   end
 
-  @doc """
-  Roll back the entire store to its state at `to_seq`.
-
-  Returns `{:ok, count}` where count is the number of ops written, or
-  `{:error, reason}` if the rollback is not possible.
-  """
   def rollback_store(store_id, to_seq) do
     with :ok <- validate_retention(store_id, to_seq) do
       historical_state = compute_historical_state(store_id, to_seq)
       current_entries = get_raw_entries(store_id)
-      current_state = Map.new(current_entries, fn e -> {e.path, e.value} end)
+      current_state = Map.new(current_entries, fn {path, value} -> {path, value} end)
 
       ops_written = 0
 
-      # Delete entries that shouldn't exist in historical state
       ops_written =
-        Enum.reduce(current_entries, ops_written, fn entry, count ->
-          if Map.has_key?(historical_state, entry.path) do
+        Enum.reduce(current_entries, ops_written, fn {path, _value}, count ->
+          if Map.has_key?(historical_state, path) do
             count
           else
-            {:ok, _op} = write_rollback_op(store_id, entry.path, nil, to_seq)
+            {:ok, _op} = write_rollback_op(store_id, path, nil, to_seq)
             count + 1
           end
         end)
 
-      # Set entries to historical values (changed or new)
       ops_written =
         Enum.reduce(historical_state, ops_written, fn {path, value}, count ->
           if Map.get(current_state, path) == value do
@@ -77,105 +61,93 @@ defmodule Dust.Sync.Rollback do
     end
   end
 
-  @doc """
-  Verify the requested `to_seq` is within the available op log.
-  """
   def validate_retention(store_id, to_seq) do
-    earliest_seq =
-      from(o in StoreOp,
-        where: o.store_id == ^store_id,
-        select: min(o.store_seq)
-      )
-      |> Repo.one()
+    with_read_conn(store_id, fn conn ->
+      earliest = query_one_val(conn, "SELECT min(store_seq) FROM store_ops", [])
 
-    cond do
-      is_nil(earliest_seq) ->
-        {:error, :no_ops}
-
-      to_seq < earliest_seq ->
-        {:error, :beyond_retention}
-
-      true ->
-        :ok
-    end
+      cond do
+        is_nil(earliest) -> {:error, :no_ops}
+        to_seq < earliest -> {:error, :beyond_retention}
+        true -> :ok
+      end
+    end) || {:error, :no_ops}
   end
 
-  @doc """
-  Compute what value a path had at a given `store_seq`.
-
-  Returns the value, or `nil` if the path didn't exist at that point.
-
-  Handles ancestor ops: if `set("docs", %{readme: "hello"})` was the
-  most recent op affecting "docs.readme", this function extracts the
-  value from the ancestor's map.
-  """
   def compute_historical_value(store_id, path, to_seq) do
-    # First check for a direct op on this exact path
-    direct_op =
-      from(o in StoreOp,
-        where: o.store_id == ^store_id and o.path == ^path and o.store_seq <= ^to_seq,
-        order_by: [desc: o.store_seq],
-        limit: 1
-      )
-      |> Repo.one()
+    with_read_conn(store_id, fn conn ->
+      direct_op = query_one_row(conn, """
+        SELECT store_seq, op, path, value FROM store_ops
+        WHERE path = ? AND store_seq <= ?
+        ORDER BY store_seq DESC LIMIT 1
+      """, [path, to_seq])
 
-    # Also check ancestor ops that might have set/deleted this path as part of a subtree
-    {:ok, segments} = DustProtocol.Path.parse(path)
-    ancestor_op = find_most_recent_ancestor_op(store_id, segments, to_seq)
+      {:ok, segments} = DustProtocol.Path.parse(path)
+      ancestor_op = find_most_recent_ancestor_op(conn, segments, to_seq)
 
-    # The more recent op wins
-    case {direct_op, ancestor_op} do
-      {nil, nil} ->
-        nil
+      resolve_historical_value(direct_op, ancestor_op, segments)
+    end)
+  end
 
-      {nil, ancestor} ->
-        extract_descendant_value(ancestor, segments)
+  def compute_historical_state(store_id, to_seq) do
+    with_read_conn(store_id, fn conn ->
+      rows = query_all(conn, """
+        SELECT store_seq, op, path, value FROM store_ops
+        WHERE store_seq <= ? ORDER BY store_seq ASC
+      """, [to_seq])
 
-      {direct, nil} ->
-        case direct do
-          %{op: :delete} -> nil
-          %{value: value} -> value
-        end
+      Enum.reduce(rows, %{}, fn [_seq, op, path, value_json], state ->
+        op = String.to_existing_atom(op)
+        value = if value_json, do: Jason.decode!(value_json)
+        apply_op_to_state(state, %{op: op, path: path, value: value})
+      end)
+    end) || %{}
+  end
 
-      {direct, ancestor} ->
-        if ancestor.store_seq > direct.store_seq do
-          extract_descendant_value(ancestor, segments)
-        else
-          case direct do
-            %{op: :delete} -> nil
-            %{value: value} -> value
-          end
-        end
+  # --- Private ---
+
+  defp resolve_historical_value(nil, nil, _), do: nil
+
+  defp resolve_historical_value(nil, ancestor_row, segments) do
+    extract_descendant_value(ancestor_row, segments)
+  end
+
+  defp resolve_historical_value([_seq, op, _path, value_json], nil, _) do
+    if op == "delete", do: nil, else: Jason.decode!(value_json)
+  end
+
+  defp resolve_historical_value([d_seq, d_op, _d_path, d_val], [a_seq | _] = ancestor, segments) do
+    if a_seq > d_seq do
+      extract_descendant_value(ancestor, segments)
+    else
+      if d_op == "delete", do: nil, else: Jason.decode!(d_val)
     end
   end
 
-  # Find the most recent set or delete on any ancestor path.
-  defp find_most_recent_ancestor_op(store_id, segments, to_seq) when length(segments) > 1 do
+  defp find_most_recent_ancestor_op(conn, segments, to_seq) when length(segments) > 1 do
     ancestor_paths =
       segments
       |> Enum.slice(0..-2//1)
       |> Enum.scan(fn seg, acc -> "#{acc}.#{seg}" end)
 
-    from(o in StoreOp,
-      where:
-        o.store_id == ^store_id and o.path in ^ancestor_paths and
-          o.store_seq <= ^to_seq and o.op in [:set, :delete],
-      order_by: [desc: o.store_seq],
-      limit: 1
-    )
-    |> Repo.one()
+    placeholders = Enum.map_join(1..length(ancestor_paths), ", ", fn _ -> "?" end)
+
+    query_one_row(conn, """
+      SELECT store_seq, op, path, value FROM store_ops
+      WHERE path IN (#{placeholders}) AND store_seq <= ? AND op IN ('set', 'delete')
+      ORDER BY store_seq DESC LIMIT 1
+    """, ancestor_paths ++ [to_seq])
   end
 
   defp find_most_recent_ancestor_op(_, _, _), do: nil
 
-  # Extract a descendant value from an ancestor set op's map value.
-  defp extract_descendant_value(%{op: :delete}, _segments), do: nil
+  defp extract_descendant_value([_seq, "delete", _path, _val], _segments), do: nil
 
-  defp extract_descendant_value(%{op: :set, path: ancestor_path, value: value}, segments) do
+  defp extract_descendant_value([_seq, "set", ancestor_path, value_json], segments) do
     {:ok, ancestor_segments} = DustProtocol.Path.parse(ancestor_path)
     relative_keys = Enum.drop(segments, length(ancestor_segments))
+    value = Jason.decode!(value_json) |> ValueCodec.unwrap()
 
-    Enum.reduce_while(relative_keys, ValueCodec.unwrap(value), fn key, acc ->
+    Enum.reduce_while(relative_keys, value, fn key, acc ->
       case acc do
         %{^key => child} -> {:cont, child}
         _ -> {:halt, nil}
@@ -187,30 +159,49 @@ defmodule Dust.Sync.Rollback do
     end
   end
 
-  @doc """
-  Compute the full store state at a given `store_seq` by replaying ops.
+  defp extract_descendant_value(nil, _), do: nil
 
-  Returns a map of `%{path => wrapped_value}`.
-  """
-  def compute_historical_state(store_id, to_seq) do
-    from(o in StoreOp,
-      where: o.store_id == ^store_id and o.store_seq <= ^to_seq,
-      order_by: [asc: o.store_seq]
-    )
-    |> Repo.all()
-    |> Enum.reduce(%{}, fn op, state ->
-      apply_op_to_state(state, op)
-    end)
+  defp current_path_value(store_id, path) do
+    case Sync.get_entry(store_id, path) do
+      nil -> nil
+      entry -> ValueCodec.wrap(entry.value)
+    end
   end
 
-  # Apply a single op to the in-memory state map during replay.
-  # Mirrors what the Writer does: plain maps expand into leaf entries.
+  defp get_raw_entries(store_id) do
+    with_read_conn(store_id, fn conn ->
+      query_all(conn, "SELECT path, value FROM store_entries ORDER BY path", [])
+      |> Enum.map(fn [path, json] -> {path, Jason.decode!(json)} end)
+    end) || []
+  end
+
+  defp write_rollback_op(store_id, path, nil, to_seq) do
+    Sync.write(store_id, %{
+      op: :delete,
+      path: path,
+      value: nil,
+      device_id: @rollback_device_id,
+      client_op_id: "rollback:#{to_seq}:#{path}"
+    })
+  end
+
+  defp write_rollback_op(store_id, path, wrapped_value, to_seq) do
+    Sync.write(store_id, %{
+      op: :set,
+      path: path,
+      value: ValueCodec.unwrap(wrapped_value),
+      device_id: @rollback_device_id,
+      client_op_id: "rollback:#{to_seq}:#{path}"
+    })
+  end
+
+  # --- Op replay for compute_historical_state ---
+
   defp apply_op_to_state(state, %{op: :set, path: path, value: value}) do
     state = delete_descendants_from_state(state, path)
     unwrapped = ValueCodec.unwrap(value)
 
     if is_map(unwrapped) and not ValueCodec.typed_value?(unwrapped) do
-      # Expand map into leaf entries (same as Writer)
       state = Map.delete(state, path)
       leaves = ValueCodec.flatten_map(path, unwrapped)
 
@@ -223,9 +214,7 @@ defmodule Dust.Sync.Rollback do
   end
 
   defp apply_op_to_state(state, %{op: :delete, path: path}) do
-    state
-    |> Map.delete(path)
-    |> delete_descendants_from_state(path)
+    state |> Map.delete(path) |> delete_descendants_from_state(path)
   end
 
   defp apply_op_to_state(state, %{op: :merge, path: path, value: map}) when is_map(map) do
@@ -271,45 +260,59 @@ defmodule Dust.Sync.Rollback do
 
   defp delete_descendants_from_state(state, path) do
     prefix = path <> "."
-
-    state
-    |> Enum.reject(fn {k, _v} -> String.starts_with?(k, prefix) end)
-    |> Map.new()
+    state |> Enum.reject(fn {k, _v} -> String.starts_with?(k, prefix) end) |> Map.new()
   end
 
-  # Get all raw entries (without unwrapping values) for a store.
-  defp get_raw_entries(store_id) do
-    from(e in StoreEntry, where: e.store_id == ^store_id, order_by: e.path)
-    |> Repo.all()
-  end
+  # --- SQLite helpers ---
 
-  # Get the current value of a path (wrapped), or nil if it doesn't exist.
-  defp current_path_value(store_id, path) do
-    case Sync.get_entry(store_id, path) do
-      nil -> nil
-      entry -> ValueCodec.wrap(entry.value)
+  defp with_read_conn(store_id, fun) do
+    case StoreDB.read_conn(store_id) do
+      {:ok, conn} ->
+        try do
+          fun.(conn)
+        after
+          StoreDB.close(conn)
+        end
+
+      {:error, :not_found} -> nil
+      {:error, _} -> nil
     end
   end
 
-  # Write a rollback op — either a :set to restore a value, or a :delete.
-  defp write_rollback_op(store_id, path, nil, to_seq) do
-    Sync.write(store_id, %{
-      op: :delete,
-      path: path,
-      value: nil,
-      device_id: @rollback_device_id,
-      client_op_id: "rollback:#{to_seq}:#{path}"
-    })
+  defp query_one_val(conn, sql, params) do
+    {:ok, stmt} = Exqlite.Sqlite3.prepare(conn, sql)
+    :ok = Exqlite.Sqlite3.bind(stmt, params)
+    result = case Exqlite.Sqlite3.step(conn, stmt) do
+      {:row, [val]} -> val
+      :done -> nil
+    end
+    :ok = Exqlite.Sqlite3.release(conn, stmt)
+    result
   end
 
-  defp write_rollback_op(store_id, path, wrapped_value, to_seq) do
-    Sync.write(store_id, %{
-      op: :set,
-      path: path,
-      value: ValueCodec.unwrap(wrapped_value),
-      device_id: @rollback_device_id,
-      client_op_id: "rollback:#{to_seq}:#{path}"
-    })
+  defp query_one_row(conn, sql, params) do
+    {:ok, stmt} = Exqlite.Sqlite3.prepare(conn, sql)
+    :ok = Exqlite.Sqlite3.bind(stmt, params)
+    result = case Exqlite.Sqlite3.step(conn, stmt) do
+      {:row, row} -> row
+      :done -> nil
+    end
+    :ok = Exqlite.Sqlite3.release(conn, stmt)
+    result
   end
 
+  defp query_all(conn, sql, params) do
+    {:ok, stmt} = Exqlite.Sqlite3.prepare(conn, sql)
+    :ok = Exqlite.Sqlite3.bind(stmt, params)
+    rows = collect_rows(conn, stmt, [])
+    :ok = Exqlite.Sqlite3.release(conn, stmt)
+    rows
+  end
+
+  defp collect_rows(conn, stmt, acc) do
+    case Exqlite.Sqlite3.step(conn, stmt) do
+      {:row, row} -> collect_rows(conn, stmt, [row | acc])
+      :done -> Enum.reverse(acc)
+    end
+  end
 end

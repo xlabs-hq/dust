@@ -10,9 +10,16 @@ defmodule Dust.Stores do
   def create_store(organization, attrs) do
     case Dust.Billing.Limits.check_store_count(organization) do
       :ok ->
-        %Store{}
-        |> Store.changeset(Map.put(attrs, :organization_id, organization.id))
-        |> Repo.insert()
+        case %Store{}
+             |> Store.changeset(Map.put(attrs, :organization_id, organization.id))
+             |> Repo.insert() do
+          {:ok, store} ->
+            Dust.Sync.StoreDB.ensure_created(store.id)
+            {:ok, store}
+
+          error ->
+            error
+        end
 
       {:error, :limit_exceeded, _} = error ->
         error

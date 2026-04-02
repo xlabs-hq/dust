@@ -2,9 +2,7 @@ defmodule Dust.Workers.CompactionTest do
   use Dust.DataCase, async: false
 
   alias Dust.{Accounts, Stores, Sync}
-  alias Dust.Sync.{StoreOp, StoreSnapshot}
-
-  import Ecto.Query
+  alias Dust.Sync.StoreDB
 
   setup do
     {:ok, user} = Accounts.create_user(%{email: "compact@example.com"})
@@ -26,11 +24,25 @@ defmodule Dust.Workers.CompactionTest do
   end
 
   defp op_count(store_id) do
-    Repo.one(from(o in StoreOp, where: o.store_id == ^store_id, select: count()))
+    sqlite_count(store_id, "store_ops")
   end
 
   defp snapshot_count(store_id) do
-    Repo.one(from(s in StoreSnapshot, where: s.store_id == ^store_id, select: count()))
+    sqlite_count(store_id, "store_snapshots")
+  end
+
+  defp sqlite_count(store_id, table) do
+    case StoreDB.read_conn(store_id) do
+      {:ok, conn} ->
+        {:ok, stmt} = Exqlite.Sqlite3.prepare(conn, "SELECT count(*) FROM #{table}")
+        {:row, [count]} = Exqlite.Sqlite3.step(conn, stmt)
+        Exqlite.Sqlite3.release(conn, stmt)
+        StoreDB.close(conn)
+        count
+
+      _ ->
+        0
+    end
   end
 
   test "compaction does nothing when op count is below threshold", %{store: store} do
@@ -42,23 +54,11 @@ defmodule Dust.Workers.CompactionTest do
     assert snapshot_count(store.id) == 0
   end
 
-  test "writer continues correct seq after compaction", %{store: store, org: org} do
+  test "writer continues correct seq after compaction", %{store: store} do
     write_n_ops(store.id, 5)
 
-    # Manually compact (bypass threshold)
-    # Simulate by inserting a snapshot and deleting ops
-    entries =
-      Repo.all(from(e in Dust.Sync.StoreEntry, where: e.store_id == ^store.id))
-      |> Map.new(fn e -> {e.path, %{value: e.value, type: e.type}} end)
-
-    Repo.insert!(%StoreSnapshot{
-      store_id: store.id,
-      snapshot_seq: 5,
-      snapshot_data: entries
-    })
-
-    from(o in StoreOp, where: o.store_id == ^store.id)
-    |> Repo.delete_all()
+    # Manually compact via SQLite
+    simulate_compaction(store.id, 5)
 
     assert op_count(store.id) == 0
 
@@ -78,24 +78,45 @@ defmodule Dust.Workers.CompactionTest do
   test "catch-up sends snapshot when client is behind", %{store: store} do
     write_n_ops(store.id, 5)
 
-    # Create a snapshot at seq 5
-    entries =
-      Repo.all(from(e in Dust.Sync.StoreEntry, where: e.store_id == ^store.id))
-      |> Map.new(fn e -> {e.path, %{value: e.value, type: e.type}} end)
-
-    Repo.insert!(%StoreSnapshot{
-      store_id: store.id,
-      snapshot_seq: 5,
-      snapshot_data: entries
-    })
-
-    # Delete ops (as compaction would)
-    from(o in StoreOp, where: o.store_id == ^store.id)
-    |> Repo.delete_all()
+    simulate_compaction(store.id, 5)
 
     # Verify snapshot is returned
     snapshot = Sync.get_latest_snapshot(store.id)
     assert snapshot.snapshot_seq == 5
     assert map_size(snapshot.snapshot_data) == 5
+  end
+
+  # Simulate compaction by reading entries, inserting snapshot, deleting ops
+  defp simulate_compaction(store_id, seq) do
+    {:ok, conn} = StoreDB.read_conn(store_id)
+
+    # Read entries
+    {:ok, stmt} = Exqlite.Sqlite3.prepare(conn, "SELECT path, value, type FROM store_entries")
+    entries = collect_rows(conn, stmt)
+    Exqlite.Sqlite3.release(conn, stmt)
+    StoreDB.close(conn)
+
+    snapshot_data =
+      Map.new(entries, fn [path, value, type] ->
+        {path, %{"value" => Jason.decode!(value), "type" => type}}
+      end)
+
+    # Write snapshot and delete ops using a write connection
+    {:ok, wconn} = StoreDB.write_conn(store_id)
+
+    {:ok, ins} = Exqlite.Sqlite3.prepare(wconn, "INSERT INTO store_snapshots (snapshot_seq, snapshot_data) VALUES (?, ?)")
+    Exqlite.Sqlite3.bind(ins, [seq, Jason.encode!(snapshot_data)])
+    :done = Exqlite.Sqlite3.step(wconn, ins)
+    Exqlite.Sqlite3.release(wconn, ins)
+
+    Exqlite.Sqlite3.execute(wconn, "DELETE FROM store_ops")
+    Exqlite.Sqlite3.close(wconn)
+  end
+
+  defp collect_rows(conn, stmt) do
+    case Exqlite.Sqlite3.step(conn, stmt) do
+      {:row, row} -> [row | collect_rows(conn, stmt)]
+      :done -> []
+    end
   end
 end

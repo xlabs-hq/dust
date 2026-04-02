@@ -1,10 +1,7 @@
 defmodule Dust.Sync.Writer do
   use GenServer
 
-  alias Dust.Repo
-  alias Dust.Sync.{StoreOp, StoreEntry, StoreSnapshot, ValueCodec}
-
-  import Ecto.Query
+  alias Dust.Sync.{StoreDB, ValueCodec}
 
   @idle_timeout :timer.minutes(15)
 
@@ -41,308 +38,295 @@ defmodule Dust.Sync.Writer do
 
   @impl true
   def init(store_id) do
-    {:ok, %{store_id: store_id}, @idle_timeout}
+    case StoreDB.write_conn(store_id) do
+      {:ok, db} ->
+        {:ok, %{store_id: store_id, db: db}, @idle_timeout}
+
+      {:error, reason} ->
+        {:stop, reason}
+    end
   end
 
   @impl true
   def handle_call({:write, op_attrs}, _from, state) do
-    result = do_write(state.store_id, op_attrs)
+    result = do_write(state, op_attrs)
     {:reply, result, state, @idle_timeout}
   end
 
   @impl true
   def handle_info(:timeout, state) do
+    Exqlite.Sqlite3.close(state.db)
     {:stop, :normal, state}
   end
 
-  defp do_write(store_id, attrs) do
+  defp do_write(state, attrs) do
+    %{store_id: store_id, db: db} = state
     metadata = %{store_id: store_id, op: attrs.op, path: attrs.path}
 
     :telemetry.span([:dust, :write], metadata, fn ->
       result =
-        Repo.transaction(fn ->
-          # Get current max store_seq from ops AND snapshot (whichever is higher)
-          ops_seq =
-            from(o in StoreOp,
-              where: o.store_id == ^store_id,
-              select: max(o.store_seq)
-            )
-            |> Repo.one() || 0
+        try do
+          :ok = Exqlite.Sqlite3.execute(db, "BEGIN")
 
-          snapshot_seq =
-            from(s in StoreSnapshot,
-              where: s.store_id == ^store_id,
-              select: max(s.snapshot_seq)
-            )
-            |> Repo.one() || 0
-
-          current_seq = max(ops_seq, snapshot_seq)
+          # Get current max store_seq from ops AND snapshots
+          ops_seq = query_one_int(db, "SELECT max(store_seq) FROM store_ops")
+          snap_seq = query_one_int(db, "SELECT max(snapshot_seq) FROM store_snapshots")
+          current_seq = max(ops_seq, snap_seq)
           next_seq = current_seq + 1
 
           # Insert op
-          op =
-            %StoreOp{
-              store_seq: next_seq,
-              op: attrs.op,
-              path: attrs.path,
-              value: ValueCodec.wrap(attrs[:value]),
-              type: attrs[:type] || ValueCodec.detect_type(attrs[:value]),
-              device_id: attrs.device_id,
-              client_op_id: attrs.client_op_id,
-              store_id: store_id
-            }
-            |> Repo.insert!()
+          value_json = encode_value(attrs[:value])
+          type = attrs[:type] || ValueCodec.detect_type(attrs[:value])
 
-          # Apply to materialized state and attach the result to the op
-          materialized = apply_to_entries(store_id, next_seq, attrs)
+          exec(db, """
+            INSERT INTO store_ops (store_seq, op, path, value, type, device_id, client_op_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          """, [next_seq, to_string(attrs.op), attrs.path, value_json, type, attrs.device_id, attrs.client_op_id])
 
-          %{op | materialized_value: materialized}
-        end)
+          # Apply to materialized state
+          materialized = apply_to_entries(db, next_seq, attrs)
+
+          :ok = Exqlite.Sqlite3.execute(db, "COMMIT")
+
+          # Update cached metadata in Postgres
+          update_store_metadata(store_id, next_seq)
+
+          # Build a result map that looks like the old StoreOp struct
+          op = %{
+            store_seq: next_seq,
+            op: attrs.op,
+            path: attrs.path,
+            value: ValueCodec.wrap(attrs[:value]),
+            type: type,
+            device_id: attrs.device_id,
+            client_op_id: attrs.client_op_id,
+            store_id: store_id,
+            materialized_value: materialized
+          }
+
+          {:ok, op}
+        rescue
+          e ->
+            Exqlite.Sqlite3.execute(db, "ROLLBACK")
+            {:error, e}
+        end
 
       {result, metadata}
     end)
   end
 
-  defp apply_to_entries(store_id, seq, %{op: :set, path: path, value: value} = attrs) do
-    # Decrement file ref if overwriting a file entry
-    decrement_file_ref_at(store_id, path)
+  # --- Apply to entries (SQLite) ---
 
-    # Delete descendants (also decrements their file refs)
+  defp apply_to_entries(db, seq, %{op: :set, path: path, value: value} = attrs) do
+    decrement_file_ref_at(db, path)
+
     {:ok, segments} = DustProtocol.Path.parse(path)
-    delete_descendants(store_id, segments)
+    delete_descendants(db, segments)
 
-    # If value is a plain map, expand into leaf entries recursively.
-    # Typed values (Decimal, DateTime, file refs) are stored as-is.
     if is_map(value) and not ValueCodec.typed_value?(value) do
       leaves = ValueCodec.flatten_map(path, value)
 
       Enum.each(leaves, fn {leaf_path, leaf_value} ->
         type = attrs[:type] || ValueCodec.detect_type(leaf_value)
-
-        Repo.insert!(
-          %StoreEntry{
-            store_id: store_id,
-            path: leaf_path,
-            value: ValueCodec.wrap(leaf_value),
-            type: type,
-            seq: seq
-          },
-          on_conflict: [set: [value: ValueCodec.wrap(leaf_value), type: type, seq: seq]],
-          conflict_target: [:store_id, :path]
-        )
+        upsert_entry(db, leaf_path, ValueCodec.wrap(leaf_value), type, seq)
       end)
 
-      # Also delete the parent path entry if it existed as a scalar
-      from(e in StoreEntry, where: e.store_id == ^store_id and e.path == ^path)
-      |> Repo.delete_all()
+      exec(db, "DELETE FROM store_entries WHERE path = ?", [path])
     else
       type = attrs[:type] || ValueCodec.detect_type(value)
-
-      Repo.insert!(
-        %StoreEntry{store_id: store_id, path: path, value: ValueCodec.wrap(value), type: type, seq: seq},
-        on_conflict: [set: [value: ValueCodec.wrap(value), type: type, seq: seq]],
-        conflict_target: [:store_id, :path]
-      )
+      upsert_entry(db, path, ValueCodec.wrap(value), type, seq)
     end
 
     value
   end
 
-  defp apply_to_entries(store_id, _seq, %{op: :delete, path: path}) do
-    # Decrement file ref if deleting a file entry
-    decrement_file_ref_at(store_id, path)
-
+  defp apply_to_entries(db, _seq, %{op: :delete, path: path}) do
+    decrement_file_ref_at(db, path)
     {:ok, segments} = DustProtocol.Path.parse(path)
-
-    from(e in StoreEntry, where: e.store_id == ^store_id and e.path == ^path)
-    |> Repo.delete_all()
-
-    # Also decrements file refs for descendants
-    delete_descendants(store_id, segments)
+    exec(db, "DELETE FROM store_entries WHERE path = ?", [path])
+    delete_descendants(db, segments)
     nil
   end
 
-  defp apply_to_entries(store_id, seq, %{op: :merge, path: path, value: map}) when is_map(map) do
+  defp apply_to_entries(db, seq, %{op: :merge, path: path, value: map}) when is_map(map) do
     Enum.each(map, fn {key, value} ->
       child_path = "#{path}.#{key}"
 
       if is_map(value) and not ValueCodec.typed_value?(value) do
-        # Expanding a nested map — remove stale descendants first
-        decrement_file_ref_at(store_id, child_path)
+        decrement_file_ref_at(db, child_path)
         {:ok, segs} = DustProtocol.Path.parse(child_path)
-        delete_descendants(store_id, segs)
-
-        # Delete the direct entry if it exists (replaced by leaves)
-        from(e in StoreEntry, where: e.store_id == ^store_id and e.path == ^child_path)
-        |> Repo.delete_all()
+        delete_descendants(db, segs)
+        exec(db, "DELETE FROM store_entries WHERE path = ?", [child_path])
 
         leaves = ValueCodec.flatten_map(child_path, value)
 
         Enum.each(leaves, fn {leaf_path, leaf_value} ->
           type = ValueCodec.detect_type(leaf_value)
-
-          Repo.insert!(
-            %StoreEntry{
-              store_id: store_id,
-              path: leaf_path,
-              value: ValueCodec.wrap(leaf_value),
-              type: type,
-              seq: seq
-            },
-            on_conflict: [set: [value: ValueCodec.wrap(leaf_value), type: type, seq: seq]],
-            conflict_target: [:store_id, :path]
-          )
+          upsert_entry(db, leaf_path, ValueCodec.wrap(leaf_value), type, seq)
         end)
       else
         type = ValueCodec.detect_type(value)
-
-        Repo.insert!(
-          %StoreEntry{
-            store_id: store_id,
-            path: child_path,
-            value: ValueCodec.wrap(value),
-            type: type,
-            seq: seq
-          },
-          on_conflict: [set: [value: ValueCodec.wrap(value), type: type, seq: seq]],
-          conflict_target: [:store_id, :path]
-        )
+        upsert_entry(db, child_path, ValueCodec.wrap(value), type, seq)
       end
     end)
 
     map
   end
 
-  defp apply_to_entries(store_id, seq, %{op: :increment, path: path, value: delta}) do
-    current =
-      case Repo.get_by(StoreEntry, store_id: store_id, path: path) do
-        nil -> 0
-        entry -> ValueCodec.unwrap(entry.value)
-      end
-
+  defp apply_to_entries(db, seq, %{op: :increment, path: path, value: delta}) do
+    current = read_entry_value(db, path) || 0
     new_value = current + delta
-
-    Repo.insert!(
-      %StoreEntry{
-        store_id: store_id,
-        path: path,
-        value: ValueCodec.wrap(new_value),
-        type: "counter",
-        seq: seq
-      },
-      on_conflict: [set: [value: ValueCodec.wrap(new_value), type: "counter", seq: seq]],
-      conflict_target: [:store_id, :path]
-    )
-
+    upsert_entry(db, path, ValueCodec.wrap(new_value), "counter", seq)
     new_value
   end
 
-  defp apply_to_entries(store_id, seq, %{op: :add, path: path, value: member}) do
-    current_set =
-      case Repo.get_by(StoreEntry, store_id: store_id, path: path) do
-        nil -> []
-        entry -> ValueCodec.unwrap_set(entry.value)
-      end
-
+  defp apply_to_entries(db, seq, %{op: :add, path: path, value: member}) do
+    current_set = read_set_value(db, path)
     new_set = Enum.uniq([member | current_set])
-
-    Repo.insert!(
-      %StoreEntry{
-        store_id: store_id,
-        path: path,
-        value: ValueCodec.wrap(new_set),
-        type: "set",
-        seq: seq
-      },
-      on_conflict: [set: [value: ValueCodec.wrap(new_set), type: "set", seq: seq]],
-      conflict_target: [:store_id, :path]
-    )
-
+    upsert_entry(db, path, ValueCodec.wrap(new_set), "set", seq)
     new_set
   end
 
-  defp apply_to_entries(store_id, seq, %{op: :remove, path: path, value: member}) do
-    current_set =
-      case Repo.get_by(StoreEntry, store_id: store_id, path: path) do
-        nil -> []
-        entry -> ValueCodec.unwrap_set(entry.value)
-      end
-
+  defp apply_to_entries(db, seq, %{op: :remove, path: path, value: member}) do
+    current_set = read_set_value(db, path)
     new_set = List.delete(current_set, member)
-
-    Repo.insert!(
-      %StoreEntry{
-        store_id: store_id,
-        path: path,
-        value: ValueCodec.wrap(new_set),
-        type: "set",
-        seq: seq
-      },
-      on_conflict: [set: [value: ValueCodec.wrap(new_set), type: "set", seq: seq]],
-      conflict_target: [:store_id, :path]
-    )
-
+    upsert_entry(db, path, ValueCodec.wrap(new_set), "set", seq)
     new_set
   end
 
-  defp apply_to_entries(store_id, seq, %{op: :put_file, path: path, value: ref})
-       when is_map(ref) do
-    # Decrement old file ref if overwriting
-    decrement_file_ref_at(store_id, path)
-
+  defp apply_to_entries(db, seq, %{op: :put_file, path: path, value: ref}) when is_map(ref) do
+    decrement_file_ref_at(db, path)
     {:ok, segments} = DustProtocol.Path.parse(path)
-    delete_descendants(store_id, segments)
-
-    Repo.insert!(
-      %StoreEntry{
-        store_id: store_id,
-        path: path,
-        value: ref,
-        type: "file",
-        seq: seq
-      },
-      on_conflict: [set: [value: ref, type: "file", seq: seq]],
-      conflict_target: [:store_id, :path]
-    )
-
+    delete_descendants(db, segments)
+    upsert_entry(db, path, ref, "file", seq)
     ref
   end
 
-  defp delete_descendants(store_id, ancestor_segments) do
-    prefix = Enum.join(ancestor_segments, ".") <> "."
+  # --- SQLite helpers ---
 
-    # Decrement file refs before deleting
-    decrement_file_refs(store_id, prefix)
-
-    from(e in StoreEntry,
-      where: e.store_id == ^store_id and like(e.path, ^"#{prefix}%")
-    )
-    |> Repo.delete_all()
+  defp upsert_entry(db, path, value, type, seq) do
+    exec(db, """
+      INSERT OR REPLACE INTO store_entries (path, value, type, seq)
+      VALUES (?, ?, ?, ?)
+    """, [path, Jason.encode!(value), type, seq])
   end
 
-  # Decrement reference_count for any file blobs referenced by entries
-  # that are about to be overwritten or deleted at a specific path.
-  defp decrement_file_ref_at(store_id, path) do
-    case Repo.get_by(StoreEntry, store_id: store_id, path: path) do
-      %StoreEntry{type: "file", value: %{"hash" => hash}} ->
-        Dust.Files.decrement_ref(hash)
+  defp delete_descendants(db, ancestor_segments) do
+    prefix = Enum.join(ancestor_segments, ".") <> "."
+    decrement_file_refs(db, prefix)
+    exec(db, "DELETE FROM store_entries WHERE path LIKE ?", ["#{prefix}%"])
+  end
+
+  defp read_entry_value(db, path) do
+    case query_one(db, "SELECT value FROM store_entries WHERE path = ?", [path]) do
+      nil -> nil
+      json -> json |> Jason.decode!() |> ValueCodec.unwrap()
+    end
+  end
+
+  defp read_set_value(db, path) do
+    case query_one(db, "SELECT value FROM store_entries WHERE path = ?", [path]) do
+      nil -> []
+      json -> json |> Jason.decode!() |> ValueCodec.unwrap_set()
+    end
+  end
+
+  defp decrement_file_ref_at(db, path) do
+    case query_row(db, "SELECT value, type FROM store_entries WHERE path = ?", [path]) do
+      [json, "file"] ->
+        case Jason.decode!(json) do
+          %{"hash" => hash} -> Dust.Files.decrement_ref(hash)
+          _ -> :ok
+        end
 
       _ ->
         :ok
     end
   end
 
-  # Decrement refs for all file entries under a prefix (descendants).
-  defp decrement_file_refs(store_id, prefix) do
-    from(e in StoreEntry,
-      where: e.store_id == ^store_id and e.type == "file" and like(e.path, ^"#{prefix}%"),
-      select: e.value
-    )
-    |> Repo.all()
-    |> Enum.each(fn
-      %{"hash" => hash} -> Dust.Files.decrement_ref(hash)
-      _ -> :ok
+  defp decrement_file_refs(db, prefix) do
+    rows = query_all(db, "SELECT value FROM store_entries WHERE type = 'file' AND path LIKE ?", ["#{prefix}%"])
+
+    Enum.each(rows, fn [json] ->
+      case Jason.decode!(json) do
+        %{"hash" => hash} -> Dust.Files.decrement_ref(hash)
+        _ -> :ok
+      end
     end)
   end
 
+  defp encode_value(nil), do: nil
+  defp encode_value(value), do: Jason.encode!(ValueCodec.wrap(value))
+
+  # Update cached metadata in Postgres stores table
+  defp update_store_metadata(store_id, current_seq) do
+    import Ecto.Query
+
+    Dust.Repo.update_all(
+      from(s in Dust.Stores.Store, where: s.id == ^store_id),
+      set: [current_seq: current_seq],
+      inc: [op_count: 1]
+    )
+  end
+
+  # --- Low-level Exqlite wrappers ---
+
+  defp exec(db, sql, params \\ []) do
+    {:ok, stmt} = Exqlite.Sqlite3.prepare(db, sql)
+    :ok = Exqlite.Sqlite3.bind(stmt, params)
+    :done = Exqlite.Sqlite3.step(db, stmt)
+    :ok = Exqlite.Sqlite3.release(db, stmt)
+    :ok
+  end
+
+  defp query_one(db, sql, params \\ []) do
+    {:ok, stmt} = Exqlite.Sqlite3.prepare(db, sql)
+    :ok = Exqlite.Sqlite3.bind(stmt, params)
+
+    result =
+      case Exqlite.Sqlite3.step(db, stmt) do
+        {:row, [val]} -> val
+        :done -> nil
+      end
+
+    :ok = Exqlite.Sqlite3.release(db, stmt)
+    result
+  end
+
+  defp query_one_int(db, sql) do
+    case query_one(db, sql) do
+      nil -> 0
+      val when is_integer(val) -> val
+      _ -> 0
+    end
+  end
+
+  defp query_row(db, sql, params) do
+    {:ok, stmt} = Exqlite.Sqlite3.prepare(db, sql)
+    :ok = Exqlite.Sqlite3.bind(stmt, params)
+
+    result =
+      case Exqlite.Sqlite3.step(db, stmt) do
+        {:row, row} -> row
+        :done -> nil
+      end
+
+    :ok = Exqlite.Sqlite3.release(db, stmt)
+    result
+  end
+
+  defp query_all(db, sql, params) do
+    {:ok, stmt} = Exqlite.Sqlite3.prepare(db, sql)
+    :ok = Exqlite.Sqlite3.bind(stmt, params)
+    rows = collect_rows(db, stmt, [])
+    :ok = Exqlite.Sqlite3.release(db, stmt)
+    rows
+  end
+
+  defp collect_rows(db, stmt, acc) do
+    case Exqlite.Sqlite3.step(db, stmt) do
+      {:row, row} -> collect_rows(db, stmt, [row | acc])
+      :done -> Enum.reverse(acc)
+    end
+  end
 end

@@ -66,6 +66,9 @@ defmodule Dust.MixProject do
       # Rate limiting
       {:hammer, "~> 6.2"},
 
+      # Per-store SQLite
+      {:exqlite, "~> 0.27"},
+
       # Encryption (for token storage)
       {:cloak_ecto, "~> 1.3"},
       {:cloak, "~> 1.1"},

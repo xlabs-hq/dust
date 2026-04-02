@@ -29,6 +29,12 @@ defmodule Dust.DataCase do
 
   setup tags do
     Dust.DataCase.setup_sandbox(tags)
+
+    # Clean up SQLite store files between tests
+    store_dir = Application.get_env(:dust, :store_data_dir, "priv/stores")
+    File.rm_rf!(store_dir)
+    on_exit(fn -> File.rm_rf!(store_dir) end)
+
     :ok
   end
 
