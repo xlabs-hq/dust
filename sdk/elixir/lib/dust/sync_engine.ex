@@ -135,6 +135,9 @@ defmodule Dust.SyncEngine do
     client_op_id = generate_op_id()
     type = detect_type(value)
 
+    # Save previous value for rollback on rejection
+    prev = state.cache.read(state.cache_target, state.store, path)
+
     # Optimistic local write
     :ok = state.cache.write(state.cache_target, state.store, path, value, type, 0)
 
@@ -144,8 +147,8 @@ defmodule Dust.SyncEngine do
       committed: false, source: :local, client_op_id: client_op_id
     })
 
-    # Queue for server
-    op_msg = %{op: :set, path: path, value: value, client_op_id: client_op_id}
+    # Queue for server (with prev_value for rollback)
+    op_msg = %{op: :set, path: path, value: value, client_op_id: client_op_id, prev: prev}
     pending = Map.put(state.pending_ops, client_op_id, op_msg)
     state = %{state | pending_ops: pending}
 
@@ -388,11 +391,15 @@ defmodule Dust.SyncEngine do
       {op_attrs, pending} ->
         path = op_attrs.path
 
-        # Roll back optimistic local write by deleting the cache entry.
-        # The correct value will be restored on the next server event or
-        # can be re-read via enum. This is safe because the server never
-        # accepted the write, so the entry doesn't exist server-side.
-        state.cache.delete(state.cache_target, state.store, path)
+        # Roll back to previous value (or delete if there was none)
+        case Map.get(op_attrs, :prev) do
+          {:ok, prev_value} ->
+            type = detect_type(prev_value)
+            state.cache.write(state.cache_target, state.store, path, prev_value, type, 0)
+
+          _ ->
+            state.cache.delete(state.cache_target, state.store, path)
+        end
 
         # Fire rejection callback so the app knows
         dispatch_callbacks(state, path, %{

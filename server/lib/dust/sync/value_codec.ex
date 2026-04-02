@@ -44,4 +44,26 @@ defmodule Dust.Sync.ValueCodec do
   def detect_type(value) when is_boolean(value), do: "boolean"
   def detect_type(nil), do: "null"
   def detect_type(_), do: "string"
+
+  # --- Map expansion ---
+
+  @doc "Recursively flatten a map into {path, leaf_value} pairs."
+  def flatten_map(prefix, map) when is_map(map) do
+    Enum.flat_map(map, fn {key, value} ->
+      child_path = "#{prefix}.#{key}"
+
+      if is_map(value) and not typed_value?(value) do
+        flatten_map(child_path, value)
+      else
+        [{child_path, value}]
+      end
+    end)
+  end
+
+  @doc "Check if a value is a typed envelope (file ref, Decimal, DateTime) that should not be expanded."
+  def typed_value?(%{"_type" => "file"}), do: true
+  def typed_value?(%{"_typed" => _, "_type" => _}), do: true
+  def typed_value?(%Decimal{}), do: true
+  def typed_value?(%DateTime{}), do: true
+  def typed_value?(_), do: false
 end

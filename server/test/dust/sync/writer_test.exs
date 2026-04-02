@@ -119,6 +119,35 @@ defmodule Dust.Sync.WriterTest do
       assert entry.value == %{"title" => "Hello", "meta" => %{"author" => "james", "draft" => true}}
     end
 
+    test "merge with nested map expands into leaf entries", %{store: store} do
+      # set("post", %{meta: %{author: "james", draft: true}})
+      Sync.write(store.id, %{
+        op: :set,
+        path: "post",
+        value: %{"meta" => %{"author" => "james", "draft" => true}},
+        device_id: "d",
+        client_op_id: "o1"
+      })
+
+      # merge("post", %{meta: %{draft: false}}) should expand and replace leaves
+      Sync.write(store.id, %{
+        op: :merge,
+        path: "post",
+        value: %{"meta" => %{"draft" => false}},
+        device_id: "d",
+        client_op_id: "o2"
+      })
+
+      # post.meta.draft should be false (updated)
+      assert Sync.get_entry(store.id, "post.meta.draft").value == false
+      # post.meta.author should be gone (merge replaced the meta subtree)
+      assert Sync.get_entry(store.id, "post.meta.author") == nil
+
+      # get("post") should show the correct assembled state
+      entry = Sync.get_entry(store.id, "post")
+      assert entry.value == %{"meta" => %{"draft" => false}}
+    end
+
     test "set with scalar value stores as single entry", %{store: store} do
       Sync.write(store.id, %{
         op: :set,

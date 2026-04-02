@@ -78,12 +78,19 @@ defmodule DustWeb.Api.TokenApiController do
   end
 
   def delete(conn, %{"id" => id}) do
-    case Stores.revoke_token(id) do
-      {:ok, _} ->
-        json(conn, %{ok: true})
+    store_token = conn.assigns.store_token
+    org = conn.assigns.organization
 
-      {:error, :not_found} ->
-        conn |> put_status(404) |> json(%{error: "token not found"})
+    if not Stores.StoreToken.can_write?(store_token) do
+      conn |> put_status(403) |> json(%{error: "forbidden"})
+    else
+      case Stores.revoke_token_in_org(id, org) do
+        {:ok, _} ->
+          json(conn, %{ok: true})
+
+        {:error, :not_found} ->
+          conn |> put_status(404) |> json(%{error: "token not found"})
+      end
     end
   end
 

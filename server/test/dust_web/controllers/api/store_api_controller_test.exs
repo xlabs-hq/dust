@@ -95,6 +95,37 @@ defmodule DustWeb.Api.StoreApiControllerTest do
       assert String.starts_with?(body["raw_token"], "dust_tok_")
     end
 
+    test "delete requires write permission", %{conn: conn, ro_token: token, store: store} do
+      {:ok, target} =
+        Stores.create_store_token(store, %{
+          name: "target",
+          read: true,
+          created_by_id: token.created_by_id
+        })
+
+      conn = conn |> api_conn(token) |> delete("/api/tokens/#{target.id}")
+      assert conn.status == 403
+    end
+
+    test "delete returns 404 for nonexistent token", %{conn: conn, rw_token: token} do
+      conn = conn |> api_conn(token) |> delete("/api/tokens/#{Ecto.UUID.generate()}")
+      assert conn.status == 404
+    end
+
+    test "delete scoped to org — cannot delete tokens from other orgs", %{conn: conn, rw_token: token} do
+      # Create another org with its own token
+      {:ok, user2} = Accounts.create_user(%{email: "other@example.com"})
+      {:ok, org2} = Accounts.create_organization_with_owner(user2, %{name: "Other", slug: "other"})
+      {:ok, store2} = Stores.create_store(org2, %{name: "s2"})
+
+      {:ok, other_token} =
+        Stores.create_store_token(store2, %{name: "other", read: true, created_by_id: user2.id})
+
+      # Try to delete the other org's token — should get 404 (not found in our org)
+      conn = conn |> api_conn(token) |> delete("/api/tokens/#{other_token.id}")
+      assert conn.status == 404
+    end
+
     test "deletes a token", %{conn: conn, rw_token: token, store: store} do
       {:ok, to_delete} =
         Stores.create_store_token(store, %{

@@ -98,8 +98,8 @@ defmodule Dust.Sync.Writer do
 
     # If value is a plain map, expand into leaf entries recursively.
     # Typed values (Decimal, DateTime, file refs) are stored as-is.
-    if is_map(value) and not typed_value?(value) do
-      leaves = flatten_map(path, value)
+    if is_map(value) and not ValueCodec.typed_value?(value) do
+      leaves = ValueCodec.flatten_map(path, value)
 
       Enum.each(leaves, fn {leaf_path, leaf_value} ->
         type = attrs[:type] || ValueCodec.detect_type(leaf_value)
@@ -150,19 +150,49 @@ defmodule Dust.Sync.Writer do
   defp apply_to_entries(store_id, seq, %{op: :merge, path: path, value: map}) when is_map(map) do
     Enum.each(map, fn {key, value} ->
       child_path = "#{path}.#{key}"
-      type = ValueCodec.detect_type(value)
 
-      Repo.insert!(
-        %StoreEntry{
-          store_id: store_id,
-          path: child_path,
-          value: ValueCodec.wrap(value),
-          type: type,
-          seq: seq
-        },
-        on_conflict: [set: [value: ValueCodec.wrap(value), type: type, seq: seq]],
-        conflict_target: [:store_id, :path]
-      )
+      if is_map(value) and not ValueCodec.typed_value?(value) do
+        # Expanding a nested map — remove stale descendants first
+        decrement_file_ref_at(store_id, child_path)
+        {:ok, segs} = DustProtocol.Path.parse(child_path)
+        delete_descendants(store_id, segs)
+
+        # Delete the direct entry if it exists (replaced by leaves)
+        from(e in StoreEntry, where: e.store_id == ^store_id and e.path == ^child_path)
+        |> Repo.delete_all()
+
+        leaves = ValueCodec.flatten_map(child_path, value)
+
+        Enum.each(leaves, fn {leaf_path, leaf_value} ->
+          type = ValueCodec.detect_type(leaf_value)
+
+          Repo.insert!(
+            %StoreEntry{
+              store_id: store_id,
+              path: leaf_path,
+              value: ValueCodec.wrap(leaf_value),
+              type: type,
+              seq: seq
+            },
+            on_conflict: [set: [value: ValueCodec.wrap(leaf_value), type: type, seq: seq]],
+            conflict_target: [:store_id, :path]
+          )
+        end)
+      else
+        type = ValueCodec.detect_type(value)
+
+        Repo.insert!(
+          %StoreEntry{
+            store_id: store_id,
+            path: child_path,
+            value: ValueCodec.wrap(value),
+            type: type,
+            seq: seq
+          },
+          on_conflict: [set: [value: ValueCodec.wrap(value), type: type, seq: seq]],
+          conflict_target: [:store_id, :path]
+        )
+      end
     end)
 
     map
@@ -299,26 +329,5 @@ defmodule Dust.Sync.Writer do
       _ -> :ok
     end)
   end
-
-  # Recursively flatten a map into {path, leaf_value} pairs.
-  # %{a: 1, b: %{c: 2}} at "root" => [{"root.a", 1}, {"root.b.c", 2}]
-  defp flatten_map(prefix, map) when is_map(map) do
-    Enum.flat_map(map, fn {key, value} ->
-      child_path = "#{prefix}.#{key}"
-
-      if is_map(value) and not typed_value?(value) do
-        flatten_map(child_path, value)
-      else
-        [{child_path, value}]
-      end
-    end)
-  end
-
-  # Typed values are maps with special envelope keys — don't expand them.
-  defp typed_value?(%{"_type" => "file"}), do: true
-  defp typed_value?(%{"_typed" => _, "_type" => _}), do: true
-  defp typed_value?(%Decimal{}), do: true
-  defp typed_value?(%DateTime{}), do: true
-  defp typed_value?(_), do: false
 
 end

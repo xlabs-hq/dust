@@ -114,6 +114,30 @@ defmodule Dust.Sync.RollbackTest do
     test "returns error for store with no ops", %{store: store} do
       assert {:error, :no_ops} = Rollback.rollback_path(store.id, "key", 1)
     end
+
+    test "rollback_path works for expanded map root", %{store: store} do
+      write!(store.id, :set, "post", %{"title" => "Hello", "body" => "World"})
+      write!(store.id, :set, "post", %{"title" => "Changed", "body" => "New"})
+
+      {:ok, _op} = Rollback.rollback_path(store.id, "post", 1)
+
+      entry = Sync.get_entry(store.id, "post")
+      assert entry.value == %{"title" => "Hello", "body" => "World"}
+    end
+
+    test "rollback_store handles expanded maps correctly", %{store: store} do
+      write!(store.id, :set, "post", %{"title" => "Hello"})
+      # At seq 1: post.title = "Hello"
+
+      write!(store.id, :set, "post", %{"title" => "Changed"})
+      # At seq 2: post.title = "Changed"
+
+      {:ok, count} = Rollback.rollback_store(store.id, 1)
+      assert count == 1
+
+      entry = Sync.get_entry(store.id, "post")
+      assert entry.value == %{"title" => "Hello"}
+    end
   end
 
   describe "rollback_store/2" do

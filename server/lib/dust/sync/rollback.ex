@@ -204,10 +204,22 @@ defmodule Dust.Sync.Rollback do
   end
 
   # Apply a single op to the in-memory state map during replay.
+  # Mirrors what the Writer does: plain maps expand into leaf entries.
   defp apply_op_to_state(state, %{op: :set, path: path, value: value}) do
-    # Remove any descendants
     state = delete_descendants_from_state(state, path)
-    Map.put(state, path, value)
+    unwrapped = ValueCodec.unwrap(value)
+
+    if is_map(unwrapped) and not ValueCodec.typed_value?(unwrapped) do
+      # Expand map into leaf entries (same as Writer)
+      state = Map.delete(state, path)
+      leaves = ValueCodec.flatten_map(path, unwrapped)
+
+      Enum.reduce(leaves, state, fn {leaf_path, leaf_value}, acc ->
+        Map.put(acc, leaf_path, ValueCodec.wrap(leaf_value))
+      end)
+    else
+      Map.put(state, path, value)
+    end
   end
 
   defp apply_op_to_state(state, %{op: :delete, path: path}) do
@@ -217,13 +229,21 @@ defmodule Dust.Sync.Rollback do
   end
 
   defp apply_op_to_state(state, %{op: :merge, path: path, value: map}) when is_map(map) do
-    Enum.reduce(map, state, fn
-      {_key, _value}, state when not is_map(map) ->
-        state
+    Enum.reduce(map, state, fn {key, value}, state ->
+      child_path = "#{path}.#{key}"
+      unwrapped = ValueCodec.unwrap(value)
 
-      {key, value}, state ->
-        child_path = "#{path}.#{key}"
-        Map.put(state, child_path, ValueCodec.wrap(value))
+      if is_map(unwrapped) and not ValueCodec.typed_value?(unwrapped) do
+        state = delete_descendants_from_state(state, child_path)
+        state = Map.delete(state, child_path)
+        leaves = ValueCodec.flatten_map(child_path, unwrapped)
+
+        Enum.reduce(leaves, state, fn {leaf_path, leaf_value}, acc ->
+          Map.put(acc, leaf_path, ValueCodec.wrap(leaf_value))
+        end)
+      else
+        Map.put(state, child_path, ValueCodec.wrap(unwrapped))
+      end
     end)
   end
 
@@ -265,9 +285,9 @@ defmodule Dust.Sync.Rollback do
 
   # Get the current value of a path (wrapped), or nil if it doesn't exist.
   defp current_path_value(store_id, path) do
-    case Repo.get_by(StoreEntry, store_id: store_id, path: path) do
+    case Sync.get_entry(store_id, path) do
       nil -> nil
-      entry -> entry.value
+      entry -> ValueCodec.wrap(entry.value)
     end
   end
 

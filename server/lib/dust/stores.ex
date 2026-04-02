@@ -119,8 +119,24 @@ defmodule Dust.Stores do
   def get_token!(id), do: Repo.get!(StoreToken, id)
 
   def revoke_token(token_id) do
-    token = Repo.get!(StoreToken, token_id)
-    Repo.delete(token)
+    case Repo.get(StoreToken, token_id) do
+      nil -> {:error, :not_found}
+      token -> Repo.delete(token)
+    end
+  end
+
+  def revoke_token_in_org(token_id, organization) do
+    query =
+      from(t in StoreToken,
+        join: s in Store,
+        on: t.store_id == s.id,
+        where: t.id == ^token_id and s.organization_id == ^organization.id
+      )
+
+    case Repo.one(query) do
+      nil -> {:error, :not_found}
+      token -> Repo.delete(token)
+    end
   end
 
   defp generate_token do

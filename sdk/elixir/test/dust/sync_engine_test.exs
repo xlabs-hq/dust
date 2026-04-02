@@ -155,27 +155,43 @@ defmodule Dust.SyncEngineTest do
 
   # Write rejection tests
 
-  test "handle_write_rejected rolls back optimistic write" do
+  test "handle_write_rejected rolls back to previous value" do
+    # Write a value and get its op_id so we can simulate acceptance
+    :ok = SyncEngine.put("test/store", "key", "committed")
+
+    state = :sys.get_state(SyncEngine.via("test/store") |> GenServer.whereis())
+    [{first_op_id, _}] = Map.to_list(state.pending_ops)
+
+    # Simulate server accepting the first write
+    SyncEngine.handle_server_event("test/store", %{
+      "op" => "set", "path" => "key", "value" => "committed",
+      "store_seq" => 1, "device_id" => "d", "client_op_id" => first_op_id
+    })
+
+    # Now do an optimistic update
     :ok = SyncEngine.put("test/store", "key", "optimistic")
     assert {:ok, "optimistic"} = SyncEngine.get("test/store", "key")
 
-    # Get the pending op's client_op_id
-    status = SyncEngine.status("test/store")
-    assert status.pending_ops == 1
-
-    # Simulate the server rejecting the write. We need the client_op_id,
-    # which we can get from the GenServer state.
     state = :sys.get_state(SyncEngine.via("test/store") |> GenServer.whereis())
     [{client_op_id, _op}] = Map.to_list(state.pending_ops)
 
     SyncEngine.handle_write_rejected("test/store", client_op_id, "limit_exceeded")
 
-    # Optimistic write should be rolled back
-    assert :miss = SyncEngine.get("test/store", "key")
+    # Should restore to "committed", not delete
+    assert {:ok, "committed"} = SyncEngine.get("test/store", "key")
+  end
 
-    # Pending ops should be empty
-    status = SyncEngine.status("test/store")
-    assert status.pending_ops == 0
+  test "handle_write_rejected deletes if no previous value" do
+    :ok = SyncEngine.put("test/store", "new_key", "optimistic")
+    assert {:ok, "optimistic"} = SyncEngine.get("test/store", "new_key")
+
+    state = :sys.get_state(SyncEngine.via("test/store") |> GenServer.whereis())
+    [{client_op_id, _op}] = Map.to_list(state.pending_ops)
+
+    SyncEngine.handle_write_rejected("test/store", client_op_id, "limit_exceeded")
+
+    # No previous value, so it should be gone
+    assert :miss = SyncEngine.get("test/store", "new_key")
   end
 
   test "handle_write_rejected fires rejection callback" do
