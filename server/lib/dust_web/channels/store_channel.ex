@@ -190,6 +190,12 @@ defmodule DustWeb.StoreChannel do
     {:reply, :ok, socket}
   end
 
+  def handle_in("status", _params, socket) do
+    store_id = socket.assigns.store_id
+    status = build_status(store_id)
+    {:reply, {:ok, status}, socket}
+  end
+
   @impl true
   def handle_info({:catch_up, last_seq}, socket) do
     store_id = socket.assigns.store_id
@@ -282,6 +288,56 @@ defmodule DustWeb.StoreChannel do
 
   defp format_catch_up_event(_store_id, op) do
     format_event(op)
+  end
+
+  defp build_status(store_id) do
+    import Ecto.Query
+
+    current_seq = Sync.current_seq(store_id)
+    entry_count = Sync.entry_count(store_id)
+
+    store_meta =
+      Dust.Repo.one(
+        from(s in Dust.Stores.Store,
+          where: s.id == ^store_id,
+          select: %{op_count: s.op_count, file_storage_bytes: s.file_storage_bytes}
+        )
+      )
+
+    snapshot = Sync.get_latest_snapshot(store_id)
+
+    recent_ops = Sync.get_ops_page(store_id, limit: 5, offset: 0)
+
+    db_size =
+      case Dust.Sync.StoreDB.path_for_id(store_id) do
+        {:ok, path} ->
+          case File.stat(path) do
+            {:ok, %{size: size}} -> size
+            _ -> 0
+          end
+
+        _ ->
+          0
+      end
+
+    %{
+      current_seq: current_seq,
+      entry_count: entry_count,
+      op_count: (store_meta && store_meta.op_count) || 0,
+      file_storage_bytes: (store_meta && store_meta.file_storage_bytes) || 0,
+      db_size_bytes: db_size,
+      latest_snapshot_seq: snapshot && snapshot.snapshot_seq,
+      latest_snapshot_at: snapshot && Map.get(snapshot, :inserted_at),
+      recent_ops:
+        Enum.map(recent_ops, fn op ->
+          %{
+            store_seq: op.store_seq,
+            op: op.op,
+            path: op.path,
+            inserted_at: op.inserted_at
+          }
+        end)
+    }
   end
 
   # If the store_ref contains "/", it's a full name like "org/store".

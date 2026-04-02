@@ -272,6 +272,33 @@ defmodule DustWeb.StoreChannelTest do
       ref = push(socket, "ack_seq", %{"seq" => 42})
       assert_reply ref, :ok
     end
+  end
+
+  describe "status" do
+    test "returns store status info", %{socket: socket, store: store} do
+      Sync.write(store.id, %{op: :set, path: "a", value: "1", device_id: "d", client_op_id: "o1"})
+      Sync.write(store.id, %{op: :set, path: "b", value: "2", device_id: "d", client_op_id: "o2"})
+
+      {:ok, _, socket} =
+        subscribe_and_join(socket, DustWeb.StoreChannel, "store:#{store.id}", %{
+          "last_store_seq" => 0
+        })
+
+      # Drain catch-up events
+      assert_push "event", _
+      assert_push "event", _
+      assert_push "catch_up_complete", _
+
+      ref = push(socket, "status", %{})
+      assert_reply ref, :ok, status
+
+      assert status.current_seq == 2
+      assert status.entry_count == 2
+      assert is_integer(status.db_size_bytes)
+      assert status.db_size_bytes > 0
+      assert is_list(status.recent_ops)
+      assert length(status.recent_ops) == 2
+    end
 
     test "rejects merge with non-map value", %{socket: socket, store: store} do
       {:ok, _, socket} =

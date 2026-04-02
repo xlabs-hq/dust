@@ -128,11 +128,11 @@ defmodule Dust.Sync do
   def get_latest_snapshot(store_id) do
     with_read_conn(store_id, fn conn ->
       case query_one_row(conn, """
-        SELECT snapshot_seq, snapshot_data FROM store_snapshots
+        SELECT snapshot_seq, snapshot_data, inserted_at FROM store_snapshots
         ORDER BY snapshot_seq DESC LIMIT 1
       """, []) do
-        [seq, json] ->
-          %{snapshot_seq: seq, snapshot_data: Jason.decode!(json)}
+        [seq, json, inserted_at] ->
+          %{snapshot_seq: seq, snapshot_data: Jason.decode!(json), inserted_at: inserted_at}
 
         nil ->
           nil
