@@ -91,7 +91,10 @@ defmodule Dust.Sync.Writer do
   defp apply_to_entries(store_id, seq, %{op: :set, path: path, value: value} = attrs) do
     type = attrs[:type] || ValueCodec.detect_type(value)
 
-    # Delete descendants
+    # Decrement file ref if overwriting a file entry
+    decrement_file_ref_at(store_id, path)
+
+    # Delete descendants (also decrements their file refs)
     {:ok, segments} = DustProtocol.Path.parse(path)
     delete_descendants(store_id, segments)
 
@@ -106,11 +109,15 @@ defmodule Dust.Sync.Writer do
   end
 
   defp apply_to_entries(store_id, _seq, %{op: :delete, path: path}) do
+    # Decrement file ref if deleting a file entry
+    decrement_file_ref_at(store_id, path)
+
     {:ok, segments} = DustProtocol.Path.parse(path)
 
     from(e in StoreEntry, where: e.store_id == ^store_id and e.path == ^path)
     |> Repo.delete_all()
 
+    # Also decrements file refs for descendants
     delete_descendants(store_id, segments)
     nil
   end
@@ -210,6 +217,9 @@ defmodule Dust.Sync.Writer do
 
   defp apply_to_entries(store_id, seq, %{op: :put_file, path: path, value: ref})
        when is_map(ref) do
+    # Decrement old file ref if overwriting
+    decrement_file_ref_at(store_id, path)
+
     {:ok, segments} = DustProtocol.Path.parse(path)
     delete_descendants(store_id, segments)
 
@@ -231,10 +241,38 @@ defmodule Dust.Sync.Writer do
   defp delete_descendants(store_id, ancestor_segments) do
     prefix = Enum.join(ancestor_segments, ".") <> "."
 
+    # Decrement file refs before deleting
+    decrement_file_refs(store_id, prefix)
+
     from(e in StoreEntry,
       where: e.store_id == ^store_id and like(e.path, ^"#{prefix}%")
     )
     |> Repo.delete_all()
+  end
+
+  # Decrement reference_count for any file blobs referenced by entries
+  # that are about to be overwritten or deleted at a specific path.
+  defp decrement_file_ref_at(store_id, path) do
+    case Repo.get_by(StoreEntry, store_id: store_id, path: path) do
+      %StoreEntry{type: "file", value: %{"hash" => hash}} ->
+        Dust.Files.decrement_ref(hash)
+
+      _ ->
+        :ok
+    end
+  end
+
+  # Decrement refs for all file entries under a prefix (descendants).
+  defp decrement_file_refs(store_id, prefix) do
+    from(e in StoreEntry,
+      where: e.store_id == ^store_id and e.type == "file" and like(e.path, ^"#{prefix}%"),
+      select: e.value
+    )
+    |> Repo.all()
+    |> Enum.each(fn
+      %{"hash" => hash} -> Dust.Files.decrement_ref(hash)
+      _ -> :ok
+    end)
   end
 
 end

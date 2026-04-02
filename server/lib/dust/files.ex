@@ -9,6 +9,7 @@ defmodule Dust.Files do
   many store entries reference them.
   """
 
+  import Ecto.Query
   alias Dust.Repo
   alias Dust.Files.Blob
 
@@ -75,6 +76,16 @@ defmodule Dust.Files do
     content_type = opts[:content_type] || mime_from_path(file_path)
     upload(content, Keyword.merge(opts, filename: filename, content_type: content_type))
   end
+
+  @doc "Decrement reference count for a blob. Called when a file entry is overwritten or deleted."
+  def decrement_ref(hash) when is_binary(hash) do
+    from(b in Blob, where: b.hash == ^hash)
+    |> Repo.update_all(inc: [reference_count: -1])
+
+    :ok
+  end
+
+  def decrement_ref(_), do: :ok
 
   @doc "Download blob content by hash."
   def download(hash) do

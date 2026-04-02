@@ -1,5 +1,5 @@
 defmodule Dust.FilesTest do
-  use Dust.DataCase, async: true
+  use Dust.DataCase, async: false
 
   alias Dust.Files
 
@@ -118,6 +118,95 @@ defmodule Dust.FilesTest do
         {:ok, ref} = Files.upload_from_path(tmp_path)
         assert ref["content_type"] == expected_mime, "Expected #{expected_mime} for #{ext}"
       end
+    end
+  end
+
+  describe "reference counting via Writer" do
+    setup do
+      {:ok, user} = Dust.Accounts.create_user(%{email: "fileref@example.com"})
+
+      {:ok, org} =
+        Dust.Accounts.create_organization_with_owner(user, %{name: "FileRef", slug: "fileref"})
+
+      {:ok, store} = Dust.Stores.create_store(org, %{name: "files"})
+      %{store: store}
+    end
+
+    test "overwriting a file path decrements old ref", %{store: store} do
+      {:ok, ref1} = Files.upload("content A", filename: "a.txt")
+      {:ok, ref2} = Files.upload("content B", filename: "b.txt")
+
+      # Write first file ref
+      Dust.Sync.write(store.id, %{
+        op: :put_file,
+        path: "doc",
+        value: ref1,
+        device_id: "d",
+        client_op_id: "f1"
+      })
+
+      assert Files.get_blob(ref1["hash"]).reference_count == 1
+
+      # Overwrite with second file ref — old ref should decrement
+      Dust.Sync.write(store.id, %{
+        op: :put_file,
+        path: "doc",
+        value: ref2,
+        device_id: "d",
+        client_op_id: "f2"
+      })
+
+      assert Files.get_blob(ref1["hash"]).reference_count == 0
+      assert Files.get_blob(ref2["hash"]).reference_count == 1
+    end
+
+    test "deleting a file path decrements ref", %{store: store} do
+      {:ok, ref} = Files.upload("delete me", filename: "d.txt")
+
+      Dust.Sync.write(store.id, %{
+        op: :put_file,
+        path: "doc",
+        value: ref,
+        device_id: "d",
+        client_op_id: "f1"
+      })
+
+      assert Files.get_blob(ref["hash"]).reference_count == 1
+
+      Dust.Sync.write(store.id, %{
+        op: :delete,
+        path: "doc",
+        value: nil,
+        device_id: "d",
+        client_op_id: "f2"
+      })
+
+      assert Files.get_blob(ref["hash"]).reference_count == 0
+    end
+
+    test "set on ancestor path decrements file refs in subtree", %{store: store} do
+      {:ok, ref} = Files.upload("subtree file", filename: "s.txt")
+
+      Dust.Sync.write(store.id, %{
+        op: :put_file,
+        path: "docs.readme",
+        value: ref,
+        device_id: "d",
+        client_op_id: "f1"
+      })
+
+      assert Files.get_blob(ref["hash"]).reference_count == 1
+
+      # Set on ancestor "docs" should delete descendants including the file
+      Dust.Sync.write(store.id, %{
+        op: :set,
+        path: "docs",
+        value: "replaced",
+        device_id: "d",
+        client_op_id: "f2"
+      })
+
+      assert Files.get_blob(ref["hash"]).reference_count == 0
     end
   end
 
