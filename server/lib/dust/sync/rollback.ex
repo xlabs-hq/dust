@@ -104,18 +104,86 @@ defmodule Dust.Sync.Rollback do
   Compute what value a path had at a given `store_seq`.
 
   Returns the value, or `nil` if the path didn't exist at that point.
+
+  Handles ancestor ops: if `set("docs", %{readme: "hello"})` was the
+  most recent op affecting "docs.readme", this function extracts the
+  value from the ancestor's map.
   """
   def compute_historical_value(store_id, path, to_seq) do
+    # First check for a direct op on this exact path
+    direct_op =
+      from(o in StoreOp,
+        where: o.store_id == ^store_id and o.path == ^path and o.store_seq <= ^to_seq,
+        order_by: [desc: o.store_seq],
+        limit: 1
+      )
+      |> Repo.one()
+
+    # Also check ancestor ops that might have set/deleted this path as part of a subtree
+    {:ok, segments} = DustProtocol.Path.parse(path)
+    ancestor_op = find_most_recent_ancestor_op(store_id, segments, to_seq)
+
+    # The more recent op wins
+    case {direct_op, ancestor_op} do
+      {nil, nil} ->
+        nil
+
+      {nil, ancestor} ->
+        extract_descendant_value(ancestor, segments)
+
+      {direct, nil} ->
+        case direct do
+          %{op: :delete} -> nil
+          %{value: value} -> value
+        end
+
+      {direct, ancestor} ->
+        if ancestor.store_seq > direct.store_seq do
+          extract_descendant_value(ancestor, segments)
+        else
+          case direct do
+            %{op: :delete} -> nil
+            %{value: value} -> value
+          end
+        end
+    end
+  end
+
+  # Find the most recent set or delete on any ancestor path.
+  defp find_most_recent_ancestor_op(store_id, segments, to_seq) when length(segments) > 1 do
+    ancestor_paths =
+      segments
+      |> Enum.slice(0..-2//1)
+      |> Enum.scan(fn seg, acc -> "#{acc}.#{seg}" end)
+
     from(o in StoreOp,
-      where: o.store_id == ^store_id and o.path == ^path and o.store_seq <= ^to_seq,
+      where:
+        o.store_id == ^store_id and o.path in ^ancestor_paths and
+          o.store_seq <= ^to_seq and o.op in [:set, :delete],
       order_by: [desc: o.store_seq],
       limit: 1
     )
     |> Repo.one()
+  end
+
+  defp find_most_recent_ancestor_op(_, _, _), do: nil
+
+  # Extract a descendant value from an ancestor set op's map value.
+  defp extract_descendant_value(%{op: :delete}, _segments), do: nil
+
+  defp extract_descendant_value(%{op: :set, path: ancestor_path, value: value}, segments) do
+    {:ok, ancestor_segments} = DustProtocol.Path.parse(ancestor_path)
+    relative_keys = Enum.drop(segments, length(ancestor_segments))
+
+    Enum.reduce_while(relative_keys, ValueCodec.unwrap(value), fn key, acc ->
+      case acc do
+        %{^key => child} -> {:cont, child}
+        _ -> {:halt, nil}
+      end
+    end)
     |> case do
       nil -> nil
-      %{op: :delete} -> nil
-      %{value: value} -> value
+      val -> ValueCodec.wrap(val)
     end
   end
 

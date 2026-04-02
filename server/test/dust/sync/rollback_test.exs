@@ -202,6 +202,29 @@ defmodule Dust.Sync.RollbackTest do
       assert Rollback.compute_historical_value(store.id, "key", 2) == nil
     end
 
+    test "resolves value from ancestor set op", %{store: store} do
+      # set("docs", %{readme: "hello"}) creates one op at path "docs"
+      # but materializes an entry at "docs" with value %{readme: "hello"}
+      write!(store.id, :set, "docs", %{"readme" => "hello", "license" => "MIT"})
+
+      # Now set a direct child — creates a new op at "docs.readme"
+      write!(store.id, :set, "docs.readme", "updated")
+
+      # Historical value of "docs.readme" at seq 1 should be "hello"
+      # (extracted from the ancestor set op's map value)
+      value = Rollback.compute_historical_value(store.id, "docs.readme", 1)
+      assert value == %{"_scalar" => "hello"}
+    end
+
+    test "ancestor delete removes descendant value", %{store: store} do
+      write!(store.id, :set, "docs.readme", "hello")
+      write!(store.id, :delete, "docs", nil)
+
+      # At seq 2, "docs" was deleted — so "docs.readme" should be nil
+      value = Rollback.compute_historical_value(store.id, "docs.readme", 2)
+      assert value == nil
+    end
+
     test "returns value from the most recent set at or before to_seq", %{store: store} do
       write!(store.id, :set, "key", "v1")
       write!(store.id, :set, "key", "v2")
