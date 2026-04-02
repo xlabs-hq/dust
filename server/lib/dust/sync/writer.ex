@@ -76,9 +76,7 @@ defmodule Dust.Sync.Writer do
 
     :telemetry.span([:dust, :write], metadata, fn ->
       result =
-        try do
-          :ok = Exqlite.Sqlite3.execute(db, "BEGIN")
-
+        sqlite_transaction(db, fn ->
           # Get current max store_seq from ops AND snapshots
           ops_seq = query_one_int(db, "SELECT max(store_seq) FROM store_ops")
           snap_seq = query_one_int(db, "SELECT max(snapshot_seq) FROM store_snapshots")
@@ -97,10 +95,7 @@ defmodule Dust.Sync.Writer do
           # Apply to materialized state
           materialized = apply_to_entries(db, next_seq, attrs)
 
-          :ok = Exqlite.Sqlite3.execute(db, "COMMIT")
-
-          # Build result — the write is durable at this point
-          op = %{
+          %{
             store_seq: next_seq,
             op: attrs.op,
             path: attrs.path,
@@ -111,57 +106,50 @@ defmodule Dust.Sync.Writer do
             store_id: store_id,
             materialized_value: materialized
           }
+        end)
 
-          # Update cached metadata in Postgres (best-effort, never fails the write)
-          try do
-            update_store_metadata(store_id, next_seq, db)
-          rescue
-            _ -> :ok
-          end
+      # Update cached metadata in Postgres (best-effort, after durable commit)
+      case result do
+        {:ok, op} ->
+          update_store_metadata(store_id, op.store_seq, db)
+          {result, metadata}
 
-          {:ok, op}
-        rescue
-          e ->
-            Exqlite.Sqlite3.execute(db, "ROLLBACK")
-            {:error, e}
-        end
-
-      {result, metadata}
+        _ ->
+          {result, metadata}
+      end
     end)
   end
 
   defp do_compact(db) do
-    try do
-      :ok = Exqlite.Sqlite3.execute(db, "BEGIN")
+    max_seq = query_one_int(db, "SELECT max(store_seq) FROM store_ops")
 
-      max_seq = query_one_int(db, "SELECT max(store_seq) FROM store_ops")
+    if max_seq > 0 do
+      result =
+        sqlite_transaction(db, fn ->
+          entries = query_all(db, "SELECT path, value, type FROM store_entries", [])
 
-      if max_seq > 0 do
-        entries = query_all(db, "SELECT path, value, type FROM store_entries", [])
+          snapshot_data =
+            Map.new(entries, fn [path, value, type] ->
+              {path, %{"value" => Jason.decode!(value), "type" => type}}
+            end)
 
-        snapshot_data =
-          Map.new(entries, fn [path, value, type] ->
-            {path, %{"value" => Jason.decode!(value), "type" => type}}
-          end)
+          exec(db, "INSERT INTO store_snapshots (snapshot_seq, snapshot_data) VALUES (?, ?)",
+            [max_seq, Jason.encode!(snapshot_data)])
 
-        exec(db, "INSERT INTO store_snapshots (snapshot_seq, snapshot_data) VALUES (?, ?)",
-          [max_seq, Jason.encode!(snapshot_data)])
+          exec(db, "DELETE FROM store_ops WHERE store_seq <= ?", [max_seq])
+          exec(db, "DELETE FROM store_snapshots WHERE snapshot_seq < ?", [max_seq])
 
-        exec(db, "DELETE FROM store_ops WHERE store_seq <= ?", [max_seq])
-        exec(db, "DELETE FROM store_snapshots WHERE snapshot_seq < ?", [max_seq])
+          max_seq
+        end)
 
-        :ok = Exqlite.Sqlite3.execute(db, "COMMIT")
-        Exqlite.Sqlite3.execute(db, "VACUUM")
-
-        {:ok, max_seq}
-      else
-        :ok = Exqlite.Sqlite3.execute(db, "ROLLBACK")
-        {:ok, :no_ops}
+      case result do
+        {:ok, _} -> Exqlite.Sqlite3.execute(db, "VACUUM")
+        _ -> :ok
       end
-    rescue
-      e ->
-        Exqlite.Sqlite3.execute(db, "ROLLBACK")
-        {:error, e}
+
+      result
+    else
+      {:ok, :no_ops}
     end
   end
 
@@ -319,6 +307,22 @@ defmodule Dust.Sync.Writer do
       set: [current_seq: current_seq, entry_count: entry_count],
       inc: [op_count: 1]
     )
+  end
+
+  # Single centralized rescue point for SQLite NIF boundary.
+  # All transactional work goes through this helper.
+  defp sqlite_transaction(db, fun) do
+    :ok = Exqlite.Sqlite3.execute(db, "BEGIN")
+
+    try do
+      result = fun.()
+      :ok = Exqlite.Sqlite3.execute(db, "COMMIT")
+      {:ok, result}
+    rescue
+      e ->
+        Exqlite.Sqlite3.execute(db, "ROLLBACK")
+        {:error, e}
+    end
   end
 
   # --- Low-level Exqlite wrappers ---

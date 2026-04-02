@@ -7,8 +7,8 @@ defmodule DustWeb.HealthController do
 
   def readyz(conn, _params) do
     checks = %{
-      database: check_database(),
-      pubsub: check_pubsub()
+      database: safe_check(fn -> check_database() end),
+      pubsub: safe_check(fn -> check_pubsub() end)
     }
 
     all_ok = Enum.all?(checks, fn {_, v} -> v == :ok end)
@@ -27,8 +27,6 @@ defmodule DustWeb.HealthController do
       {:ok, _} -> :ok
       {:error, _} -> :error
     end
-  rescue
-    _ -> :error
   end
 
   defp check_pubsub do
@@ -36,7 +34,12 @@ defmodule DustWeb.HealthController do
       name when is_atom(name) -> :ok
       _ -> :error
     end
-  rescue
-    _ -> :error
+  end
+
+  # Run a check function, catching any crash (exit, throw, or error)
+  defp safe_check(fun) do
+    fun.()
+  catch
+    _, _ -> :error
   end
 end

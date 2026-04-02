@@ -293,10 +293,9 @@ defmodule DustWeb.StoreChannel do
         store -> {:ok, store}
       end
     else
-      try do
-        {:ok, Stores.get_store!(store_ref)}
-      rescue
-        Ecto.NoResultsError -> {:error, :not_found}
+      case Dust.Repo.get(Dust.Stores.Store, store_ref) do
+        nil -> {:error, :not_found}
+        store -> {:ok, store}
       end
     end
   end
