@@ -2,7 +2,7 @@ defmodule Dust.Sync.Writer do
   use GenServer
 
   alias Dust.Repo
-  alias Dust.Sync.{StoreOp, StoreEntry}
+  alias Dust.Sync.{StoreOp, StoreEntry, ValueCodec}
 
   import Ecto.Query
 
@@ -73,8 +73,8 @@ defmodule Dust.Sync.Writer do
           store_seq: next_seq,
           op: attrs.op,
           path: attrs.path,
-          value: wrap_value(attrs[:value]),
-          type: attrs[:type] || detect_type(attrs[:value]),
+          value: ValueCodec.wrap(attrs[:value]),
+          type: attrs[:type] || ValueCodec.detect_type(attrs[:value]),
           device_id: attrs.device_id,
           client_op_id: attrs.client_op_id,
           store_id: store_id
@@ -89,7 +89,7 @@ defmodule Dust.Sync.Writer do
   end
 
   defp apply_to_entries(store_id, seq, %{op: :set, path: path, value: value} = attrs) do
-    type = attrs[:type] || detect_type(value)
+    type = attrs[:type] || ValueCodec.detect_type(value)
 
     # Delete descendants
     {:ok, segments} = DustProtocol.Path.parse(path)
@@ -97,8 +97,8 @@ defmodule Dust.Sync.Writer do
 
     # Upsert entry
     Repo.insert!(
-      %StoreEntry{store_id: store_id, path: path, value: wrap_value(value), type: type, seq: seq},
-      on_conflict: [set: [value: wrap_value(value), type: type, seq: seq]],
+      %StoreEntry{store_id: store_id, path: path, value: ValueCodec.wrap(value), type: type, seq: seq},
+      on_conflict: [set: [value: ValueCodec.wrap(value), type: type, seq: seq]],
       conflict_target: [:store_id, :path]
     )
   end
@@ -115,17 +115,17 @@ defmodule Dust.Sync.Writer do
   defp apply_to_entries(store_id, seq, %{op: :merge, path: path, value: map}) when is_map(map) do
     Enum.each(map, fn {key, value} ->
       child_path = "#{path}.#{key}"
-      type = detect_type(value)
+      type = ValueCodec.detect_type(value)
 
       Repo.insert!(
         %StoreEntry{
           store_id: store_id,
           path: child_path,
-          value: wrap_value(value),
+          value: ValueCodec.wrap(value),
           type: type,
           seq: seq
         },
-        on_conflict: [set: [value: wrap_value(value), type: type, seq: seq]],
+        on_conflict: [set: [value: ValueCodec.wrap(value), type: type, seq: seq]],
         conflict_target: [:store_id, :path]
       )
     end)
@@ -135,7 +135,7 @@ defmodule Dust.Sync.Writer do
     current =
       case Repo.get_by(StoreEntry, store_id: store_id, path: path) do
         nil -> 0
-        entry -> unwrap_scalar(entry.value)
+        entry -> ValueCodec.unwrap(entry.value)
       end
 
     new_value = current + delta
@@ -144,11 +144,11 @@ defmodule Dust.Sync.Writer do
       %StoreEntry{
         store_id: store_id,
         path: path,
-        value: wrap_value(new_value),
+        value: ValueCodec.wrap(new_value),
         type: "counter",
         seq: seq
       },
-      on_conflict: [set: [value: wrap_value(new_value), type: "counter", seq: seq]],
+      on_conflict: [set: [value: ValueCodec.wrap(new_value), type: "counter", seq: seq]],
       conflict_target: [:store_id, :path]
     )
   end
@@ -157,7 +157,7 @@ defmodule Dust.Sync.Writer do
     current_set =
       case Repo.get_by(StoreEntry, store_id: store_id, path: path) do
         nil -> []
-        entry -> unwrap_set(entry.value)
+        entry -> ValueCodec.unwrap_set(entry.value)
       end
 
     new_set = Enum.uniq([member | current_set])
@@ -166,11 +166,11 @@ defmodule Dust.Sync.Writer do
       %StoreEntry{
         store_id: store_id,
         path: path,
-        value: wrap_value(new_set),
+        value: ValueCodec.wrap(new_set),
         type: "set",
         seq: seq
       },
-      on_conflict: [set: [value: wrap_value(new_set), type: "set", seq: seq]],
+      on_conflict: [set: [value: ValueCodec.wrap(new_set), type: "set", seq: seq]],
       conflict_target: [:store_id, :path]
     )
   end
@@ -179,7 +179,7 @@ defmodule Dust.Sync.Writer do
     current_set =
       case Repo.get_by(StoreEntry, store_id: store_id, path: path) do
         nil -> []
-        entry -> unwrap_set(entry.value)
+        entry -> ValueCodec.unwrap_set(entry.value)
       end
 
     new_set = List.delete(current_set, member)
@@ -188,11 +188,11 @@ defmodule Dust.Sync.Writer do
       %StoreEntry{
         store_id: store_id,
         path: path,
-        value: wrap_value(new_set),
+        value: ValueCodec.wrap(new_set),
         type: "set",
         seq: seq
       },
-      on_conflict: [set: [value: wrap_value(new_set), type: "set", seq: seq]],
+      on_conflict: [set: [value: ValueCodec.wrap(new_set), type: "set", seq: seq]],
       conflict_target: [:store_id, :path]
     )
   end
@@ -224,30 +224,4 @@ defmodule Dust.Sync.Writer do
     |> Repo.delete_all()
   end
 
-  defp detect_type(%Decimal{}), do: "decimal"
-  defp detect_type(%DateTime{}), do: "datetime"
-  defp detect_type(value) when is_map(value), do: "map"
-  defp detect_type(value) when is_binary(value), do: "string"
-  defp detect_type(value) when is_integer(value), do: "integer"
-  defp detect_type(value) when is_float(value), do: "float"
-  defp detect_type(value) when is_boolean(value), do: "boolean"
-  defp detect_type(nil), do: "null"
-  defp detect_type(_), do: "string"
-
-  # StoreEntry.value is :map type, so wrap scalars.
-  # Decimal and DateTime get a typed envelope for lossless round-tripping through jsonb.
-  defp wrap_value(%Decimal{} = d), do: %{"_typed" => Decimal.to_string(d), "_type" => "decimal"}
-
-  defp wrap_value(%DateTime{} = dt),
-    do: %{"_typed" => DateTime.to_iso8601(dt), "_type" => "datetime"}
-
-  defp wrap_value(value) when is_map(value), do: value
-  defp wrap_value(value), do: %{"_scalar" => value}
-
-  defp unwrap_scalar(%{"_scalar" => scalar}), do: scalar
-  defp unwrap_scalar(value), do: value
-
-  defp unwrap_set(%{"_scalar" => list}) when is_list(list), do: list
-  defp unwrap_set(%{"_scalar" => _}), do: []
-  defp unwrap_set(_), do: []
 end

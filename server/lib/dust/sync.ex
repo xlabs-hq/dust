@@ -1,7 +1,7 @@
 defmodule Dust.Sync do
   import Ecto.Query
   alias Dust.Repo
-  alias Dust.Sync.{Writer, Rollback, StoreOp, StoreEntry}
+  alias Dust.Sync.{Writer, Rollback, StoreOp, StoreEntry, ValueCodec}
 
   def write(store_id, op_attrs) do
     Writer.write(store_id, op_attrs)
@@ -85,18 +85,7 @@ defmodule Dust.Sync do
     Rollback.rollback_store(store_id, to_seq)
   end
 
-  defp unwrap_entry(%StoreEntry{value: %{"_typed" => v, "_type" => "decimal"}} = entry) do
-    %{entry | value: Decimal.new(v)}
+  defp unwrap_entry(%StoreEntry{} = entry) do
+    %{entry | value: ValueCodec.unwrap(entry.value)}
   end
-
-  defp unwrap_entry(%StoreEntry{value: %{"_typed" => v, "_type" => "datetime"}} = entry) do
-    {:ok, dt, _} = DateTime.from_iso8601(v)
-    %{entry | value: dt}
-  end
-
-  defp unwrap_entry(%StoreEntry{value: %{"_scalar" => scalar}} = entry) do
-    %{entry | value: scalar}
-  end
-
-  defp unwrap_entry(entry), do: entry
 end

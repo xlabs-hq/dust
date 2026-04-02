@@ -14,7 +14,7 @@ defmodule Dust.Sync.Rollback do
   import Ecto.Query
   alias Dust.Repo
   alias Dust.Sync
-  alias Dust.Sync.{StoreOp, StoreEntry}
+  alias Dust.Sync.{StoreOp, StoreEntry, ValueCodec}
 
   @rollback_device_id "system:rollback"
 
@@ -155,28 +155,28 @@ defmodule Dust.Sync.Rollback do
 
       {key, value}, state ->
         child_path = "#{path}.#{key}"
-        Map.put(state, child_path, wrap_value(value))
+        Map.put(state, child_path, ValueCodec.wrap(value))
     end)
   end
 
   defp apply_op_to_state(state, %{op: :increment, path: path, value: delta}) do
-    current = unwrap_scalar(Map.get(state, path)) || 0
-    delta_val = unwrap_scalar(delta) || 0
-    Map.put(state, path, wrap_value(current + delta_val))
+    current = ValueCodec.unwrap(Map.get(state, path)) || 0
+    delta_val = ValueCodec.unwrap(delta) || 0
+    Map.put(state, path, ValueCodec.wrap(current + delta_val))
   end
 
   defp apply_op_to_state(state, %{op: :add, path: path, value: member}) do
-    current_set = unwrap_set(Map.get(state, path))
-    member_val = unwrap_scalar(member)
+    current_set = ValueCodec.unwrap_set(Map.get(state, path))
+    member_val = ValueCodec.unwrap(member)
     new_set = Enum.uniq([member_val | current_set])
-    Map.put(state, path, wrap_value(new_set))
+    Map.put(state, path, ValueCodec.wrap(new_set))
   end
 
   defp apply_op_to_state(state, %{op: :remove, path: path, value: member}) do
-    current_set = unwrap_set(Map.get(state, path))
-    member_val = unwrap_scalar(member)
+    current_set = ValueCodec.unwrap_set(Map.get(state, path))
+    member_val = ValueCodec.unwrap(member)
     new_set = List.delete(current_set, member_val)
-    Map.put(state, path, wrap_value(new_set))
+    Map.put(state, path, ValueCodec.wrap(new_set))
   end
 
   defp apply_op_to_state(state, _op), do: state
@@ -218,45 +218,10 @@ defmodule Dust.Sync.Rollback do
     Sync.write(store_id, %{
       op: :set,
       path: path,
-      value: unwrap_for_write(wrapped_value),
+      value: ValueCodec.unwrap(wrapped_value),
       device_id: @rollback_device_id,
       client_op_id: "rollback:#{to_seq}:#{path}"
     })
   end
 
-  # The Writer wraps values on the way in, so we need to unwrap stored values
-  # before passing them back through the Writer.
-  defp unwrap_for_write(%{"_scalar" => scalar}), do: scalar
-  defp unwrap_for_write(%{"_typed" => v, "_type" => "decimal"}), do: Decimal.new(v)
-
-  defp unwrap_for_write(%{"_typed" => v, "_type" => "datetime"}) do
-    {:ok, dt, _} = DateTime.from_iso8601(v)
-    dt
-  end
-
-  defp unwrap_for_write(value), do: value
-
-  defp wrap_value(%Decimal{} = d), do: %{"_typed" => Decimal.to_string(d), "_type" => "decimal"}
-
-  defp wrap_value(%DateTime{} = dt),
-    do: %{"_typed" => DateTime.to_iso8601(dt), "_type" => "datetime"}
-
-  defp wrap_value(value) when is_map(value), do: value
-  defp wrap_value(value), do: %{"_scalar" => value}
-
-  defp unwrap_scalar(%{"_scalar" => scalar}), do: scalar
-  defp unwrap_scalar(%{"_typed" => v, "_type" => "decimal"}), do: Decimal.new(v)
-
-  defp unwrap_scalar(%{"_typed" => v, "_type" => "datetime"}) do
-    {:ok, dt, _} = DateTime.from_iso8601(v)
-    dt
-  end
-
-  defp unwrap_scalar(nil), do: nil
-  defp unwrap_scalar(value), do: value
-
-  defp unwrap_set(%{"_scalar" => list}) when is_list(list), do: list
-  defp unwrap_set(%{"_scalar" => _}), do: []
-  defp unwrap_set(nil), do: []
-  defp unwrap_set(_), do: []
 end

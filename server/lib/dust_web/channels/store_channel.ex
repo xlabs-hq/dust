@@ -2,7 +2,7 @@ defmodule DustWeb.StoreChannel do
   use Phoenix.Channel
 
   alias Dust.{Stores, Sync, Files}
-  alias Dust.Sync.Rollback
+  alias Dust.Sync.{Rollback, ValueCodec}
 
   @valid_ops %{
     "set" => :set,
@@ -54,15 +54,7 @@ defmodule DustWeb.StoreChannel do
 
             case Sync.write(socket.assigns.store_id, op_attrs) do
               {:ok, db_op} ->
-                broadcast!(socket, "event", %{
-                  store_seq: db_op.store_seq,
-                  op: db_op.op,
-                  path: db_op.path,
-                  value: unwrap_value(db_op.value),
-                  device_id: db_op.device_id,
-                  client_op_id: db_op.client_op_id
-                })
-
+                broadcast!(socket, "event", format_event(db_op))
                 {:reply, {:ok, %{store_seq: db_op.store_seq}}, socket}
 
               {:error, reason} ->
@@ -108,15 +100,7 @@ defmodule DustWeb.StoreChannel do
 
         case Sync.write(socket.assigns.store_id, op_attrs) do
           {:ok, db_op} ->
-            broadcast!(socket, "event", %{
-              store_seq: db_op.store_seq,
-              op: db_op.op,
-              path: db_op.path,
-              value: unwrap_value(db_op.value),
-              device_id: db_op.device_id,
-              client_op_id: db_op.client_op_id
-            })
-
+            broadcast!(socket, "event", format_event(db_op))
             {:reply, {:ok, %{store_seq: db_op.store_seq, hash: ref["hash"]}}, socket}
 
           {:error, reason} ->
@@ -145,15 +129,7 @@ defmodule DustWeb.StoreChannel do
            socket}
 
         {:ok, op} ->
-          broadcast!(socket, "event", %{
-            store_seq: op.store_seq,
-            op: op.op,
-            path: op.path,
-            value: unwrap_value(op.value),
-            device_id: op.device_id,
-            client_op_id: op.client_op_id
-          })
-
+          broadcast!(socket, "event", format_event(op))
           {:reply, {:ok, %{store_seq: op.store_seq}}, socket}
 
         {:error, reason} ->
@@ -185,17 +161,21 @@ defmodule DustWeb.StoreChannel do
     ops = Sync.get_ops_since(socket.assigns.store_id, last_seq)
 
     Enum.each(ops, fn op ->
-      push(socket, "event", %{
-        store_seq: op.store_seq,
-        op: op.op,
-        path: op.path,
-        value: unwrap_value(op.value),
-        device_id: op.device_id,
-        client_op_id: op.client_op_id
-      })
+      push(socket, "event", format_event(op))
     end)
 
     {:noreply, socket}
+  end
+
+  defp format_event(op) do
+    %{
+      store_seq: op.store_seq,
+      op: op.op,
+      path: op.path,
+      value: ValueCodec.unwrap(op.value),
+      device_id: op.device_id,
+      client_op_id: op.client_op_id
+    }
   end
 
   # If the store_ref contains "/", it's a full name like "org/store".
@@ -228,14 +208,4 @@ defmodule DustWeb.StoreChannel do
   defp validate_merge_value(:remove, nil), do: {:error, :remove_requires_value}
   defp validate_merge_value(:remove, _), do: :ok
   defp validate_merge_value(_, _), do: :ok
-
-  defp unwrap_value(%{"_typed" => v, "_type" => "decimal"}), do: Decimal.new(v)
-
-  defp unwrap_value(%{"_typed" => v, "_type" => "datetime"}) do
-    {:ok, dt, _} = DateTime.from_iso8601(v)
-    dt
-  end
-
-  defp unwrap_value(%{"_scalar" => scalar}), do: scalar
-  defp unwrap_value(value), do: value
 end
