@@ -22,11 +22,16 @@ defmodule Dust.IntegrationHelpers do
   def connect_client(token, store, device_id, last_seq \\ 0) do
     # Call the underlying function directly (the macro requires @endpoint module attribute)
     {:ok, socket} =
-      Phoenix.ChannelTest.__connect__(DustWeb.Endpoint, DustWeb.StoreSocket, %{
-        "token" => token.raw_token,
-        "device_id" => device_id,
-        "capver" => 1
-      }, [])
+      Phoenix.ChannelTest.__connect__(
+        DustWeb.Endpoint,
+        DustWeb.StoreSocket,
+        %{
+          "token" => token.raw_token,
+          "device_id" => device_id,
+          "capver" => 1
+        },
+        []
+      )
 
     {:ok, reply, socket} =
       Phoenix.ChannelTest.subscribe_and_join(

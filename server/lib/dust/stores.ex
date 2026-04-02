@@ -52,10 +52,11 @@ defmodule Dust.Stores do
     raw_token = generate_token()
     token_hash = hash_token(raw_token)
 
-    permissions = StoreToken.permissions_integer(
-      Map.get(attrs, :read, true),
-      Map.get(attrs, :write, false)
-    )
+    permissions =
+      StoreToken.permissions_integer(
+        Map.get(attrs, :read, true),
+        Map.get(attrs, :write, false)
+      )
 
     result =
       %StoreToken{}
@@ -85,7 +86,9 @@ defmodule Dust.Stores do
     )
     |> Repo.one()
     |> case do
-      nil -> {:error, :invalid_token}
+      nil ->
+        {:error, :invalid_token}
+
       token ->
         Repo.update(Ecto.Changeset.change(token, last_used_at: DateTime.utc_now()))
         {:ok, token}
@@ -152,7 +155,11 @@ defmodule Dust.Stores do
     case Repo.get_by(Device, device_id: device_id) do
       nil ->
         %Device{}
-        |> Device.changeset(%{device_id: device_id, user_id: user_id, last_seen_at: DateTime.utc_now()})
+        |> Device.changeset(%{
+          device_id: device_id,
+          user_id: user_id,
+          last_seen_at: DateTime.utc_now()
+        })
         |> Repo.insert()
 
       device ->

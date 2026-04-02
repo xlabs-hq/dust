@@ -5,7 +5,10 @@ defmodule Dust.Sync.CounterTest do
 
   setup do
     {:ok, user} = Accounts.create_user(%{email: "counter@example.com"})
-    {:ok, org} = Accounts.create_organization_with_owner(user, %{name: "Counter", slug: "counter"})
+
+    {:ok, org} =
+      Accounts.create_organization_with_owner(user, %{name: "Counter", slug: "counter"})
+
     {:ok, store} = Stores.create_store(org, %{name: "counts"})
     %{store: store}
   end

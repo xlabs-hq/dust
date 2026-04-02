@@ -17,7 +17,8 @@ defmodule Dust.MCP.Tools.DustRollback do
         },
         to_seq: %{
           type: :integer,
-          description: "The store_seq to rollback to. State will match what it looked like at this seq."
+          description:
+            "The store_seq to rollback to. State will match what it looked like at this seq."
         }
       },
       required: [:store, :to_seq]

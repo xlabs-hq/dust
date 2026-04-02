@@ -24,12 +24,19 @@ defmodule Dust.Stores.StoreToken do
   def can_write?(%__MODULE__{permissions: p}), do: (p &&& @write_permission) != 0
 
   def permissions_integer(read?, write?) do
-    (if read?, do: @read_permission, else: 0) + (if write?, do: @write_permission, else: 0)
+    if(read?, do: @read_permission, else: 0) + if write?, do: @write_permission, else: 0
   end
 
   def changeset(token, attrs) do
     token
-    |> Ecto.Changeset.cast(attrs, [:name, :token_hash, :permissions, :expires_at, :store_id, :created_by_id])
+    |> Ecto.Changeset.cast(attrs, [
+      :name,
+      :token_hash,
+      :permissions,
+      :expires_at,
+      :store_id,
+      :created_by_id
+    ])
     |> Ecto.Changeset.validate_required([:name, :token_hash, :permissions, :store_id])
     |> Ecto.Changeset.unique_constraint(:token_hash)
   end

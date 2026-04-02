@@ -18,7 +18,9 @@ defmodule DustWeb.DashboardControllerTest do
   test "GET /:org shows dashboard with stats", %{conn: conn, org: org, user: user} do
     # Create a store and token to verify stats
     {:ok, store} = Stores.create_store(org, %{name: "test-store"})
-    {:ok, _token} = Stores.create_store_token(store, %{name: "t1", read: true, created_by_id: user.id})
+
+    {:ok, _token} =
+      Stores.create_store_token(store, %{name: "t1", read: true, created_by_id: user.id})
 
     conn = get(conn, ~p"/#{org.slug}")
     assert conn.status == 200

@@ -18,7 +18,8 @@ defmodule DustWeb.TokenControllerTest do
 
   describe "index" do
     test "lists tokens for the org", %{conn: conn, org: org, store: store, user: user} do
-      {:ok, _token} = Stores.create_store_token(store, %{name: "test-tok", read: true, created_by_id: user.id})
+      {:ok, _token} =
+        Stores.create_store_token(store, %{name: "test-tok", read: true, created_by_id: user.id})
 
       conn = get(conn, ~p"/#{org.slug}/tokens")
       assert conn.status == 200
@@ -28,12 +29,13 @@ defmodule DustWeb.TokenControllerTest do
 
   describe "create" do
     test "creates a token and shows it", %{conn: conn, org: org, store: store} do
-      conn = post(conn, ~p"/#{org.slug}/tokens", %{
-        name: "my-token",
-        store_name: store.name,
-        read: "true",
-        write: "false"
-      })
+      conn =
+        post(conn, ~p"/#{org.slug}/tokens", %{
+          name: "my-token",
+          store_name: store.name,
+          read: "true",
+          write: "false"
+        })
 
       assert conn.status == 200
       assert conn.resp_body =~ "dust_tok_"
@@ -42,7 +44,8 @@ defmodule DustWeb.TokenControllerTest do
 
   describe "delete" do
     test "revokes a token and redirects", %{conn: conn, org: org, store: store, user: user} do
-      {:ok, token} = Stores.create_store_token(store, %{name: "delete-me", read: true, created_by_id: user.id})
+      {:ok, token} =
+        Stores.create_store_token(store, %{name: "delete-me", read: true, created_by_id: user.id})
 
       conn = delete(conn, ~p"/#{org.slug}/tokens/#{token.id}")
       assert redirected_to(conn) == "/#{org.slug}/tokens"

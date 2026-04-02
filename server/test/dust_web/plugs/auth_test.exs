@@ -6,7 +6,10 @@ defmodule DustWeb.Plugs.AuthTest do
 
   defp create_user_and_org(_context) do
     {:ok, user} = Accounts.create_user(%{email: "test@example.com", first_name: "Test"})
-    {:ok, org} = Accounts.create_organization_with_owner(user, %{name: "Test Org", slug: "test-org"})
+
+    {:ok, org} =
+      Accounts.create_organization_with_owner(user, %{name: "Test Org", slug: "test-org"})
+
     token = Accounts.generate_user_session_token(user)
     %{user: user, org: org, token: token}
   end
@@ -14,7 +17,11 @@ defmodule DustWeb.Plugs.AuthTest do
   describe "fetch_current_scope_for_user/2" do
     setup [:create_user_and_org]
 
-    test "assigns current_scope with user when session has valid token", %{conn: conn, user: user, token: token} do
+    test "assigns current_scope with user when session has valid token", %{
+      conn: conn,
+      user: user,
+      token: token
+    } do
       conn =
         conn
         |> init_test_session(%{user_token: token})
@@ -71,7 +78,11 @@ defmodule DustWeb.Plugs.AuthTest do
   describe "assign_org_to_scope/2" do
     setup [:create_user_and_org]
 
-    test "assigns organization to scope when user is a member", %{conn: conn, token: token, org: org} do
+    test "assigns organization to scope when user is a member", %{
+      conn: conn,
+      token: token,
+      org: org
+    } do
       conn =
         conn
         |> init_test_session(%{user_token: token})

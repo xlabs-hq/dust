@@ -6,7 +6,9 @@ defmodule Dust.Repo.Migrations.CreateStores do
       add :id, :binary_id, primary_key: true
       add :name, :string, null: false
       add :status, :string, null: false, default: "active"
-      add :organization_id, references(:organizations, type: :binary_id, on_delete: :delete_all), null: false
+
+      add :organization_id, references(:organizations, type: :binary_id, on_delete: :delete_all),
+        null: false
 
       timestamps(type: :utc_datetime_usec)
     end

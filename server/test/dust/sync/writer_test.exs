@@ -12,13 +12,14 @@ defmodule Dust.Sync.WriterTest do
 
   describe "write/1" do
     test "set assigns store_seq and persists", %{store: store} do
-      {:ok, event} = Sync.write(store.id, %{
-        op: :set,
-        path: "posts.hello",
-        value: %{"title" => "Hello"},
-        device_id: "dev_1",
-        client_op_id: "op_1"
-      })
+      {:ok, event} =
+        Sync.write(store.id, %{
+          op: :set,
+          path: "posts.hello",
+          value: %{"title" => "Hello"},
+          device_id: "dev_1",
+          client_op_id: "op_1"
+        })
 
       assert event.store_seq == 1
       assert event.op == :set
@@ -31,23 +32,67 @@ defmodule Dust.Sync.WriterTest do
     end
 
     test "sequential writes increment store_seq", %{store: store} do
-      {:ok, e1} = Sync.write(store.id, %{op: :set, path: "a", value: "1", device_id: "d", client_op_id: "o1"})
-      {:ok, e2} = Sync.write(store.id, %{op: :set, path: "b", value: "2", device_id: "d", client_op_id: "o2"})
+      {:ok, e1} =
+        Sync.write(store.id, %{
+          op: :set,
+          path: "a",
+          value: "1",
+          device_id: "d",
+          client_op_id: "o1"
+        })
+
+      {:ok, e2} =
+        Sync.write(store.id, %{
+          op: :set,
+          path: "b",
+          value: "2",
+          device_id: "d",
+          client_op_id: "o2"
+        })
+
       assert e1.store_seq == 1
       assert e2.store_seq == 2
     end
 
     test "delete removes entry", %{store: store} do
       Sync.write(store.id, %{op: :set, path: "x", value: "v", device_id: "d", client_op_id: "o1"})
-      {:ok, _} = Sync.write(store.id, %{op: :delete, path: "x", value: nil, device_id: "d", client_op_id: "o2"})
+
+      {:ok, _} =
+        Sync.write(store.id, %{
+          op: :delete,
+          path: "x",
+          value: nil,
+          device_id: "d",
+          client_op_id: "o2"
+        })
 
       assert Sync.get_entry(store.id, "x") == nil
     end
 
     test "merge updates named children only", %{store: store} do
-      Sync.write(store.id, %{op: :set, path: "settings.theme", value: "light", device_id: "d", client_op_id: "o1"})
-      Sync.write(store.id, %{op: :set, path: "settings.locale", value: "en", device_id: "d", client_op_id: "o2"})
-      Sync.write(store.id, %{op: :merge, path: "settings", value: %{"theme" => "dark"}, device_id: "d", client_op_id: "o3"})
+      Sync.write(store.id, %{
+        op: :set,
+        path: "settings.theme",
+        value: "light",
+        device_id: "d",
+        client_op_id: "o1"
+      })
+
+      Sync.write(store.id, %{
+        op: :set,
+        path: "settings.locale",
+        value: "en",
+        device_id: "d",
+        client_op_id: "o2"
+      })
+
+      Sync.write(store.id, %{
+        op: :merge,
+        path: "settings",
+        value: %{"theme" => "dark"},
+        device_id: "d",
+        client_op_id: "o3"
+      })
 
       assert Sync.get_entry(store.id, "settings.theme").value == "dark"
       assert Sync.get_entry(store.id, "settings.locale").value == "en"

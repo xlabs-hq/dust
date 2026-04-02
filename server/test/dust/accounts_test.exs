@@ -20,7 +20,10 @@ defmodule Dust.AccountsTest do
   describe "organizations" do
     test "create_organization_with_owner/2 creates org and membership" do
       {:ok, user} = Accounts.create_user(%{email: "owner@example.com"})
-      assert {:ok, org} = Accounts.create_organization_with_owner(user, %{name: "James", slug: "james"})
+
+      assert {:ok, org} =
+               Accounts.create_organization_with_owner(user, %{name: "James", slug: "james"})
+
       assert org.slug == "james"
 
       membership = Accounts.get_organization_membership(user, org)
@@ -29,7 +32,9 @@ defmodule Dust.AccountsTest do
 
     test "slug must be lowercase alphanumeric" do
       {:ok, user} = Accounts.create_user(%{email: "test@example.com"})
-      assert {:error, _} = Accounts.create_organization_with_owner(user, %{name: "Bad", slug: "Bad Slug!"})
+
+      assert {:error, _} =
+               Accounts.create_organization_with_owner(user, %{name: "Bad", slug: "Bad Slug!"})
     end
   end
 end

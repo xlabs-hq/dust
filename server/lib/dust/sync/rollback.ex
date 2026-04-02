@@ -150,7 +150,9 @@ defmodule Dust.Sync.Rollback do
 
   defp apply_op_to_state(state, %{op: :merge, path: path, value: map}) when is_map(map) do
     Enum.reduce(map, state, fn
-      {_key, _value}, state when not is_map(map) -> state
+      {_key, _value}, state when not is_map(map) ->
+        state
+
       {key, value}, state ->
         child_path = "#{path}.#{key}"
         Map.put(state, child_path, wrap_value(value))
@@ -226,23 +228,30 @@ defmodule Dust.Sync.Rollback do
   # before passing them back through the Writer.
   defp unwrap_for_write(%{"_scalar" => scalar}), do: scalar
   defp unwrap_for_write(%{"_typed" => v, "_type" => "decimal"}), do: Decimal.new(v)
+
   defp unwrap_for_write(%{"_typed" => v, "_type" => "datetime"}) do
     {:ok, dt, _} = DateTime.from_iso8601(v)
     dt
   end
+
   defp unwrap_for_write(value), do: value
 
   defp wrap_value(%Decimal{} = d), do: %{"_typed" => Decimal.to_string(d), "_type" => "decimal"}
-  defp wrap_value(%DateTime{} = dt), do: %{"_typed" => DateTime.to_iso8601(dt), "_type" => "datetime"}
+
+  defp wrap_value(%DateTime{} = dt),
+    do: %{"_typed" => DateTime.to_iso8601(dt), "_type" => "datetime"}
+
   defp wrap_value(value) when is_map(value), do: value
   defp wrap_value(value), do: %{"_scalar" => value}
 
   defp unwrap_scalar(%{"_scalar" => scalar}), do: scalar
   defp unwrap_scalar(%{"_typed" => v, "_type" => "decimal"}), do: Decimal.new(v)
+
   defp unwrap_scalar(%{"_typed" => v, "_type" => "datetime"}) do
     {:ok, dt, _} = DateTime.from_iso8601(v)
     dt
   end
+
   defp unwrap_scalar(nil), do: nil
   defp unwrap_scalar(value), do: value
 

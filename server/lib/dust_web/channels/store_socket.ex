@@ -4,7 +4,11 @@ defmodule DustWeb.StoreSocket do
   channel "store:*", DustWeb.StoreChannel
 
   @impl true
-  def connect(%{"token" => token, "device_id" => device_id, "capver" => capver}, socket, _connect_info) do
+  def connect(
+        %{"token" => token, "device_id" => device_id, "capver" => capver},
+        socket,
+        _connect_info
+      ) do
     case Dust.Stores.authenticate_token(token) do
       {:ok, store_token} ->
         Dust.Stores.ensure_device(device_id)

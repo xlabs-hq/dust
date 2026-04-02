@@ -26,7 +26,14 @@ defmodule Dust.StoresTest do
   describe "tokens" do
     test "create and authenticate", %{org: org, user: user} do
       {:ok, store} = Stores.create_store(org, %{name: "blog"})
-      {:ok, token} = Stores.create_store_token(store, %{name: "test", read: true, write: true, created_by_id: user.id})
+
+      {:ok, token} =
+        Stores.create_store_token(store, %{
+          name: "test",
+          read: true,
+          write: true,
+          created_by_id: user.id
+        })
 
       assert String.starts_with?(token.raw_token, "dust_tok_")
 

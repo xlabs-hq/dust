@@ -107,7 +107,11 @@ defmodule Dust.Accounts do
     case get_organization_membership(user, org) do
       nil ->
         %OrganizationMembership{}
-        |> OrganizationMembership.changeset(%{user_id: user.id, organization_id: org.id, role: role})
+        |> OrganizationMembership.changeset(%{
+          user_id: user.id,
+          organization_id: org.id,
+          role: role
+        })
         |> Repo.insert()
 
       membership ->
