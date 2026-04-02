@@ -13,6 +13,9 @@ config :dust,
   migration_primary_key: [name: :id, type: :binary_id, default: {:fragment, "uuidv7()"}],
   migration_foreign_key: [type: :binary_id]
 
+config :hammer,
+  backend: {Hammer.Backend.ETS, [expiry_ms: 120_000, cleanup_interval_ms: 60_000]}
+
 # Configure the endpoint
 config :dust, DustWeb.Endpoint,
   url: [host: "localhost"],

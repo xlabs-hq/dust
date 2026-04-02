@@ -63,6 +63,9 @@ defmodule Dust.MixProject do
       # Background jobs
       {:oban, "~> 2.18"},
 
+      # Rate limiting
+      {:hammer, "~> 6.2"},
+
       # Encryption (for token storage)
       {:cloak_ecto, "~> 1.3"},
       {:cloak, "~> 1.1"},

@@ -45,36 +45,46 @@ defmodule DustWeb.StoreChannel do
     store_token = socket.assigns.store_token
 
     if Stores.StoreToken.can_write?(store_token) do
-      case Map.get(@valid_ops, params["op"]) do
-        nil ->
-          {:reply, {:error, %{reason: "invalid op"}}, socket}
+      case Dust.RateLimiter.check(store_token.id, :write) do
+        {:error, :rate_limited, info} ->
+          {:reply, {:error, %{reason: "rate_limited", retry_after_ms: info.retry_after_ms}}, socket}
 
-        op ->
-          with {:ok, _} <- validate_path(params["path"]),
-               :ok <- validate_merge_value(op, params["value"]) do
-            op_attrs = %{
-              op: op,
-              path: params["path"],
-              value: params["value"],
-              device_id: socket.assigns.device_id,
-              client_op_id: params["client_op_id"]
-            }
-
-            case Sync.write(socket.assigns.store_id, op_attrs) do
-              {:ok, db_op} ->
-                broadcast!(socket, "event", format_event(db_op))
-                {:reply, {:ok, %{store_seq: db_op.store_seq}}, socket}
-
-              {:error, reason} ->
-                {:reply, {:error, %{reason: inspect(reason)}}, socket}
-            end
-          else
-            {:error, reason} ->
-              {:reply, {:error, %{reason: to_string(reason)}}, socket}
-          end
+        :ok ->
+          handle_write_op(params, socket)
       end
     else
       {:reply, {:error, %{reason: "unauthorized"}}, socket}
+    end
+  end
+
+  defp handle_write_op(params, socket) do
+    case Map.get(@valid_ops, params["op"]) do
+      nil ->
+        {:reply, {:error, %{reason: "invalid op"}}, socket}
+
+      op ->
+        with {:ok, _} <- validate_path(params["path"]),
+             :ok <- validate_merge_value(op, params["value"]) do
+          op_attrs = %{
+            op: op,
+            path: params["path"],
+            value: params["value"],
+            device_id: socket.assigns.device_id,
+            client_op_id: params["client_op_id"]
+          }
+
+          case Sync.write(socket.assigns.store_id, op_attrs) do
+            {:ok, db_op} ->
+              broadcast!(socket, "event", format_event(db_op))
+              {:reply, {:ok, %{store_seq: db_op.store_seq}}, socket}
+
+            {:error, reason} ->
+              {:reply, {:error, %{reason: inspect(reason)}}, socket}
+          end
+        else
+          {:error, reason} ->
+            {:reply, {:error, %{reason: to_string(reason)}}, socket}
+        end
     end
   end
 
@@ -90,7 +100,8 @@ defmodule DustWeb.StoreChannel do
       ) do
     store_token = socket.assigns.store_token
 
-    if Stores.StoreToken.can_write?(store_token) do
+    with true <- Stores.StoreToken.can_write?(store_token),
+         :ok <- Dust.RateLimiter.check(store_token.id, :write) do
       with {:ok, _} <- validate_path(path),
            {:ok, content} <- Base.decode64(base64_content) do
         filename = params["filename"]
@@ -122,7 +133,11 @@ defmodule DustWeb.StoreChannel do
           {:reply, {:error, %{reason: to_string(reason)}}, socket}
       end
     else
-      {:reply, {:error, %{reason: "unauthorized"}}, socket}
+      false ->
+        {:reply, {:error, %{reason: "unauthorized"}}, socket}
+
+      {:error, :rate_limited, info} ->
+        {:reply, {:error, %{reason: "rate_limited", retry_after_ms: info.retry_after_ms}}, socket}
     end
   end
 
