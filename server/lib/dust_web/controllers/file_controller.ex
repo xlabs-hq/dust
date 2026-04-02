@@ -1,17 +1,19 @@
 defmodule DustWeb.FileController do
   use DustWeb, :controller
 
-  alias Dust.{Files, Stores}
+  alias Dust.{Files, Stores, Sync}
 
   @doc """
   Download a blob by its content hash.
 
   Authenticates via Bearer token. Returns the raw file content with
-  the correct content_type header.
+  the correct content_type header. Only serves files referenced by
+  the token's store.
   """
   def show(conn, %{"hash" => hash}) do
     with {:ok, store_token} <- authenticate(conn),
          true <- Stores.StoreToken.can_read?(store_token),
+         true <- Sync.has_file_ref?(store_token.store_id, hash),
          {:ok, content} <- Files.download(hash) do
       blob = Files.get_blob(hash)
       content_type = (blob && blob.content_type) || "application/octet-stream"

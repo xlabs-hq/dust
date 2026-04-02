@@ -164,6 +164,12 @@ defmodule DustWeb.StoreChannel do
       push(socket, "event", format_event(op))
     end)
 
+    # If we got a full batch, there may be more ops to send
+    if length(ops) >= 1000 do
+      last_op = List.last(ops)
+      send(self(), {:catch_up, last_op.store_seq})
+    end
+
     {:noreply, socket}
   end
 

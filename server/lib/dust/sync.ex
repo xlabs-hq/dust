@@ -5,6 +5,8 @@ defmodule Dust.Sync do
 
   def write(store_id, op_attrs) do
     Writer.write(store_id, op_attrs)
+  catch
+    :exit, reason -> {:error, {:writer_unavailable, reason}}
   end
 
   def get_entry(store_id, path) do
@@ -20,10 +22,15 @@ defmodule Dust.Sync do
     |> Enum.map(&unwrap_entry/1)
   end
 
-  def get_ops_since(store_id, since_seq) do
+  @catch_up_batch_size 1000
+
+  def get_ops_since(store_id, since_seq, opts \\ []) do
+    limit = Keyword.get(opts, :limit, @catch_up_batch_size)
+
     from(o in StoreOp,
       where: o.store_id == ^store_id and o.store_seq > ^since_seq,
-      order_by: [asc: o.store_seq]
+      order_by: [asc: o.store_seq],
+      limit: ^limit
     )
     |> Repo.all()
   end
@@ -57,6 +64,17 @@ defmodule Dust.Sync do
       limit: ^limit
     )
     |> Repo.all()
+  end
+
+  def has_file_ref?(store_id, hash) do
+    from(e in StoreEntry,
+      where: e.store_id == ^store_id and e.type == "file",
+      where: fragment("?->>'hash' = ?", e.value, ^hash),
+      select: true,
+      limit: 1
+    )
+    |> Repo.one()
+    |> is_boolean()
   end
 
   def entry_count(store_id) do

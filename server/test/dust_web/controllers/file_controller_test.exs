@@ -1,7 +1,7 @@
 defmodule DustWeb.FileControllerTest do
   use DustWeb.ConnCase, async: false
 
-  alias Dust.{Accounts, Files, Stores}
+  alias Dust.{Accounts, Files, Stores, Sync}
 
   setup do
     # Clean up test blobs directory
@@ -33,8 +33,16 @@ defmodule DustWeb.FileControllerTest do
   end
 
   describe "GET /api/files/:hash" do
-    test "downloads a blob with correct content type", %{conn: conn, rw_token: token} do
+    test "downloads a blob with correct content type", %{conn: conn, store: store, rw_token: token} do
       {:ok, ref} = Files.upload("hello file", filename: "hello.txt", content_type: "text/plain")
+
+      Sync.write(store.id, %{
+        op: :put_file,
+        path: "test.file",
+        value: ref,
+        device_id: "test",
+        client_op_id: "op1"
+      })
 
       conn =
         conn
@@ -48,9 +56,18 @@ defmodule DustWeb.FileControllerTest do
 
     test "includes content-disposition header when filename exists", %{
       conn: conn,
+      store: store,
       rw_token: token
     } do
       {:ok, ref} = Files.upload("data", filename: "report.pdf", content_type: "application/pdf")
+
+      Sync.write(store.id, %{
+        op: :put_file,
+        path: "test.pdf",
+        value: ref,
+        device_id: "test",
+        client_op_id: "op2"
+      })
 
       conn =
         conn
@@ -61,8 +78,16 @@ defmodule DustWeb.FileControllerTest do
       assert get_resp_header(conn, "content-disposition") |> hd() =~ "report.pdf"
     end
 
-    test "read-only token can download", %{conn: conn, ro_token: token} do
+    test "read-only token can download", %{conn: conn, store: store, ro_token: token} do
       {:ok, ref} = Files.upload("readable", content_type: "text/plain")
+
+      Sync.write(store.id, %{
+        op: :put_file,
+        path: "test.readable",
+        value: ref,
+        device_id: "test",
+        client_op_id: "op3"
+      })
 
       conn =
         conn
@@ -88,7 +113,19 @@ defmodule DustWeb.FileControllerTest do
       assert conn.status == 401
     end
 
-    test "returns 404 for nonexistent hash", %{conn: conn, rw_token: token} do
+    test "returns 403 for file not in token's store", %{conn: conn, rw_token: token} do
+      # Upload a file but don't write a reference in the token's store
+      {:ok, ref} = Files.upload("orphan", content_type: "text/plain")
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer #{token.raw_token}")
+        |> get("/api/files/#{URI.encode(ref["hash"])}")
+
+      assert conn.status == 403
+    end
+
+    test "returns 403 for nonexistent hash not in store", %{conn: conn, rw_token: token} do
       conn =
         conn
         |> put_req_header("authorization", "Bearer #{token.raw_token}")
@@ -96,7 +133,7 @@ defmodule DustWeb.FileControllerTest do
           "/api/files/#{URI.encode("sha256:0000000000000000000000000000000000000000000000000000000000000000")}"
         )
 
-      assert conn.status == 404
+      assert conn.status == 403
     end
   end
 end
