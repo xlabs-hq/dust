@@ -43,6 +43,23 @@ defmodule DustWeb.Router do
     delete "/logout", WorkOSAuthController, :logout
   end
 
+  pipeline :api_auth do
+    plug :accepts, ["json"]
+    plug DustWeb.Plugs.ApiTokenAuth
+  end
+
+  # Org-scoped REST API (authenticated via Bearer token)
+  # Must be above /:org to prevent that catch-all from matching /api
+  scope "/api", DustWeb.Api do
+    pipe_through :api_auth
+
+    get "/stores", StoreApiController, :index
+    post "/stores", StoreApiController, :create
+    get "/tokens", TokenApiController, :index
+    post "/tokens", TokenApiController, :create
+    delete "/tokens/:id", TokenApiController, :delete
+  end
+
   # Protected routes scoped to an organization
   scope "/:org", DustWeb do
     pipe_through [:browser, :require_authenticated_user, :assign_org_to_scope, :inertia]
@@ -54,7 +71,7 @@ defmodule DustWeb.Router do
     get "/settings", SettingsController, :index
   end
 
-  # File download endpoint (authenticated via Bearer token)
+  # File download endpoint (has its own Bearer token auth inline)
   scope "/api/files", DustWeb do
     pipe_through :api
     get "/:hash", FileController, :show

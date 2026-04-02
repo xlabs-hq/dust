@@ -31,6 +31,14 @@ defmodule Dust.Stores do
     )
   end
 
+  def get_store_by_name(organization, name) do
+    Repo.one(
+      from(s in Store,
+        where: s.organization_id == ^organization.id and s.name == ^name
+      )
+    )
+  end
+
   def get_store_by_full_name(full_name) do
     case String.split(full_name, "/", parts: 2) do
       [org_slug, store_name] ->
