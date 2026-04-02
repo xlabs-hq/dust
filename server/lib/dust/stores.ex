@@ -169,29 +169,26 @@ defmodule Dust.Stores do
   end
 
   def get_org_stats(organization) do
-    store_ids =
-      from(s in Store, where: s.organization_id == ^organization.id, select: s.id)
-      |> Repo.all()
-
-    stores_count = length(store_ids)
+    stats =
+      from(s in Store,
+        where: s.organization_id == ^organization.id,
+        select: %{
+          stores: count(s.id),
+          entries: coalesce(sum(s.entry_count), 0)
+        }
+      )
+      |> Repo.one()
 
     tokens_count =
-      if store_ids == [] do
-        0
-      else
-        from(t in StoreToken, where: t.store_id in ^store_ids, select: count(t.id))
-        |> Repo.one()
-      end
+      from(t in StoreToken,
+        join: s in Store,
+        on: t.store_id == s.id,
+        where: s.organization_id == ^organization.id,
+        select: count(t.id)
+      )
+      |> Repo.one()
 
-    entries_count =
-      if store_ids == [] do
-        0
-      else
-        from(e in Dust.Sync.StoreEntry, where: e.store_id in ^store_ids, select: count())
-        |> Repo.one()
-      end
-
-    %{stores: stores_count, tokens: tokens_count, entries: entries_count}
+    %{stores: stats.stores, tokens: tokens_count, entries: stats.entries}
   end
 
   # Devices

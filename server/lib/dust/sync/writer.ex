@@ -14,6 +14,11 @@ defmodule Dust.Sync.Writer do
     GenServer.call(pid, {:write, op_attrs})
   end
 
+  def compact(store_id) do
+    pid = ensure_started(store_id)
+    GenServer.call(pid, :compact, :timer.minutes(5))
+  end
+
   def via(store_id) do
     {:via, Registry, {Dust.Sync.WriterRegistry, store_id}}
   end
@@ -54,6 +59,12 @@ defmodule Dust.Sync.Writer do
   end
 
   @impl true
+  def handle_call(:compact, _from, state) do
+    result = do_compact(state.db)
+    {:reply, result, state, @idle_timeout}
+  end
+
+  @impl true
   def handle_info(:timeout, state) do
     Exqlite.Sqlite3.close(state.db)
     {:stop, :normal, state}
@@ -88,10 +99,7 @@ defmodule Dust.Sync.Writer do
 
           :ok = Exqlite.Sqlite3.execute(db, "COMMIT")
 
-          # Update cached metadata in Postgres
-          update_store_metadata(store_id, next_seq, db)
-
-          # Build a result map that looks like the old StoreOp struct
+          # Build result — the write is durable at this point
           op = %{
             store_seq: next_seq,
             op: attrs.op,
@@ -104,6 +112,13 @@ defmodule Dust.Sync.Writer do
             materialized_value: materialized
           }
 
+          # Update cached metadata in Postgres (best-effort, never fails the write)
+          try do
+            update_store_metadata(store_id, next_seq, db)
+          rescue
+            _ -> :ok
+          end
+
           {:ok, op}
         rescue
           e ->
@@ -113,6 +128,41 @@ defmodule Dust.Sync.Writer do
 
       {result, metadata}
     end)
+  end
+
+  defp do_compact(db) do
+    try do
+      :ok = Exqlite.Sqlite3.execute(db, "BEGIN")
+
+      max_seq = query_one_int(db, "SELECT max(store_seq) FROM store_ops")
+
+      if max_seq > 0 do
+        entries = query_all(db, "SELECT path, value, type FROM store_entries", [])
+
+        snapshot_data =
+          Map.new(entries, fn [path, value, type] ->
+            {path, %{"value" => Jason.decode!(value), "type" => type}}
+          end)
+
+        exec(db, "INSERT INTO store_snapshots (snapshot_seq, snapshot_data) VALUES (?, ?)",
+          [max_seq, Jason.encode!(snapshot_data)])
+
+        exec(db, "DELETE FROM store_ops WHERE store_seq <= ?", [max_seq])
+        exec(db, "DELETE FROM store_snapshots WHERE snapshot_seq < ?", [max_seq])
+
+        :ok = Exqlite.Sqlite3.execute(db, "COMMIT")
+        Exqlite.Sqlite3.execute(db, "VACUUM")
+
+        {:ok, max_seq}
+      else
+        :ok = Exqlite.Sqlite3.execute(db, "ROLLBACK")
+        {:ok, :no_ops}
+      end
+    rescue
+      e ->
+        Exqlite.Sqlite3.execute(db, "ROLLBACK")
+        {:error, e}
+    end
   end
 
   # --- Apply to entries (SQLite) ---
