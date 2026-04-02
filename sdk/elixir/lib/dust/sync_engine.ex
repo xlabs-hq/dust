@@ -1,7 +1,7 @@
 defmodule Dust.SyncEngine do
   use GenServer
 
-  defstruct [:store, :cache, :cache_target, :callbacks, :pending_ops, :status, :last_store_seq]
+  defstruct [:store, :cache, :cache_target, :callbacks, :pending_ops, :status, :last_store_seq, :catch_up_seq]
 
   def start_link(opts) do
     store = Keyword.fetch!(opts, :store)
@@ -64,6 +64,10 @@ defmodule Dust.SyncEngine do
 
   def handle_write_rejected(store, client_op_id, reason) do
     GenServer.cast(via(store), {:write_rejected, client_op_id, reason})
+  end
+
+  def set_catch_up_complete(store, through_seq) do
+    GenServer.cast(via(store), {:catch_up_complete, through_seq})
   end
 
   @doc "Write directly to cache without the write pipeline. For test seeding only."
@@ -367,6 +371,11 @@ defmodule Dust.SyncEngine do
     end
 
     {:noreply, %{state | status: new_status}}
+  end
+
+  @impl true
+  def handle_cast({:catch_up_complete, through_seq}, state) do
+    {:noreply, %{state | catch_up_seq: through_seq}}
   end
 
   @impl true

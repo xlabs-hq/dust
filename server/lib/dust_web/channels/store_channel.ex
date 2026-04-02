@@ -24,7 +24,11 @@ defmodule DustWeb.StoreChannel do
       send(self(), {:catch_up, last_seq})
 
       current_seq = Sync.current_seq(store.id)
-      socket = assign(socket, :store_id, store.id)
+
+      socket =
+        socket
+        |> assign(:store_id, store.id)
+        |> assign(:last_acked_seq, last_seq)
 
       {:ok, %{store_seq: current_seq}, socket}
     else
@@ -156,23 +160,38 @@ defmodule DustWeb.StoreChannel do
     end
   end
 
+  def handle_in("ack_seq", %{"seq" => seq}, socket) do
+    socket = assign(socket, :last_acked_seq, seq)
+    {:reply, :ok, socket}
+  end
+
   @impl true
   def handle_info({:catch_up, last_seq}, socket) do
     store_id = socket.assigns.store_id
     ops = Sync.get_ops_since(store_id, last_seq)
 
-    Enum.each(ops, fn op ->
-      push(socket, "event", format_catch_up_event(store_id, op))
-    end)
+    last_sent_seq =
+      if ops == [] do
+        last_seq
+      else
+        Enum.each(ops, fn op ->
+          push(socket, "event", format_catch_up_event(store_id, op))
+        end)
+
+        List.last(ops).store_seq
+      end
 
     # If we got a full batch, there may be more ops to send
     if length(ops) >= 1000 do
-      last_op = List.last(ops)
-      send(self(), {:catch_up, last_op.store_seq})
+      send(self(), {:catch_up, last_sent_seq})
+    else
+      # Catch-up complete — tell the client
+      push(socket, "catch_up_complete", %{through_seq: last_sent_seq})
     end
 
     {:noreply, socket}
   end
+
 
   # For live writes, use the materialized_value virtual field (set by Writer)
   defp format_event(op) do

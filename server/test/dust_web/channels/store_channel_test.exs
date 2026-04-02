@@ -44,9 +44,10 @@ defmodule DustWeb.StoreChannelTest do
 
       assert reply.store_seq == 2
 
-      # Should receive catch-up events
+      # Should receive catch-up events followed by catch_up_complete
       assert_push "event", %{store_seq: 1, path: "a"}
       assert_push "event", %{store_seq: 2, path: "b"}
+      assert_push "catch_up_complete", %{through_seq: 2}
     end
 
     test "joins with store full name (org/name)", %{socket: socket, store: store} do
@@ -258,6 +259,16 @@ defmodule DustWeb.StoreChannelTest do
       assert_broadcast "event", %{store_seq: 2, path: "post.tags", value: value}
       assert "elixir" in value
       assert "rust" in value
+    end
+
+    test "ack_seq updates last_acked_seq", %{socket: socket, store: store} do
+      {:ok, _, socket} =
+        subscribe_and_join(socket, DustWeb.StoreChannel, "store:#{store.id}", %{
+          "last_store_seq" => 0
+        })
+
+      ref = push(socket, "ack_seq", %{"seq" => 42})
+      assert_reply ref, :ok
     end
 
     test "rejects merge with non-map value", %{socket: socket, store: store} do

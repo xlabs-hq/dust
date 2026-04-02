@@ -98,6 +98,19 @@ defmodule Dust.Connection do
   end
 
   @impl Slipstream
+  def handle_message("store:" <> store_name, "catch_up_complete", payload, socket) do
+    through_seq = payload["through_seq"]
+    Logger.debug("[Dust.Connection] Catch-up complete for #{store_name}, through_seq=#{through_seq}")
+
+    # Ack the seq back to the server
+    topic = "store:#{store_name}"
+    push(socket, topic, "ack_seq", %{"seq" => through_seq})
+
+    Dust.SyncEngine.set_catch_up_complete(store_name, through_seq)
+    {:ok, socket}
+  end
+
+  @impl Slipstream
   def handle_disconnect(reason, socket) do
     Logger.warning("[Dust.Connection] Disconnected: #{inspect(reason)}")
 
