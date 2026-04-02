@@ -58,13 +58,25 @@ defmodule DustWeb.Api.StoreApiControllerTest do
   end
 
   describe "POST /api/stores" do
-    test "creates a store with write token", %{conn: conn, rw_token: token} do
+    test "creates a store with write token on pro plan", %{conn: conn, org: org, rw_token: token} do
+      # Upgrade to pro so we can create more than 1 store
+      org |> Ecto.Changeset.change(plan: "pro") |> Dust.Repo.update!()
+
       conn = conn |> api_conn(token) |> post("/api/stores", %{name: "new-store"})
 
       assert conn.status == 201
       body = json_response(conn, 201)
       assert body["name"] == "new-store"
       assert body["full_name"] == "apitest/new-store"
+    end
+
+    test "rejects create when store limit reached on free plan", %{conn: conn, rw_token: token} do
+      conn = conn |> api_conn(token) |> post("/api/stores", %{name: "second-store"})
+
+      assert conn.status == 402
+      body = json_response(conn, 402)
+      assert body["error"] == "limit_exceeded"
+      assert body["dimension"] == "stores"
     end
 
     test "rejects create with read-only token", %{conn: conn, ro_token: token} do

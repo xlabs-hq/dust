@@ -87,6 +87,17 @@ defmodule Dust.Files do
 
   def decrement_ref(_), do: :ok
 
+  @doc "Total file storage bytes for all blobs referenced by a store's entries."
+  def store_usage_bytes(store_id) do
+    from(b in Blob,
+      join: e in Dust.Sync.StoreEntry,
+      on: fragment("?->>'hash' = ?", e.value, b.hash),
+      where: e.store_id == ^store_id and e.type == "file",
+      select: coalesce(sum(b.size), 0)
+    )
+    |> Repo.one()
+  end
+
   @doc "Download blob content by hash."
   def download(hash) do
     path = blob_path(hash)

@@ -4,6 +4,7 @@ defmodule Dust.Accounts.Organization do
   schema "organizations" do
     field :name, :string
     field :slug, :string
+    field :plan, :string, default: "free"
     field :workos_organization_id, :string
 
     has_many :organization_memberships, Dust.Accounts.OrganizationMembership

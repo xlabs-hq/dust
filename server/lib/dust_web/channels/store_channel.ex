@@ -63,8 +63,11 @@ defmodule DustWeb.StoreChannel do
         {:reply, {:error, %{reason: "invalid op"}}, socket}
 
       op ->
+        org = socket.assigns.store_token.store.organization
+
         with {:ok, _} <- validate_path(params["path"]),
-             :ok <- validate_merge_value(op, params["value"]) do
+             :ok <- validate_merge_value(op, params["value"]),
+             :ok <- check_billing_limits(op, params, socket.assigns.store_id, org) do
           op_attrs = %{
             op: op,
             path: params["path"],
@@ -82,6 +85,9 @@ defmodule DustWeb.StoreChannel do
               {:reply, {:error, %{reason: inspect(reason)}}, socket}
           end
         else
+          {:error, :limit_exceeded, info} ->
+            {:reply, {:error, %{reason: "limit_exceeded"} |> Map.merge(info)}, socket}
+
           {:error, reason} ->
             {:reply, {:error, %{reason: to_string(reason)}}, socket}
         end
@@ -284,6 +290,39 @@ defmodule DustWeb.StoreChannel do
   defp validate_merge_value(:remove, nil), do: {:error, :remove_requires_value}
   defp validate_merge_value(:remove, _), do: :ok
   defp validate_merge_value(_, _), do: :ok
+
+  # Billing checks — only for ops that create new keys
+  defp check_billing_limits(:set, %{"path" => path, "value" => value}, store_id, org) do
+    # Count how many new leaf entries this set would create
+    new_keys =
+      if is_map(value) and not ValueCodec.typed_value?(value) do
+        length(ValueCodec.flatten_map(path, value))
+      else
+        if Sync.get_entry(store_id, path), do: 0, else: 1
+      end
+
+    if new_keys > 0 do
+      Dust.Billing.Limits.check_key_count(store_id, new_keys, org)
+    else
+      :ok
+    end
+  end
+
+  defp check_billing_limits(:merge, %{"value" => value}, store_id, org) when is_map(value) do
+    # Count net-new paths from merge
+    new_keys =
+      Enum.count(value, fn {key, _v} ->
+        Sync.get_entry(store_id, key) == nil
+      end)
+
+    if new_keys > 0 do
+      Dust.Billing.Limits.check_key_count(store_id, new_keys, org)
+    else
+      :ok
+    end
+  end
+
+  defp check_billing_limits(_, _, _, _), do: :ok
 
   @impl true
   def terminate(_reason, socket) do

@@ -8,12 +8,26 @@ defmodule Dust.Stores do
   # Stores
 
   def create_store(organization, attrs) do
-    %Store{}
-    |> Store.changeset(Map.put(attrs, :organization_id, organization.id))
-    |> Repo.insert()
+    case Dust.Billing.Limits.check_store_count(organization) do
+      :ok ->
+        %Store{}
+        |> Store.changeset(Map.put(attrs, :organization_id, organization.id))
+        |> Repo.insert()
+
+      {:error, :limit_exceeded, _} = error ->
+        error
+    end
   end
 
   def get_store!(id), do: Repo.get!(Store, id)
+
+  def store_count(organization) do
+    from(s in Store,
+      where: s.organization_id == ^organization.id and s.status == :active,
+      select: count()
+    )
+    |> Repo.one()
+  end
 
   def list_stores(organization) do
     from(s in Store,

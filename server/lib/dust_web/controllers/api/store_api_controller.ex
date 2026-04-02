@@ -39,6 +39,11 @@ defmodule DustWeb.Api.StoreApiController do
             status: store.status
           })
 
+        {:error, :limit_exceeded, info} ->
+          conn
+          |> put_status(402)
+          |> json(%{error: "limit_exceeded"} |> Map.merge(info))
+
         {:error, changeset} ->
           conn
           |> put_status(422)
