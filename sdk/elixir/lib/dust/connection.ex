@@ -29,6 +29,7 @@ defmodule Dust.Connection do
       |> assign(:stores, stores)
       |> assign(:joined_stores, MapSet.new())
       |> assign(:outbox, %{})
+      |> assign(:pending_refs, %{})
 
     if test_mode? do
       {:ok, socket}
@@ -137,6 +138,30 @@ defmodule Dust.Connection do
   end
 
   @impl Slipstream
+  def handle_reply(ref, reply, socket) do
+    case Map.pop(socket.assigns.pending_refs, ref) do
+      {nil, _} ->
+        {:ok, socket}
+
+      {{store_name, client_op_id}, pending_refs} ->
+        socket = assign(socket, :pending_refs, pending_refs)
+
+        case reply do
+          {:error, %{"reason" => reason}} ->
+            Dust.SyncEngine.handle_write_rejected(store_name, client_op_id, reason)
+
+          {:error, %{reason: reason}} ->
+            Dust.SyncEngine.handle_write_rejected(store_name, client_op_id, reason)
+
+          _ ->
+            :ok
+        end
+
+        {:ok, socket}
+    end
+  end
+
+  @impl Slipstream
   def handle_info({:send_write, store_name, %{op: :put_file} = op_attrs}, socket) do
     topic = "store:#{store_name}"
 
@@ -149,12 +174,13 @@ defmodule Dust.Connection do
     }
 
     if MapSet.member?(socket.assigns.joined_stores, store_name) do
-      push(socket, topic, "put_file", params)
-      {:noreply, socket}
+      {:ok, ref} = push(socket, topic, "put_file", params)
+      pending = Map.put(socket.assigns.pending_refs, ref, {store_name, op_attrs.client_op_id})
+      {:noreply, assign(socket, :pending_refs, pending)}
     else
       outbox = Map.get(socket.assigns, :outbox, %{})
       store_queue = Map.get(outbox, store_name, :queue.new())
-      store_queue = :queue.in({:put_file, params}, store_queue)
+      store_queue = :queue.in({:put_file, params, op_attrs.client_op_id}, store_queue)
       outbox = Map.put(outbox, store_name, store_queue)
       {:noreply, assign(socket, :outbox, outbox)}
     end
@@ -172,13 +198,14 @@ defmodule Dust.Connection do
     }
 
     if MapSet.member?(socket.assigns.joined_stores, store_name) do
-      push(socket, topic, "write", params)
-      {:noreply, socket}
+      {:ok, ref} = push(socket, topic, "write", params)
+      pending = Map.put(socket.assigns.pending_refs, ref, {store_name, op_attrs.client_op_id})
+      {:noreply, assign(socket, :pending_refs, pending)}
     else
       # Not yet joined — queue the write for flush after join
       outbox = Map.get(socket.assigns, :outbox, %{})
       store_queue = Map.get(outbox, store_name, :queue.new())
-      store_queue = :queue.in(params, store_queue)
+      store_queue = :queue.in({params, op_attrs.client_op_id}, store_queue)
       outbox = Map.put(outbox, store_name, store_queue)
       {:noreply, assign(socket, :outbox, outbox)}
     end
@@ -193,13 +220,15 @@ defmodule Dust.Connection do
 
     socket =
       Enum.reduce(:queue.to_list(store_queue), socket, fn
-        {:put_file, params}, sock ->
-          push(sock, topic, "put_file", params)
-          sock
+        {:put_file, params, client_op_id}, sock ->
+          {:ok, ref} = push(sock, topic, "put_file", params)
+          pending = Map.put(sock.assigns.pending_refs, ref, {store_name, client_op_id})
+          assign(sock, :pending_refs, pending)
 
-        params, sock ->
-          push(sock, topic, "write", params)
-          sock
+        {params, client_op_id}, sock ->
+          {:ok, ref} = push(sock, topic, "write", params)
+          pending = Map.put(sock.assigns.pending_refs, ref, {store_name, client_op_id})
+          assign(sock, :pending_refs, pending)
       end)
 
     outbox = Map.delete(outbox, store_name)

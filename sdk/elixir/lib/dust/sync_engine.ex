@@ -62,6 +62,10 @@ defmodule Dust.SyncEngine do
     GenServer.cast(via(store), {:set_status, new_status})
   end
 
+  def handle_write_rejected(store, client_op_id, reason) do
+    GenServer.cast(via(store), {:write_rejected, client_op_id, reason})
+  end
+
   @doc "Write directly to cache without the write pipeline. For test seeding only."
   def seed_entry(store, path, value, type) do
     GenServer.call(via(store), {:seed_entry, path, value, type})
@@ -363,6 +367,38 @@ defmodule Dust.SyncEngine do
     end
 
     {:noreply, %{state | status: new_status}}
+  end
+
+  @impl true
+  def handle_cast({:write_rejected, client_op_id, reason}, state) do
+    case Map.pop(state.pending_ops, client_op_id) do
+      {nil, _pending} ->
+        # Already reconciled or unknown op
+        {:noreply, state}
+
+      {op_attrs, pending} ->
+        path = op_attrs.path
+
+        # Roll back optimistic local write by deleting the cache entry.
+        # The correct value will be restored on the next server event or
+        # can be re-read via enum. This is safe because the server never
+        # accepted the write, so the entry doesn't exist server-side.
+        state.cache.delete(state.cache_target, state.store, path)
+
+        # Fire rejection callback so the app knows
+        dispatch_callbacks(state, path, %{
+          store: state.store,
+          path: path,
+          op: op_attrs.op,
+          value: nil,
+          committed: false,
+          source: :server,
+          client_op_id: client_op_id,
+          error: %{code: :rejected, message: to_string(reason)}
+        })
+
+        {:noreply, %{state | pending_ops: pending}}
+    end
   end
 
   @impl true

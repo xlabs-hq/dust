@@ -153,6 +153,48 @@ defmodule Dust.SyncEngineTest do
     assert_receive {:event, %{path: "post.tags", op: :remove, value: "elixir", committed: false}}, 500
   end
 
+  # Write rejection tests
+
+  test "handle_write_rejected rolls back optimistic write" do
+    :ok = SyncEngine.put("test/store", "key", "optimistic")
+    assert {:ok, "optimistic"} = SyncEngine.get("test/store", "key")
+
+    # Get the pending op's client_op_id
+    status = SyncEngine.status("test/store")
+    assert status.pending_ops == 1
+
+    # Simulate the server rejecting the write. We need the client_op_id,
+    # which we can get from the GenServer state.
+    state = :sys.get_state(SyncEngine.via("test/store") |> GenServer.whereis())
+    [{client_op_id, _op}] = Map.to_list(state.pending_ops)
+
+    SyncEngine.handle_write_rejected("test/store", client_op_id, "limit_exceeded")
+
+    # Optimistic write should be rolled back
+    assert :miss = SyncEngine.get("test/store", "key")
+
+    # Pending ops should be empty
+    status = SyncEngine.status("test/store")
+    assert status.pending_ops == 0
+  end
+
+  test "handle_write_rejected fires rejection callback" do
+    test_pid = self()
+    SyncEngine.on("test/store", "key", fn event -> send(test_pid, {:event, event}) end)
+
+    :ok = SyncEngine.put("test/store", "key", "optimistic")
+    # Consume the optimistic callback
+    assert_receive {:event, %{committed: false, source: :local}}, 500
+
+    state = :sys.get_state(SyncEngine.via("test/store") |> GenServer.whereis())
+    [{client_op_id, _op}] = Map.to_list(state.pending_ops)
+
+    SyncEngine.handle_write_rejected("test/store", client_op_id, "rate_limited")
+
+    # Should receive a rejection callback
+    assert_receive {:event, %{error: %{code: :rejected, message: "rate_limited"}}}, 500
+  end
+
   # Decimal tests
 
   test "put and get Decimal value" do
