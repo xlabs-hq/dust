@@ -99,6 +99,39 @@ defmodule Dust.Sync.WriterTest do
     end
   end
 
+  describe "map expansion" do
+    test "set with map value expands into leaf entries", %{store: store} do
+      Sync.write(store.id, %{
+        op: :set,
+        path: "post",
+        value: %{"title" => "Hello", "meta" => %{"author" => "james", "draft" => true}},
+        device_id: "d",
+        client_op_id: "o1"
+      })
+
+      # Leaf entries should exist
+      assert Sync.get_entry(store.id, "post.title").value == "Hello"
+      assert Sync.get_entry(store.id, "post.meta.author").value == "james"
+      assert Sync.get_entry(store.id, "post.meta.draft").value == true
+
+      # Parent path should reassemble the map
+      entry = Sync.get_entry(store.id, "post")
+      assert entry.value == %{"title" => "Hello", "meta" => %{"author" => "james", "draft" => true}}
+    end
+
+    test "set with scalar value stores as single entry", %{store: store} do
+      Sync.write(store.id, %{
+        op: :set,
+        path: "key",
+        value: "simple",
+        device_id: "d",
+        client_op_id: "o1"
+      })
+
+      assert Sync.get_entry(store.id, "key").value == "simple"
+    end
+  end
+
   describe "get_ops_since/2" do
     test "returns ops after given seq", %{store: store} do
       Sync.write(store.id, %{op: :set, path: "a", value: "1", device_id: "d", client_op_id: "o1"})

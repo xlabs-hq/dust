@@ -11,9 +11,56 @@ defmodule Dust.Sync do
 
   def get_entry(store_id, path) do
     case Repo.get_by(StoreEntry, store_id: store_id, path: path) do
-      nil -> nil
-      entry -> unwrap_entry(entry)
+      nil ->
+        # No direct entry — check for descendants (map was expanded into leaves)
+        assemble_subtree(store_id, path)
+
+      entry ->
+        unwrap_entry(entry)
     end
+  end
+
+  defp assemble_subtree(store_id, path) do
+    prefix = path <> "."
+
+    descendants =
+      from(e in StoreEntry,
+        where: e.store_id == ^store_id and like(e.path, ^"#{prefix}%"),
+        order_by: e.path
+      )
+      |> Repo.all()
+
+    case descendants do
+      [] ->
+        nil
+
+      entries ->
+        # Build a nested map from leaf entries
+        map =
+          Enum.reduce(entries, %{}, fn entry, acc ->
+            # Get the relative path after the prefix
+            relative = String.replace_prefix(entry.path, prefix, "")
+            keys = String.split(relative, ".")
+            value = ValueCodec.unwrap(entry.value)
+            put_nested(acc, keys, value)
+          end)
+
+        # Return a virtual entry with the assembled map
+        %StoreEntry{
+          store_id: store_id,
+          path: path,
+          value: map,
+          type: "map",
+          seq: Enum.max_by(entries, & &1.seq).seq
+        }
+    end
+  end
+
+  defp put_nested(map, [key], value), do: Map.put(map, key, value)
+
+  defp put_nested(map, [key | rest], value) do
+    child = Map.get(map, key, %{})
+    Map.put(map, key, put_nested(child, rest, value))
   end
 
   def get_all_entries(store_id) do
