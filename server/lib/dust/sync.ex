@@ -81,6 +81,12 @@ defmodule Dust.Sync do
     end) || 0
   end
 
+  def earliest_op_seq(store_id) do
+    with_read_conn(store_id, fn conn ->
+      query_one_val(conn, "SELECT min(store_seq) FROM store_ops", [])
+    end)
+  end
+
   def get_entries_page(store_id, opts \\ []) do
     limit = Keyword.get(opts, :limit, 100)
     offset = Keyword.get(opts, :offset, 0)

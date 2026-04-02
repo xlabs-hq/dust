@@ -66,6 +66,7 @@ defmodule DustWeb.Router do
     post "/tokens", TokenApiController, :create
     delete "/tokens/:id", TokenApiController, :delete
     get "/stores/:org/:store/export", ExportController, :show
+    get "/stores/:org/:store/diff", DiffController, :show
     post "/stores/:org/:store/import", ImportController, :create
     post "/stores/:org/:store/clone", CloneController, :create
   end
