@@ -39,6 +39,10 @@ module Dust
         when "remove"     then Commands::Types.remove(config, rest)
         when "put-file"   then Commands::Files.put_file(config, rest)
         when "fetch-file" then Commands::Files.fetch_file(config, rest)
+        when "export"     then Commands::Export.export(config, rest)
+        when "import"     then Commands::Import.import_data(config, rest)
+        when "clone"      then Commands::Clone.clone(config, rest)
+        when "diff"       then Commands::Diff.diff(config, rest)
         when "token"      then Commands::Token.token(config, rest)
         else
           STDERR.puts "Unknown command: #{command}"
@@ -77,6 +81,11 @@ module Dust
         watch <store> <pattern>       Stream changes
         log <store> [options]         Audit log
         rollback <store> [options]    Rollback
+
+        export <store> [--format F]   Export store (jsonl|sqlite)
+        import <store> < file.jsonl   Import JSONL data
+        clone <source> <target-name>  Clone a store
+        diff <store> --from-seq N     Show changes between seqs
 
         token create|list|revoke      Manage tokens
 
