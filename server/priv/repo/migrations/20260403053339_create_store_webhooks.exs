@@ -18,7 +18,10 @@ defmodule Dust.Repo.Migrations.CreateStoreWebhooks do
 
     create table(:webhook_deliveries, primary_key: false) do
       add :id, :binary_id, primary_key: true
-      add :webhook_id, references(:store_webhooks, type: :binary_id, on_delete: :delete_all), null: false
+
+      add :webhook_id, references(:store_webhooks, type: :binary_id, on_delete: :delete_all),
+        null: false
+
       add :store_seq, :integer, null: false
       add :status_code, :integer
       add :response_ms, :integer

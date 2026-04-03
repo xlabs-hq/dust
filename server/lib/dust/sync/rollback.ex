@@ -162,10 +162,14 @@ defmodule Dust.Sync.Rollback do
   # --- Private ---
 
   defp load_snapshot_seed(conn, to_seq) do
-    case query_one_row(conn, """
-      SELECT snapshot_seq, snapshot_data FROM store_snapshots
-      WHERE snapshot_seq <= ? ORDER BY snapshot_seq DESC LIMIT 1
-    """, [to_seq]) do
+    case query_one_row(
+           conn,
+           """
+             SELECT snapshot_seq, snapshot_data FROM store_snapshots
+             WHERE snapshot_seq <= ? ORDER BY snapshot_seq DESC LIMIT 1
+           """,
+           [to_seq]
+         ) do
       [seq, json] ->
         snapshot = Jason.decode!(json)
 
