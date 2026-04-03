@@ -10,6 +10,7 @@ defmodule DustWeb.Api.DiffController do
     with :ok <- verify_org(organization, org_slug),
          {:ok, store} <- find_store(organization, store_name),
          :ok <- verify_token_scope(store_token, store),
+         :ok <- verify_read_permission(store_token),
          {:ok, from_seq} <- parse_int(params, "from_seq"),
          to_seq <- parse_optional_int(params, "to_seq"),
          {:ok, diff} <- Sync.Diff.changes(store.id, from_seq, to_seq) do
@@ -52,6 +53,10 @@ defmodule DustWeb.Api.DiffController do
 
   defp verify_token_scope(store_token, store) do
     if store_token.store_id == store.id, do: :ok, else: {:error, :forbidden}
+  end
+
+  defp verify_read_permission(store_token) do
+    if Stores.StoreToken.can_read?(store_token), do: :ok, else: {:error, :forbidden}
   end
 
   defp parse_int(params, key) do

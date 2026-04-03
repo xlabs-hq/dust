@@ -9,7 +9,8 @@ defmodule DustWeb.Api.ExportController do
 
     with :ok <- verify_org(organization, org_slug),
          {:ok, store} <- find_store(organization, store_name),
-         :ok <- verify_token_scope(store_token, store) do
+         :ok <- verify_token_scope(store_token, store),
+         :ok <- verify_read_permission(store_token) do
       format = Map.get(params, "format", "jsonl")
       do_export(conn, store, org_slug, store_name, format)
     else
@@ -47,19 +48,28 @@ defmodule DustWeb.Api.ExportController do
     end
   end
 
+  defp verify_read_permission(store_token) do
+    if Stores.StoreToken.can_read?(store_token) do
+      :ok
+    else
+      {:error, :forbidden}
+    end
+  end
+
   defp do_export(conn, store, org_slug, store_name, "sqlite") do
     filename = "#{org_slug}_#{store_name}"
     tmp_path = Path.join(System.tmp_dir!(), "export_#{System.unique_integer([:positive])}.db")
 
     case Sync.Export.to_sqlite_file(store.id, tmp_path) do
       :ok ->
-        body = File.read!(tmp_path)
-        File.rm(tmp_path)
+        conn =
+          conn
+          |> put_resp_content_type("application/x-sqlite3")
+          |> put_resp_header("content-disposition", "attachment; filename=\"#{filename}.db\"")
+          |> send_file(200, tmp_path)
 
+        File.rm(tmp_path)
         conn
-        |> put_resp_content_type("application/x-sqlite3")
-        |> put_resp_header("content-disposition", "attachment; filename=\"#{filename}.db\"")
-        |> send_resp(200, body)
 
       {:error, _reason} ->
         conn |> put_status(500) |> json(%{error: "export_failed"})

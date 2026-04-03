@@ -13,8 +13,14 @@ defmodule Dust.Sync.Import do
       lines
       |> Enum.map(&String.trim/1)
       |> Enum.reject(fn line -> line == "" end)
-      |> Enum.map(&Jason.decode!/1)
-      |> Enum.reject(fn decoded -> Map.get(decoded, "_header") == true end)
+      |> Enum.reduce([], fn line, acc ->
+        case Jason.decode(line) do
+          {:ok, %{"_header" => true}} -> acc
+          {:ok, %{"path" => _} = entry} -> [entry | acc]
+          _ -> acc
+        end
+      end)
+      |> Enum.reverse()
 
     entries
     |> Enum.chunk_every(@batch_size)

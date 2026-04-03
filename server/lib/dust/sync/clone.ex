@@ -20,8 +20,22 @@ defmodule Dust.Sync.Clone do
   Returns `{:ok, target_store}` or `{:error, reason}`.
   """
   def clone_store(source, organization, target_name) do
-    with {:ok, target} <- Stores.create_store(organization, %{name: target_name}),
-         {:ok, target_path} <- StoreDB.path_for_id(target.id),
+    with {:ok, target} <- Stores.create_store(organization, %{name: target_name}) do
+      case do_clone(source, target) do
+        {:ok, target} ->
+          {:ok, target}
+
+        {:error, reason} ->
+          # Clean up the orphaned Postgres record and SQLite file
+          Repo.delete(target)
+          StoreDB.delete(target.id)
+          {:error, reason}
+      end
+    end
+  end
+
+  defp do_clone(source, target) do
+    with {:ok, target_path} <- StoreDB.path_for_id(target.id),
          :ok <- replace_with_clone(source.id, target_path),
          :ok <- increment_blob_refs(target.id),
          {:ok, target} <- copy_metadata(source, target) do
@@ -62,8 +76,8 @@ defmodule Dust.Sync.Clone do
   defp collect_hashes(conn, stmt, acc) do
     case Exqlite.Sqlite3.step(conn, stmt) do
       {:row, [json]} ->
-        case Jason.decode!(json) do
-          %{"hash" => hash} -> collect_hashes(conn, stmt, [hash | acc])
+        case Jason.decode(json) do
+          {:ok, %{"hash" => hash}} -> collect_hashes(conn, stmt, [hash | acc])
           _ -> collect_hashes(conn, stmt, acc)
         end
 

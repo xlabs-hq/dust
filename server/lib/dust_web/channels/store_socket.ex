@@ -40,9 +40,7 @@ defmodule DustWeb.StoreSocket do
   defp parse_capver(capver) when is_integer(capver), do: capver
   defp parse_capver(_), do: 1
 
-  defp check_capver(capver) when capver >= 1 do
+  defp check_capver(capver) do
     if capver >= DustProtocol.min_capver(), do: :ok, else: {:error, :capver_too_low}
   end
-
-  defp check_capver(_), do: {:error, :capver_too_low}
 end
