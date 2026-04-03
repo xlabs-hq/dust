@@ -10,6 +10,8 @@ defmodule Dust.Stores do
   def create_store(organization, attrs) do
     case Dust.Billing.Limits.check_store_count(organization) do
       :ok ->
+        attrs = maybe_set_expires_at(attrs)
+
         case %Store{}
              |> Store.changeset(Map.put(attrs, :organization_id, organization.id))
              |> Repo.insert() do
@@ -25,6 +27,18 @@ defmodule Dust.Stores do
         error
     end
   end
+
+  defp maybe_set_expires_at(%{ttl: ttl} = attrs) when is_integer(ttl) and ttl > 0 do
+    expires_at = DateTime.utc_now() |> DateTime.add(ttl, :second) |> DateTime.truncate(:microsecond)
+    attrs |> Map.delete(:ttl) |> Map.put(:expires_at, expires_at)
+  end
+
+  defp maybe_set_expires_at(%{"ttl" => ttl} = attrs) when is_integer(ttl) and ttl > 0 do
+    expires_at = DateTime.utc_now() |> DateTime.add(ttl, :second) |> DateTime.truncate(:microsecond)
+    attrs |> Map.delete("ttl") |> Map.put(:expires_at, expires_at)
+  end
+
+  defp maybe_set_expires_at(attrs), do: attrs
 
   def get_store!(id), do: Repo.get!(Store, id)
 

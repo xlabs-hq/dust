@@ -14,6 +14,13 @@ defmodule Dust.Sync.Writer do
     GenServer.call(pid, {:write, op_attrs})
   end
 
+  def stop(store_id) do
+    case Registry.lookup(Dust.Sync.WriterRegistry, store_id) do
+      [{pid, _}] -> GenServer.stop(pid, :normal)
+      [] -> :ok
+    end
+  end
+
   def compact(store_id) do
     pid = ensure_started(store_id)
     GenServer.call(pid, :compact, :timer.minutes(5))

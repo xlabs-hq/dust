@@ -23,6 +23,25 @@ defmodule Dust.StoresTest do
     end
   end
 
+  describe "ephemeral stores" do
+    test "create_store with ttl sets expires_at", %{org: org} do
+      org |> Ecto.Changeset.change(plan: "pro") |> Dust.Repo.update!()
+
+      {:ok, store} = Stores.create_store(org, %{name: "ephemeral", ttl: 3600})
+      assert store.expires_at != nil
+      # Should be roughly 1 hour from now
+      diff = DateTime.diff(store.expires_at, DateTime.utc_now(), :second)
+      assert diff > 3590 and diff <= 3600
+    end
+
+    test "create_store without ttl has nil expires_at", %{org: org} do
+      org |> Ecto.Changeset.change(plan: "pro") |> Dust.Repo.update!()
+
+      {:ok, store} = Stores.create_store(org, %{name: "permanent"})
+      assert store.expires_at == nil
+    end
+  end
+
   describe "tokens" do
     test "create and authenticate", %{org: org, user: user} do
       {:ok, store} = Stores.create_store(org, %{name: "blog"})

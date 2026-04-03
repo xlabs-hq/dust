@@ -74,7 +74,8 @@ config :dust, Oban,
      crontab: [
        {"0 * * * *", Dust.Workers.Compaction},
        {"* * * * *", Dust.Webhooks.CatchUpWorker},
-       {"0 3 * * *", Dust.Webhooks.PruneWorker}
+       {"0 3 * * *", Dust.Webhooks.PruneWorker},
+       {"* * * * *", Dust.Workers.StoreExpiry}
      ]}
   ]
 
