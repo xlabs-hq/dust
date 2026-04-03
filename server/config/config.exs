@@ -68,7 +68,7 @@ config :inertia,
 # Configure Oban
 config :dust, Oban,
   repo: Dust.Repo,
-  queues: [default: 10],
+  queues: [default: 10, webhooks: 10],
   plugins: [
     {Oban.Plugins.Cron,
      crontab: [
