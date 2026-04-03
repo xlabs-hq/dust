@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/Table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import type { SharedProps } from "@/types";
-import { ArrowLeft, Database, FileText, ScrollText } from "lucide-react";
+import { ArrowLeft, Database, FileText, ScrollText, Webhook } from "lucide-react";
 
 interface Entry {
   path: string;
@@ -189,10 +189,16 @@ export default function StoreShow() {
                     </TableBody>
                   </Table>
                 </div>
-                <div className="mt-3">
+                <div className="flex gap-2 mt-3">
                   <Button variant="outline" size="sm" asChild>
                     <Link href={`/${orgSlug}/stores/${store.name}/log`}>
                       View full audit log
+                    </Link>
+                  </Button>
+                  <Button variant="outline" size="sm" asChild>
+                    <Link href={`/${orgSlug}/stores/${store.name}/webhooks`}>
+                      <Webhook className="w-4 h-4" />
+                      Manage webhooks
                     </Link>
                   </Button>
                 </div>
