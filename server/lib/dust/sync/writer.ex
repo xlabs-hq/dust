@@ -348,7 +348,7 @@ defmodule Dust.Sync.Writer do
 
   # --- Low-level Exqlite wrappers ---
 
-  defp exec(db, sql, params \\ []) do
+  defp exec(db, sql, params) do
     {:ok, stmt} = Exqlite.Sqlite3.prepare(db, sql)
     :ok = Exqlite.Sqlite3.bind(stmt, params)
     :done = Exqlite.Sqlite3.step(db, stmt)

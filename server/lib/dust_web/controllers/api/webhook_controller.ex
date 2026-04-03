@@ -186,12 +186,14 @@ defmodule DustWeb.Api.WebhookController do
   # --- Error responses ---
 
   defp parse_int(nil, default), do: default
+
   defp parse_int(val, default) when is_binary(val) do
     case Integer.parse(val) do
       {n, _} when n > 0 -> n
       _ -> default
     end
   end
+
   defp parse_int(val, _default) when is_integer(val) and val > 0, do: val
   defp parse_int(_, default), do: default
 

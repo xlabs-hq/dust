@@ -185,66 +185,6 @@ defmodule Dust.Sync.Rollback do
     end
   end
 
-  defp resolve_historical_value(nil, nil, _), do: nil
-
-  defp resolve_historical_value(nil, ancestor_row, segments) do
-    extract_descendant_value(ancestor_row, segments)
-  end
-
-  defp resolve_historical_value([_seq, op, _path, value_json], nil, _) do
-    if op == "delete", do: nil, else: Jason.decode!(value_json)
-  end
-
-  defp resolve_historical_value([d_seq, d_op, _d_path, d_val], [a_seq | _] = ancestor, segments) do
-    if a_seq > d_seq do
-      extract_descendant_value(ancestor, segments)
-    else
-      if d_op == "delete", do: nil, else: Jason.decode!(d_val)
-    end
-  end
-
-  defp find_most_recent_ancestor_op(conn, segments, to_seq) when length(segments) > 1 do
-    ancestor_paths =
-      segments
-      |> Enum.slice(0..-2//1)
-      |> Enum.scan(fn seg, acc -> "#{acc}.#{seg}" end)
-
-    placeholders = Enum.map_join(1..length(ancestor_paths), ", ", fn _ -> "?" end)
-
-    query_one_row(
-      conn,
-      """
-        SELECT store_seq, op, path, value FROM store_ops
-        WHERE path IN (#{placeholders}) AND store_seq <= ? AND op IN ('set', 'delete')
-        ORDER BY store_seq DESC LIMIT 1
-      """,
-      ancestor_paths ++ [to_seq]
-    )
-  end
-
-  defp find_most_recent_ancestor_op(_, _, _), do: nil
-
-  defp extract_descendant_value([_seq, "delete", _path, _val], _segments), do: nil
-
-  defp extract_descendant_value([_seq, "set", ancestor_path, value_json], segments) do
-    {:ok, ancestor_segments} = DustProtocol.Path.parse(ancestor_path)
-    relative_keys = Enum.drop(segments, length(ancestor_segments))
-    value = Jason.decode!(value_json) |> ValueCodec.unwrap()
-
-    Enum.reduce_while(relative_keys, value, fn key, acc ->
-      case acc do
-        %{^key => child} -> {:cont, child}
-        _ -> {:halt, nil}
-      end
-    end)
-    |> case do
-      nil -> nil
-      val -> ValueCodec.wrap(val)
-    end
-  end
-
-  defp extract_descendant_value(nil, _), do: nil
-
   defp current_path_value(store_id, path) do
     case Sync.get_entry(store_id, path) do
       nil -> nil

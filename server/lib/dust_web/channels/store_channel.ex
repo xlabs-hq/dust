@@ -67,44 +67,6 @@ defmodule DustWeb.StoreChannel do
     end
   end
 
-  defp handle_write_op(params, socket) do
-    case Map.get(@valid_ops, params["op"]) do
-      nil ->
-        {:reply, {:error, %{reason: "invalid op"}}, socket}
-
-      op ->
-        org = socket.assigns.store_token.store.organization
-
-        with {:ok, _} <- validate_path(params["path"]),
-             :ok <- validate_merge_value(op, params["value"]),
-             :ok <- check_billing_limits(op, params, socket.assigns.store_id, org) do
-          op_attrs = %{
-            op: op,
-            path: params["path"],
-            value: params["value"],
-            device_id: socket.assigns.device_id,
-            client_op_id: params["client_op_id"]
-          }
-
-          case Sync.write(socket.assigns.store_id, op_attrs) do
-            {:ok, db_op} ->
-              broadcast!(socket, "event", format_event(db_op))
-              enqueue_webhook_deliveries(socket, db_op)
-              {:reply, {:ok, %{store_seq: db_op.store_seq}}, socket}
-
-            {:error, reason} ->
-              {:reply, {:error, %{reason: inspect(reason)}}, socket}
-          end
-        else
-          {:error, :limit_exceeded, info} ->
-            {:reply, {:error, %{reason: "limit_exceeded"} |> Map.merge(info)}, socket}
-
-          {:error, reason} ->
-            {:reply, {:error, %{reason: to_string(reason)}}, socket}
-        end
-    end
-  end
-
   @impl true
   def handle_in(
         "put_file",
@@ -217,6 +179,44 @@ defmodule DustWeb.StoreChannel do
     store_id = socket.assigns.store_id
     status = build_status(store_id)
     {:reply, {:ok, status}, socket}
+  end
+
+  defp handle_write_op(params, socket) do
+    case Map.get(@valid_ops, params["op"]) do
+      nil ->
+        {:reply, {:error, %{reason: "invalid op"}}, socket}
+
+      op ->
+        org = socket.assigns.store_token.store.organization
+
+        with {:ok, _} <- validate_path(params["path"]),
+             :ok <- validate_merge_value(op, params["value"]),
+             :ok <- check_billing_limits(op, params, socket.assigns.store_id, org) do
+          op_attrs = %{
+            op: op,
+            path: params["path"],
+            value: params["value"],
+            device_id: socket.assigns.device_id,
+            client_op_id: params["client_op_id"]
+          }
+
+          case Sync.write(socket.assigns.store_id, op_attrs) do
+            {:ok, db_op} ->
+              broadcast!(socket, "event", format_event(db_op))
+              enqueue_webhook_deliveries(socket, db_op)
+              {:reply, {:ok, %{store_seq: db_op.store_seq}}, socket}
+
+            {:error, reason} ->
+              {:reply, {:error, %{reason: inspect(reason)}}, socket}
+          end
+        else
+          {:error, :limit_exceeded, info} ->
+            {:reply, {:error, %{reason: "limit_exceeded"} |> Map.merge(info)}, socket}
+
+          {:error, reason} ->
+            {:reply, {:error, %{reason: to_string(reason)}}, socket}
+        end
+    end
   end
 
   @impl true

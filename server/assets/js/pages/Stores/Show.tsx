@@ -78,6 +78,14 @@ export default function StoreShow() {
               {store.entry_count === 1 ? "entry" : "entries"}
             </p>
           </div>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" asChild>
+              <Link href={`/${orgSlug}/stores/${store.name}/webhooks`}>
+                <Webhook className="w-4 h-4" />
+                Webhooks
+              </Link>
+            </Button>
+          </div>
         </div>
 
         {/* Tabs */}
@@ -189,16 +197,10 @@ export default function StoreShow() {
                     </TableBody>
                   </Table>
                 </div>
-                <div className="flex gap-2 mt-3">
+                <div className="mt-3">
                   <Button variant="outline" size="sm" asChild>
                     <Link href={`/${orgSlug}/stores/${store.name}/log`}>
                       View full audit log
-                    </Link>
-                  </Button>
-                  <Button variant="outline" size="sm" asChild>
-                    <Link href={`/${orgSlug}/stores/${store.name}/webhooks`}>
-                      <Webhook className="w-4 h-4" />
-                      Manage webhooks
                     </Link>
                   </Button>
                 </div>

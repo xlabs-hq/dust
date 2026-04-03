@@ -1,7 +1,6 @@
 defmodule AdminWeb.StoreDetailLive do
   use AdminWeb, :live_view
 
-  import Ecto.Query
   alias Dust.Repo
 
   @entries_per_page 50

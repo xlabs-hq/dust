@@ -57,7 +57,8 @@ defmodule Dust.Webhooks do
       update: [
         set: [
           failure_count: fragment("? + 1", w.failure_count),
-          active: fragment("CASE WHEN ? + 1 >= 5 THEN false ELSE ? END", w.failure_count, w.active),
+          active:
+            fragment("CASE WHEN ? + 1 >= 5 THEN false ELSE ? END", w.failure_count, w.active),
           updated_at: ^now
         ]
       ]
