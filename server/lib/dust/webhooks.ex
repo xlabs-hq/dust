@@ -19,6 +19,13 @@ defmodule Dust.Webhooks do
 
   def get_webhook!(id), do: Repo.get!(Webhook, id)
 
+  def get_webhook(webhook_id, store_id) do
+    case Repo.get_by(Webhook, id: webhook_id, store_id: store_id) do
+      nil -> {:error, :not_found}
+      webhook -> {:ok, webhook}
+    end
+  end
+
   def delete_webhook(webhook_id, store_id) do
     case Repo.get_by(Webhook, id: webhook_id, store_id: store_id) do
       nil ->

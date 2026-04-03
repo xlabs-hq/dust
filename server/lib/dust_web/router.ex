@@ -69,6 +69,12 @@ defmodule DustWeb.Router do
     get "/stores/:org/:store/diff", DiffController, :show
     post "/stores/:org/:store/import", ImportController, :create
     post "/stores/:org/:store/clone", CloneController, :create
+
+    get "/stores/:org/:store/webhooks", WebhookController, :index
+    post "/stores/:org/:store/webhooks", WebhookController, :create
+    delete "/stores/:org/:store/webhooks/:id", WebhookController, :delete
+    post "/stores/:org/:store/webhooks/:id/ping", WebhookController, :ping
+    get "/stores/:org/:store/webhooks/:id/deliveries", WebhookController, :deliveries
   end
 
   # Protected routes scoped to an organization
