@@ -89,6 +89,7 @@ defmodule DustWeb.StoreChannel do
           case Sync.write(socket.assigns.store_id, op_attrs) do
             {:ok, db_op} ->
               broadcast!(socket, "event", format_event(db_op))
+              enqueue_webhook_deliveries(socket, db_op)
               {:reply, {:ok, %{store_seq: db_op.store_seq}}, socket}
 
             {:error, reason} ->
@@ -144,6 +145,7 @@ defmodule DustWeb.StoreChannel do
         case Sync.write(socket.assigns.store_id, op_attrs) do
           {:ok, db_op} ->
             broadcast!(socket, "event", format_event(db_op))
+            enqueue_webhook_deliveries(socket, db_op)
             {:reply, {:ok, %{store_seq: db_op.store_seq, hash: ref["hash"]}}, socket}
 
           {:error, reason} ->
@@ -280,6 +282,24 @@ defmodule DustWeb.StoreChannel do
     end
 
     {:noreply, socket}
+  end
+
+  defp enqueue_webhook_deliveries(socket, op) do
+    store = socket.assigns.store_token.store
+    org = store.organization
+
+    event = %{
+      "event" => "entry.changed",
+      "store" => "#{org.slug}/#{store.name}",
+      "store_seq" => op.store_seq,
+      "op" => to_string(op.op),
+      "path" => op.path,
+      "value" => ValueCodec.unwrap(op.value),
+      "device_id" => op.device_id,
+      "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601()
+    }
+
+    Dust.Webhooks.enqueue_deliveries(store.id, event)
   end
 
   # For live writes, use the materialized_value virtual field (set by Writer)

@@ -1,5 +1,6 @@
 defmodule DustWeb.StoreChannelTest do
   use Dust.DataCase, async: false
+  use Oban.Testing, repo: Dust.Repo
   import Phoenix.ChannelTest
 
   alias Dust.{Accounts, Stores, Sync}
@@ -494,6 +495,34 @@ defmodule DustWeb.StoreChannelTest do
         })
 
       assert_reply ref, :error, %{reason: "merge_requires_map_value"}
+    end
+  end
+
+  describe "webhook delivery" do
+    test "write enqueues webhook delivery jobs", %{socket: socket, store: store} do
+      {:ok, _webhook} = Dust.Webhooks.create_webhook(store, %{url: "https://example.com/hook"})
+
+      {:ok, _, socket} =
+        subscribe_and_join(socket, DustWeb.StoreChannel, "store:#{store.id}", %{
+          "last_store_seq" => 0
+        })
+
+      # Drain catch-up
+      assert_push "catch_up_complete", _
+
+      ref =
+        push(socket, "write", %{
+          "op" => "set",
+          "path" => "a",
+          "value" => "1",
+          "client_op_id" => "o1"
+        })
+
+      assert_reply ref, :ok, _
+
+      # Verify an Oban job was enqueued
+      jobs = all_enqueued(worker: Dust.Webhooks.DeliveryWorker)
+      assert length(jobs) == 1
     end
   end
 end

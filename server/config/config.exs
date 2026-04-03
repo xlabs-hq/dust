@@ -72,7 +72,8 @@ config :dust, Oban,
   plugins: [
     {Oban.Plugins.Cron,
      crontab: [
-       {"0 * * * *", Dust.Workers.Compaction}
+       {"0 * * * *", Dust.Workers.Compaction},
+       {"* * * * *", Dust.Webhooks.CatchUpWorker}
      ]}
   ]
 
