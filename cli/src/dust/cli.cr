@@ -44,6 +44,7 @@ module Dust
         when "clone"      then Commands::Clone.clone(config, rest)
         when "diff"       then Commands::Diff.diff(config, rest)
         when "token"      then Commands::Token.token(config, rest)
+        when "webhook"    then Commands::Webhook.webhook(config, rest)
         else
           STDERR.puts "Unknown command: #{command}"
           print_usage
@@ -88,6 +89,13 @@ module Dust
         diff <store> --from-seq N     Show changes between seqs
 
         token create|list|revoke      Manage tokens
+
+        webhook <subcommand>              Manage webhooks
+          create <store> <url>            Register a webhook
+          list <store>                    List webhooks
+          delete <store> <id>             Remove a webhook
+          ping <store> <id>               Test a webhook
+          deliveries <store> <id>         View delivery log
 
       Options:
         --version                     Show version

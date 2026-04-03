@@ -16,6 +16,7 @@ require "./dust/commands/import"
 require "./dust/commands/clone"
 require "./dust/commands/diff"
 require "./dust/commands/token"
+require "./dust/commands/webhook"
 require "./dust/cli"
 
 Dust::CLI.run(ARGV)
