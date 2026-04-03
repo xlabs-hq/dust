@@ -18,7 +18,10 @@ defmodule DustWeb.HealthController do
     else
       conn
       |> put_status(503)
-      |> json(%{status: "unavailable", checks: Map.new(checks, fn {k, v} -> {k, to_string(v)} end)})
+      |> json(%{
+        status: "unavailable",
+        checks: Map.new(checks, fn {k, v} -> {k, to_string(v)} end)
+      })
     end
   end
 

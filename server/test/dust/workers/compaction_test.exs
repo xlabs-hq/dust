@@ -104,7 +104,12 @@ defmodule Dust.Workers.CompactionTest do
     # Write snapshot and delete ops using a write connection
     {:ok, wconn} = StoreDB.write_conn(store_id)
 
-    {:ok, ins} = Exqlite.Sqlite3.prepare(wconn, "INSERT INTO store_snapshots (snapshot_seq, snapshot_data) VALUES (?, ?)")
+    {:ok, ins} =
+      Exqlite.Sqlite3.prepare(
+        wconn,
+        "INSERT INTO store_snapshots (snapshot_seq, snapshot_data) VALUES (?, ?)"
+      )
+
     Exqlite.Sqlite3.bind(ins, [seq, Jason.encode!(snapshot_data)])
     :done = Exqlite.Sqlite3.step(wconn, ins)
     Exqlite.Sqlite3.release(wconn, ins)

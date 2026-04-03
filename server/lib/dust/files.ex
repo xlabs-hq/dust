@@ -103,8 +103,11 @@ defmodule Dust.Files do
   defp file_hashes_for_store(store_id) do
     case Dust.Sync.StoreDB.read_conn(store_id) do
       {:ok, conn} ->
-        {:ok, stmt} = Exqlite.Sqlite3.prepare(conn,
-          "SELECT value FROM store_entries WHERE type = 'file'")
+        {:ok, stmt} =
+          Exqlite.Sqlite3.prepare(
+            conn,
+            "SELECT value FROM store_entries WHERE type = 'file'"
+          )
 
         hashes = collect_hashes(conn, stmt, [])
         Exqlite.Sqlite3.release(conn, stmt)
@@ -119,10 +122,12 @@ defmodule Dust.Files do
   defp collect_hashes(conn, stmt, acc) do
     case Exqlite.Sqlite3.step(conn, stmt) do
       {:row, [json]} ->
-        hash = case Jason.decode!(json) do
-          %{"hash" => h} -> h
-          _ -> nil
-        end
+        hash =
+          case Jason.decode!(json) do
+            %{"hash" => h} -> h
+            _ -> nil
+          end
+
         collect_hashes(conn, stmt, if(hash, do: [hash | acc], else: acc))
 
       :done ->

@@ -26,8 +26,16 @@ defmodule Dust.Sync.DiffTest do
     Sync.write(store.id, %{op: :set, path: "a", value: "1", device_id: "d", client_op_id: "o1"})
     Sync.write(store.id, %{op: :set, path: "b", value: "2", device_id: "d", client_op_id: "o2"})
     # Now: a=1, b=2 at seq 2
-    Sync.write(store.id, %{op: :set, path: "a", value: "updated", device_id: "d", client_op_id: "o3"})
+    Sync.write(store.id, %{
+      op: :set,
+      path: "a",
+      value: "updated",
+      device_id: "d",
+      client_op_id: "o3"
+    })
+
     Sync.write(store.id, %{op: :delete, path: "b", value: nil, device_id: "d", client_op_id: "o4"})
+
     # Now: a=updated at seq 4, b deleted
 
     {:ok, diff} = Dust.Sync.Diff.changes(store.id, 2, 4)

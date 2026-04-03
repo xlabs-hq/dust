@@ -9,7 +9,11 @@ defmodule Dust.Sync do
 
   def get_entry(store_id, path) do
     with_read_conn(store_id, fn conn ->
-      case query_one_row(conn, "SELECT path, value, type, seq FROM store_entries WHERE path = ?", [path]) do
+      case query_one_row(
+             conn,
+             "SELECT path, value, type, seq FROM store_entries WHERE path = ?",
+             [path]
+           ) do
         [_path, json, type, seq] ->
           value = json |> Jason.decode!() |> ValueCodec.unwrap()
           %{path: path, value: value, type: type, seq: seq}
@@ -22,7 +26,13 @@ defmodule Dust.Sync do
 
   defp assemble_subtree(conn, path) do
     prefix = path <> "."
-    rows = query_all(conn, "SELECT path, value, type, seq FROM store_entries WHERE path LIKE ? ORDER BY path", ["#{prefix}%"])
+
+    rows =
+      query_all(
+        conn,
+        "SELECT path, value, type, seq FROM store_entries WHERE path LIKE ? ORDER BY path",
+        ["#{prefix}%"]
+      )
 
     case rows do
       [] ->
@@ -65,10 +75,14 @@ defmodule Dust.Sync do
     limit = Keyword.get(opts, :limit, @catch_up_batch_size)
 
     with_read_conn(store_id, fn conn ->
-      query_all(conn, """
-        SELECT store_seq, op, path, value, type, device_id, client_op_id
-        FROM store_ops WHERE store_seq > ? ORDER BY store_seq ASC LIMIT ?
-      """, [since_seq, limit])
+      query_all(
+        conn,
+        """
+          SELECT store_seq, op, path, value, type, device_id, client_op_id
+          FROM store_ops WHERE store_seq > ? ORDER BY store_seq ASC LIMIT ?
+        """,
+        [since_seq, limit]
+      )
       |> Enum.map(&row_to_op/1)
     end) || []
   end
@@ -92,7 +106,11 @@ defmodule Dust.Sync do
     offset = Keyword.get(opts, :offset, 0)
 
     with_read_conn(store_id, fn conn ->
-      query_all(conn, "SELECT path, value, type, seq FROM store_entries ORDER BY path LIMIT ? OFFSET ?", [limit, offset])
+      query_all(
+        conn,
+        "SELECT path, value, type, seq FROM store_entries ORDER BY path LIMIT ? OFFSET ?",
+        [limit, offset]
+      )
       |> Enum.map(fn [path, json, type, seq] ->
         %{path: path, value: json |> Jason.decode!() |> ValueCodec.unwrap(), type: type, seq: seq}
       end)
@@ -104,21 +122,29 @@ defmodule Dust.Sync do
     offset = Keyword.get(opts, :offset, 0)
 
     with_read_conn(store_id, fn conn ->
-      query_all(conn, """
-        SELECT store_seq, op, path, value, type, device_id, client_op_id, inserted_at
-        FROM store_ops ORDER BY store_seq DESC LIMIT ? OFFSET ?
-      """, [limit, offset])
+      query_all(
+        conn,
+        """
+          SELECT store_seq, op, path, value, type, device_id, client_op_id, inserted_at
+          FROM store_ops ORDER BY store_seq DESC LIMIT ? OFFSET ?
+        """,
+        [limit, offset]
+      )
       |> Enum.map(&row_to_op_with_time/1)
     end) || []
   end
 
   def has_file_ref?(store_id, hash) do
     with_read_conn(store_id, fn conn ->
-      case query_one_val(conn, """
-        SELECT 1 FROM store_entries
-        WHERE type = 'file' AND json_extract(value, '$.hash') = ?
-        LIMIT 1
-      """, [hash]) do
+      case query_one_val(
+             conn,
+             """
+               SELECT 1 FROM store_entries
+               WHERE type = 'file' AND json_extract(value, '$.hash') = ?
+               LIMIT 1
+             """,
+             [hash]
+           ) do
         1 -> true
         _ -> false
       end
@@ -127,10 +153,14 @@ defmodule Dust.Sync do
 
   def get_latest_snapshot(store_id) do
     with_read_conn(store_id, fn conn ->
-      case query_one_row(conn, """
-        SELECT snapshot_seq, snapshot_data, inserted_at FROM store_snapshots
-        ORDER BY snapshot_seq DESC LIMIT 1
-      """, []) do
+      case query_one_row(
+             conn,
+             """
+               SELECT snapshot_seq, snapshot_data, inserted_at FROM store_snapshots
+               ORDER BY snapshot_seq DESC LIMIT 1
+             """,
+             []
+           ) do
         [seq, json, inserted_at] ->
           %{snapshot_seq: seq, snapshot_data: Jason.decode!(json), inserted_at: inserted_at}
 
@@ -187,7 +217,16 @@ defmodule Dust.Sync do
     }
   end
 
-  defp row_to_op_with_time([store_seq, op, path, value_json, type, device_id, client_op_id, inserted_at]) do
+  defp row_to_op_with_time([
+         store_seq,
+         op,
+         path,
+         value_json,
+         type,
+         device_id,
+         client_op_id,
+         inserted_at
+       ]) do
     value = if value_json, do: Jason.decode!(value_json)
 
     %{

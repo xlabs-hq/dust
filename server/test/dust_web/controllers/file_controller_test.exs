@@ -33,7 +33,11 @@ defmodule DustWeb.FileControllerTest do
   end
 
   describe "GET /api/files/:hash" do
-    test "downloads a blob with correct content type", %{conn: conn, store: store, rw_token: token} do
+    test "downloads a blob with correct content type", %{
+      conn: conn,
+      store: store,
+      rw_token: token
+    } do
       {:ok, ref} = Files.upload("hello file", filename: "hello.txt", content_type: "text/plain")
 
       Sync.write(store.id, %{

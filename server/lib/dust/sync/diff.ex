@@ -51,9 +51,14 @@ defmodule Dust.Sync.Diff do
 
       _ ->
         case Sync.earliest_op_seq(store_id) do
-          nil -> :ok
-          earliest when from_seq < earliest -> {:error, :compacted, %{earliest_available: earliest}}
-          _ -> :ok
+          nil ->
+            :ok
+
+          earliest when from_seq < earliest ->
+            {:error, :compacted, %{earliest_available: earliest}}
+
+          _ ->
+            :ok
         end
     end
   end

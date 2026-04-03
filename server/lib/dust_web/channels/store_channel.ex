@@ -32,9 +32,18 @@ defmodule DustWeb.StoreChannel do
         |> assign(:last_acked_seq, last_seq)
 
       Logger.metadata(store_id: store.id, device_id: socket.assigns.device_id)
-      :telemetry.execute([:dust, :connection, :join], %{}, %{store_id: store.id, device_id: socket.assigns.device_id})
 
-      {:ok, %{store_seq: current_seq, capver: DustProtocol.current_capver(), capver_min: DustProtocol.min_capver()}, socket}
+      :telemetry.execute([:dust, :connection, :join], %{}, %{
+        store_id: store.id,
+        device_id: socket.assigns.device_id
+      })
+
+      {:ok,
+       %{
+         store_seq: current_seq,
+         capver: DustProtocol.current_capver(),
+         capver_min: DustProtocol.min_capver()
+       }, socket}
     else
       _ -> {:error, %{reason: "unauthorized"}}
     end
@@ -47,7 +56,8 @@ defmodule DustWeb.StoreChannel do
     if Stores.StoreToken.can_write?(store_token) do
       case Dust.RateLimiter.check(store_token.id, :write) do
         {:error, :rate_limited, info} ->
-          {:reply, {:error, %{reason: "rate_limited", retry_after_ms: info.retry_after_ms}}, socket}
+          {:reply, {:error, %{reason: "rate_limited", retry_after_ms: info.retry_after_ms}},
+           socket}
 
         :ok ->
           handle_write_op(params, socket)
@@ -247,7 +257,6 @@ defmodule DustWeb.StoreChannel do
 
     {:noreply, socket}
   end
-
 
   # For live writes, use the materialized_value virtual field (set by Writer)
   defp format_event(op) do

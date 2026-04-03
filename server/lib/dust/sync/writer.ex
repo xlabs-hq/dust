@@ -87,10 +87,22 @@ defmodule Dust.Sync.Writer do
           value_json = encode_value(attrs[:value])
           type = attrs[:type] || ValueCodec.detect_type(attrs[:value])
 
-          exec(db, """
-            INSERT INTO store_ops (store_seq, op, path, value, type, device_id, client_op_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-          """, [next_seq, to_string(attrs.op), attrs.path, value_json, type, attrs.device_id, attrs.client_op_id])
+          exec(
+            db,
+            """
+              INSERT INTO store_ops (store_seq, op, path, value, type, device_id, client_op_id)
+              VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+              next_seq,
+              to_string(attrs.op),
+              attrs.path,
+              value_json,
+              type,
+              attrs.device_id,
+              attrs.client_op_id
+            ]
+          )
 
           # Apply to materialized state
           materialized = apply_to_entries(db, next_seq, attrs)
@@ -133,8 +145,10 @@ defmodule Dust.Sync.Writer do
               {path, %{"value" => Jason.decode!(value), "type" => type}}
             end)
 
-          exec(db, "INSERT INTO store_snapshots (snapshot_seq, snapshot_data) VALUES (?, ?)",
-            [max_seq, Jason.encode!(snapshot_data)])
+          exec(db, "INSERT INTO store_snapshots (snapshot_seq, snapshot_data) VALUES (?, ?)", [
+            max_seq,
+            Jason.encode!(snapshot_data)
+          ])
 
           exec(db, "DELETE FROM store_ops WHERE store_seq <= ?", [max_seq])
           exec(db, "DELETE FROM store_snapshots WHERE snapshot_seq < ?", [max_seq])
@@ -243,10 +257,14 @@ defmodule Dust.Sync.Writer do
   # --- SQLite helpers ---
 
   defp upsert_entry(db, path, value, type, seq) do
-    exec(db, """
-      INSERT OR REPLACE INTO store_entries (path, value, type, seq)
-      VALUES (?, ?, ?, ?)
-    """, [path, Jason.encode!(value), type, seq])
+    exec(
+      db,
+      """
+        INSERT OR REPLACE INTO store_entries (path, value, type, seq)
+        VALUES (?, ?, ?, ?)
+      """,
+      [path, Jason.encode!(value), type, seq]
+    )
   end
 
   defp delete_descendants(db, ancestor_segments) do
@@ -283,7 +301,10 @@ defmodule Dust.Sync.Writer do
   end
 
   defp decrement_file_refs(db, prefix) do
-    rows = query_all(db, "SELECT value FROM store_entries WHERE type = 'file' AND path LIKE ?", ["#{prefix}%"])
+    rows =
+      query_all(db, "SELECT value FROM store_entries WHERE type = 'file' AND path LIKE ?", [
+        "#{prefix}%"
+      ])
 
     Enum.each(rows, fn [json] ->
       case Jason.decode!(json) do

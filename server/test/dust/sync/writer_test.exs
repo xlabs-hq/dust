@@ -116,7 +116,11 @@ defmodule Dust.Sync.WriterTest do
 
       # Parent path should reassemble the map
       entry = Sync.get_entry(store.id, "post")
-      assert entry.value == %{"title" => "Hello", "meta" => %{"author" => "james", "draft" => true}}
+
+      assert entry.value == %{
+               "title" => "Hello",
+               "meta" => %{"author" => "james", "draft" => true}
+             }
     end
 
     test "merge with nested map expands into leaf entries", %{store: store} do

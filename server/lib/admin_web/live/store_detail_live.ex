@@ -69,7 +69,10 @@ defmodule AdminWeb.StoreDetailLive do
   end
 
   defp load_entries(store_id, page) do
-    Dust.Sync.get_entries_page(store_id, limit: @entries_per_page, offset: page * @entries_per_page)
+    Dust.Sync.get_entries_page(store_id,
+      limit: @entries_per_page,
+      offset: page * @entries_per_page
+    )
   end
 
   defp load_ops(store_id, page) do

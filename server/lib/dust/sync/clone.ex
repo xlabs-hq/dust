@@ -51,7 +51,9 @@ defmodule Dust.Sync.Clone do
   end
 
   defp collect_file_hashes(conn) do
-    {:ok, stmt} = Exqlite.Sqlite3.prepare(conn, "SELECT value FROM store_entries WHERE type = 'file'")
+    {:ok, stmt} =
+      Exqlite.Sqlite3.prepare(conn, "SELECT value FROM store_entries WHERE type = 'file'")
+
     hashes = collect_hashes(conn, stmt, [])
     :ok = Exqlite.Sqlite3.release(conn, stmt)
     hashes

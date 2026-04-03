@@ -5,7 +5,10 @@ defmodule Dust.Sync.CloneTest do
 
   setup do
     {:ok, user} = Accounts.create_user(%{email: "clone@example.com"})
-    {:ok, org} = Accounts.create_organization_with_owner(user, %{name: "Clone Co", slug: "cloneco"})
+
+    {:ok, org} =
+      Accounts.create_organization_with_owner(user, %{name: "Clone Co", slug: "cloneco"})
+
     # Upgrade to pro plan so we can create multiple stores
     org |> Ecto.Changeset.change(plan: "pro") |> Dust.Repo.update!()
     org = Dust.Repo.reload!(org)
@@ -15,8 +18,21 @@ defmodule Dust.Sync.CloneTest do
 
   describe "clone_store/3" do
     test "clones store data to a new store", %{org: org, source: source} do
-      Sync.write(source.id, %{op: :set, path: "a", value: "hello", device_id: "d", client_op_id: "o1"})
-      Sync.write(source.id, %{op: :set, path: "b.c", value: 42, device_id: "d", client_op_id: "o2"})
+      Sync.write(source.id, %{
+        op: :set,
+        path: "a",
+        value: "hello",
+        device_id: "d",
+        client_op_id: "o1"
+      })
+
+      Sync.write(source.id, %{
+        op: :set,
+        path: "b.c",
+        value: 42,
+        device_id: "d",
+        client_op_id: "o2"
+      })
 
       assert {:ok, target} = Sync.Clone.clone_store(source, org, "cloned")
 

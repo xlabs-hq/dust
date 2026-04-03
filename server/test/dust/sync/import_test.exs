@@ -5,7 +5,10 @@ defmodule Dust.Sync.ImportTest do
 
   setup do
     {:ok, user} = Accounts.create_user(%{email: "import@example.com"})
-    {:ok, org} = Accounts.create_organization_with_owner(user, %{name: "Test", slug: "importtest"})
+
+    {:ok, org} =
+      Accounts.create_organization_with_owner(user, %{name: "Test", slug: "importtest"})
+
     {:ok, store} = Stores.create_store(org, %{name: "target"})
     %{store: store}
   end

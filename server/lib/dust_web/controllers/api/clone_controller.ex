@@ -14,7 +14,10 @@ defmodule DustWeb.Api.CloneController do
          {:ok, target} <- Sync.Clone.clone_store(source, organization, target_name) do
       conn
       |> put_status(201)
-      |> json(%{ok: true, store: %{id: target.id, name: target.name, full_name: "#{org_slug}/#{target.name}"}})
+      |> json(%{
+        ok: true,
+        store: %{id: target.id, name: target.name, full_name: "#{org_slug}/#{target.name}"}
+      })
     else
       {:error, :org_mismatch} ->
         conn |> put_status(404) |> json(%{error: "not_found"})

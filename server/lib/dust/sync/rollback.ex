@@ -75,11 +75,16 @@ defmodule Dust.Sync.Rollback do
 
   def compute_historical_value(store_id, path, to_seq) do
     with_read_conn(store_id, fn conn ->
-      direct_op = query_one_row(conn, """
-        SELECT store_seq, op, path, value FROM store_ops
-        WHERE path = ? AND store_seq <= ?
-        ORDER BY store_seq DESC LIMIT 1
-      """, [path, to_seq])
+      direct_op =
+        query_one_row(
+          conn,
+          """
+            SELECT store_seq, op, path, value FROM store_ops
+            WHERE path = ? AND store_seq <= ?
+            ORDER BY store_seq DESC LIMIT 1
+          """,
+          [path, to_seq]
+        )
 
       {:ok, segments} = DustProtocol.Path.parse(path)
       ancestor_op = find_most_recent_ancestor_op(conn, segments, to_seq)
@@ -90,10 +95,15 @@ defmodule Dust.Sync.Rollback do
 
   def compute_historical_state(store_id, to_seq) do
     with_read_conn(store_id, fn conn ->
-      rows = query_all(conn, """
-        SELECT store_seq, op, path, value FROM store_ops
-        WHERE store_seq <= ? ORDER BY store_seq ASC
-      """, [to_seq])
+      rows =
+        query_all(
+          conn,
+          """
+            SELECT store_seq, op, path, value FROM store_ops
+            WHERE store_seq <= ? ORDER BY store_seq ASC
+          """,
+          [to_seq]
+        )
 
       Enum.reduce(rows, %{}, fn [_seq, op, path, value_json], state ->
         op = String.to_existing_atom(op)
@@ -131,11 +141,15 @@ defmodule Dust.Sync.Rollback do
 
     placeholders = Enum.map_join(1..length(ancestor_paths), ", ", fn _ -> "?" end)
 
-    query_one_row(conn, """
-      SELECT store_seq, op, path, value FROM store_ops
-      WHERE path IN (#{placeholders}) AND store_seq <= ? AND op IN ('set', 'delete')
-      ORDER BY store_seq DESC LIMIT 1
-    """, ancestor_paths ++ [to_seq])
+    query_one_row(
+      conn,
+      """
+        SELECT store_seq, op, path, value FROM store_ops
+        WHERE path IN (#{placeholders}) AND store_seq <= ? AND op IN ('set', 'delete')
+        ORDER BY store_seq DESC LIMIT 1
+      """,
+      ancestor_paths ++ [to_seq]
+    )
   end
 
   defp find_most_recent_ancestor_op(_, _, _), do: nil
@@ -274,18 +288,24 @@ defmodule Dust.Sync.Rollback do
           StoreDB.close(conn)
         end
 
-      {:error, :not_found} -> nil
-      {:error, _} -> nil
+      {:error, :not_found} ->
+        nil
+
+      {:error, _} ->
+        nil
     end
   end
 
   defp query_one_val(conn, sql, params) do
     {:ok, stmt} = Exqlite.Sqlite3.prepare(conn, sql)
     :ok = Exqlite.Sqlite3.bind(stmt, params)
-    result = case Exqlite.Sqlite3.step(conn, stmt) do
-      {:row, [val]} -> val
-      :done -> nil
-    end
+
+    result =
+      case Exqlite.Sqlite3.step(conn, stmt) do
+        {:row, [val]} -> val
+        :done -> nil
+      end
+
     :ok = Exqlite.Sqlite3.release(conn, stmt)
     result
   end
@@ -293,10 +313,13 @@ defmodule Dust.Sync.Rollback do
   defp query_one_row(conn, sql, params) do
     {:ok, stmt} = Exqlite.Sqlite3.prepare(conn, sql)
     :ok = Exqlite.Sqlite3.bind(stmt, params)
-    result = case Exqlite.Sqlite3.step(conn, stmt) do
-      {:row, row} -> row
-      :done -> nil
-    end
+
+    result =
+      case Exqlite.Sqlite3.step(conn, stmt) do
+        {:row, row} -> row
+        :done -> nil
+      end
+
     :ok = Exqlite.Sqlite3.release(conn, stmt)
     result
   end

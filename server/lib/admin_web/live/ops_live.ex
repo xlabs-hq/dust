@@ -181,10 +181,16 @@ defmodule AdminWeb.OpsLive do
         </tbody>
       </table>
 
-      <div :if={@ops == [] && (!@filters[:store_id] || @filters[:store_id] == "")} class="p-8 text-center text-gray-500">
+      <div
+        :if={@ops == [] && (!@filters[:store_id] || @filters[:store_id] == "")}
+        class="p-8 text-center text-gray-500"
+      >
         Select a store to view ops.
       </div>
-      <div :if={@ops == [] && @filters[:store_id] && @filters[:store_id] != ""} class="p-8 text-center text-gray-500">
+      <div
+        :if={@ops == [] && @filters[:store_id] && @filters[:store_id] != ""}
+        class="p-8 text-center text-gray-500"
+      >
         No ops found.
       </div>
 

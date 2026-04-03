@@ -8,7 +8,10 @@ defmodule DustWeb.StoreSocketTest do
 
   setup do
     {:ok, user} = Accounts.create_user(%{email: "socket_test@example.com"})
-    {:ok, org} = Accounts.create_organization_with_owner(user, %{name: "SocketOrg", slug: "socketorg"})
+
+    {:ok, org} =
+      Accounts.create_organization_with_owner(user, %{name: "SocketOrg", slug: "socketorg"})
+
     {:ok, store} = Stores.create_store(org, %{name: "socketstore"})
 
     {:ok, token} =

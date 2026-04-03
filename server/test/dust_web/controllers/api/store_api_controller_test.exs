@@ -124,10 +124,16 @@ defmodule DustWeb.Api.StoreApiControllerTest do
       assert conn.status == 404
     end
 
-    test "delete scoped to org — cannot delete tokens from other orgs", %{conn: conn, rw_token: token} do
+    test "delete scoped to org — cannot delete tokens from other orgs", %{
+      conn: conn,
+      rw_token: token
+    } do
       # Create another org with its own token
       {:ok, user2} = Accounts.create_user(%{email: "other@example.com"})
-      {:ok, org2} = Accounts.create_organization_with_owner(user2, %{name: "Other", slug: "other"})
+
+      {:ok, org2} =
+        Accounts.create_organization_with_owner(user2, %{name: "Other", slug: "other"})
+
       {:ok, store2} = Stores.create_store(org2, %{name: "s2"})
 
       {:ok, other_token} =

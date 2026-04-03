@@ -72,14 +72,20 @@ defmodule DustWeb.Api.DiffController do
 
   defp parse_optional_int(params, key) do
     case Map.get(params, key) do
-      nil -> nil
+      nil ->
+        nil
+
       val when is_binary(val) ->
         case Integer.parse(val) do
           {int, ""} -> int
           _ -> nil
         end
-      val when is_integer(val) -> val
-      _ -> nil
+
+      val when is_integer(val) ->
+        val
+
+      _ ->
+        nil
     end
   end
 end

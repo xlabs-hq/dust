@@ -41,8 +41,7 @@ defmodule Dust.Billing.Limits do
         if current < max_stores do
           :ok
         else
-          {:error, :limit_exceeded,
-           %{dimension: :stores, current: current, limit: max_stores}}
+          {:error, :limit_exceeded, %{dimension: :stores, current: current, limit: max_stores}}
         end
     end
   end
@@ -55,8 +54,7 @@ defmodule Dust.Billing.Limits do
     if current + new_key_count <= max_keys do
       :ok
     else
-      {:error, :limit_exceeded,
-       %{dimension: :keys, current: current, limit: max_keys}}
+      {:error, :limit_exceeded, %{dimension: :keys, current: current, limit: max_keys}}
     end
   end
 
@@ -68,8 +66,7 @@ defmodule Dust.Billing.Limits do
     if current + new_bytes <= max_bytes do
       :ok
     else
-      {:error, :limit_exceeded,
-       %{dimension: :file_storage, current: current, limit: max_bytes}}
+      {:error, :limit_exceeded, %{dimension: :file_storage, current: current, limit: max_bytes}}
     end
   end
 end

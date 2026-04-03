@@ -211,23 +211,25 @@ defmodule DustWeb.StoreChannelTest do
         })
 
       # First increment: 0 + 5 = 5
-      ref = push(socket, "write", %{
-        "op" => "increment",
-        "path" => "stats.views",
-        "value" => 5,
-        "client_op_id" => "inc_1"
-      })
+      ref =
+        push(socket, "write", %{
+          "op" => "increment",
+          "path" => "stats.views",
+          "value" => 5,
+          "client_op_id" => "inc_1"
+        })
 
       assert_reply ref, :ok, %{store_seq: 1}
       assert_broadcast "event", %{store_seq: 1, path: "stats.views", value: 5}
 
       # Second increment: 5 + 3 = 8 (should broadcast 8, not 3)
-      ref2 = push(socket, "write", %{
-        "op" => "increment",
-        "path" => "stats.views",
-        "value" => 3,
-        "client_op_id" => "inc_2"
-      })
+      ref2 =
+        push(socket, "write", %{
+          "op" => "increment",
+          "path" => "stats.views",
+          "value" => 3,
+          "client_op_id" => "inc_2"
+        })
 
       assert_reply ref2, :ok, %{store_seq: 2}
       assert_broadcast "event", %{store_seq: 2, path: "stats.views", value: 8}
@@ -239,22 +241,24 @@ defmodule DustWeb.StoreChannelTest do
           "last_store_seq" => 0
         })
 
-      ref = push(socket, "write", %{
-        "op" => "add",
-        "path" => "post.tags",
-        "value" => "elixir",
-        "client_op_id" => "add_1"
-      })
+      ref =
+        push(socket, "write", %{
+          "op" => "add",
+          "path" => "post.tags",
+          "value" => "elixir",
+          "client_op_id" => "add_1"
+        })
 
       assert_reply ref, :ok, %{store_seq: 1}
       assert_broadcast "event", %{store_seq: 1, path: "post.tags", value: ["elixir"]}
 
-      ref2 = push(socket, "write", %{
-        "op" => "add",
-        "path" => "post.tags",
-        "value" => "rust",
-        "client_op_id" => "add_2"
-      })
+      ref2 =
+        push(socket, "write", %{
+          "op" => "add",
+          "path" => "post.tags",
+          "value" => "rust",
+          "client_op_id" => "add_2"
+        })
 
       assert_reply ref2, :ok, %{store_seq: 2}
       # Should broadcast full set, not just the new member

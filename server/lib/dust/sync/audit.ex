@@ -20,7 +20,8 @@ defmodule Dust.Sync.Audit do
       limit = opts[:limit] || 50
       offset = opts[:offset] || 0
 
-      where_sql = if where_clauses == [], do: "", else: " AND " <> Enum.join(where_clauses, " AND ")
+      where_sql =
+        if where_clauses == [], do: "", else: " AND " <> Enum.join(where_clauses, " AND ")
 
       sql = """
         SELECT store_seq, op, path, value, type, device_id, client_op_id, inserted_at
@@ -39,7 +40,9 @@ defmodule Dust.Sync.Audit do
   def count_ops(store_id, opts \\ []) do
     with_read_conn(store_id, fn conn ->
       {where_clauses, params} = build_filters(opts)
-      where_sql = if where_clauses == [], do: "", else: " AND " <> Enum.join(where_clauses, " AND ")
+
+      where_sql =
+        if where_clauses == [], do: "", else: " AND " <> Enum.join(where_clauses, " AND ")
 
       sql = "SELECT count(*) FROM store_ops WHERE 1=1#{where_sql}"
       query_one_val(conn, sql, params) || 0
@@ -78,12 +81,18 @@ defmodule Dust.Sync.Audit do
 
   defp maybe_add_device(clauses, params, nil), do: {clauses, params}
   defp maybe_add_device(clauses, params, ""), do: {clauses, params}
-  defp maybe_add_device(clauses, params, device_id), do: {clauses ++ ["device_id = ?"], params ++ [device_id]}
+
+  defp maybe_add_device(clauses, params, device_id),
+    do: {clauses ++ ["device_id = ?"], params ++ [device_id]}
 
   defp maybe_add_op(clauses, params, nil), do: {clauses, params}
   defp maybe_add_op(clauses, params, ""), do: {clauses, params}
-  defp maybe_add_op(clauses, params, op) when is_atom(op), do: {clauses ++ ["op = ?"], params ++ [to_string(op)]}
-  defp maybe_add_op(clauses, params, op) when is_binary(op), do: {clauses ++ ["op = ?"], params ++ [op]}
+
+  defp maybe_add_op(clauses, params, op) when is_atom(op),
+    do: {clauses ++ ["op = ?"], params ++ [to_string(op)]}
+
+  defp maybe_add_op(clauses, params, op) when is_binary(op),
+    do: {clauses ++ ["op = ?"], params ++ [op]}
 
   defp maybe_add_since(clauses, params, nil), do: {clauses, params}
 
@@ -122,17 +131,21 @@ defmodule Dust.Sync.Audit do
           StoreDB.close(conn)
         end
 
-      _ -> nil
+      _ ->
+        nil
     end
   end
 
   defp query_one_val(conn, sql, params) do
     {:ok, stmt} = Exqlite.Sqlite3.prepare(conn, sql)
     :ok = Exqlite.Sqlite3.bind(stmt, params)
-    result = case Exqlite.Sqlite3.step(conn, stmt) do
-      {:row, [val]} -> val
-      :done -> nil
-    end
+
+    result =
+      case Exqlite.Sqlite3.step(conn, stmt) do
+        {:row, [val]} -> val
+        :done -> nil
+      end
+
     :ok = Exqlite.Sqlite3.release(conn, stmt)
     result
   end
