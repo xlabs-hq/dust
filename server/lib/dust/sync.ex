@@ -1,10 +1,61 @@
 defmodule Dust.Sync do
+  import Ecto.Query, only: [from: 2]
   alias Dust.Sync.{Writer, Rollback, StoreDB, ValueCodec}
 
   def write(store_id, op_attrs) do
-    Writer.write(store_id, op_attrs)
+    case Writer.write(store_id, op_attrs) do
+      {:ok, op} ->
+        notify_webhooks(store_id, op)
+        {:ok, op}
+
+      error ->
+        error
+    end
   catch
     :exit, reason -> {:error, {:writer_unavailable, reason}}
+  end
+
+  defp notify_webhooks(store_id, op) do
+    case store_full_name(store_id) do
+      {:ok, full_name} ->
+        value = materialize_webhook_value(op)
+
+        event = %{
+          "event" => "entry.changed",
+          "store" => full_name,
+          "store_seq" => op.store_seq,
+          "op" => to_string(op.op),
+          "path" => op.path,
+          "value" => value,
+          "device_id" => op.device_id,
+          "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601()
+        }
+
+        Dust.Webhooks.enqueue_deliveries(store_id, event)
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp store_full_name(store_id) do
+    case Dust.Repo.one(
+           from(s in Dust.Stores.Store,
+             join: o in assoc(s, :organization),
+             where: s.id == ^store_id,
+             select: {o.slug, s.name}
+           )
+         ) do
+      {org_slug, store_name} -> {:ok, "#{org_slug}/#{store_name}"}
+      nil -> :error
+    end
+  end
+
+  defp materialize_webhook_value(op) do
+    case Map.get(op, :materialized_value) do
+      nil -> ValueCodec.unwrap(op.value)
+      mat -> mat
+    end
   end
 
   def get_entry(store_id, path) do

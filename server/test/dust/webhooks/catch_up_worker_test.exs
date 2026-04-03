@@ -12,24 +12,27 @@ defmodule Dust.Webhooks.CatchUpWorkerTest do
   end
 
   test "enqueues delivery jobs for webhooks behind current_seq", %{store: store} do
-    {:ok, _webhook} = Webhooks.create_webhook(store, %{url: "https://example.com/hook"})
-
-    # Write data to advance the store seq
+    # Write data BEFORE creating webhook so Sync.write doesn't enqueue for it
     Sync.write(store.id, %{op: :set, path: "a", value: "1", device_id: "d", client_op_id: "o1"})
     Sync.write(store.id, %{op: :set, path: "b", value: "2", device_id: "d", client_op_id: "o2"})
 
-    # Run catch-up worker
+    {:ok, _webhook} = Webhooks.create_webhook(store, %{url: "https://example.com/hook"})
+
+    # Run catch-up worker — webhook was created after writes, so it's behind
     :ok = perform_job(Dust.Webhooks.CatchUpWorker, %{})
 
-    # Should have enqueued 2 delivery jobs
+    # Should have enqueued 2 delivery jobs (only from catch-up, not from Sync.write)
     assert length(all_enqueued(worker: Dust.Webhooks.DeliveryWorker)) == 2
   end
 
   test "skips webhooks that are caught up", %{store: store} do
-    {:ok, webhook} = Webhooks.create_webhook(store, %{url: "https://example.com/hook"})
+    # Write data BEFORE creating webhook
     Sync.write(store.id, %{op: :set, path: "a", value: "1", device_id: "d", client_op_id: "o1"})
 
-    # Mark as caught up
+    {:ok, webhook} = Webhooks.create_webhook(store, %{url: "https://example.com/hook"})
+
+    # Record a successful delivery and advance cursor
+    Webhooks.record_delivery(webhook.id, %{store_seq: 1, status_code: 200, response_ms: 10})
     Webhooks.mark_delivered(webhook.id, 1)
 
     :ok = perform_job(Dust.Webhooks.CatchUpWorker, %{})

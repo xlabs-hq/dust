@@ -55,7 +55,7 @@ defmodule DustWeb.Api.WebhookController do
     with :ok <- verify_org(conn, org_slug),
          {:ok, store} <- find_store(conn, store_name),
          :ok <- verify_token_scope(conn, store),
-         :ok <- verify_read_permission(conn),
+         :ok <- verify_write_permission(conn),
          {:ok, webhook} <- Webhooks.get_webhook(webhook_id, store.id) do
       payload =
         %{
@@ -77,13 +77,19 @@ defmodule DustWeb.Api.WebhookController do
              receive_timeout: @ping_timeout,
              retry: false
            ) do
-        {:ok, %{status: status}} ->
+        {:ok, %{status: status}} when status >= 200 and status < 300 ->
           elapsed = System.monotonic_time(:millisecond) - start_time
-          if status >= 200 and status < 300, do: Webhooks.reactivate(webhook.id)
+          Webhooks.reactivate(webhook.id)
           json(conn, %{ok: true, status_code: status, response_ms: elapsed})
 
+        {:ok, %{status: status}} ->
+          elapsed = System.monotonic_time(:millisecond) - start_time
+          json(conn, %{ok: false, status_code: status, response_ms: elapsed})
+
         {:error, reason} ->
-          json(conn, %{ok: false, status_code: nil, error: inspect(reason)})
+          conn
+          |> put_status(502)
+          |> json(%{ok: false, error: inspect(reason)})
       end
     else
       {:error, reason} -> error_response(conn, reason)

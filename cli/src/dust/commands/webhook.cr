@@ -130,9 +130,15 @@ module Dust
 
         if response.status.success?
           result = JSON.parse(response.body)
-          status = result["status_code"]
-          ms = result["response_ms"]
-          puts "Ping OK -- target returned #{status} in #{ms}ms"
+          if result["ok"].as_bool
+            status = result["status_code"]
+            ms = result["response_ms"]
+            puts "Ping OK -- target returned #{status} in #{ms}ms"
+          else
+            status = result["status_code"]?
+            error_detail = status ? "target returned #{status}" : (result["error"]?.try(&.as_s) || "unknown error")
+            Output.error("Ping failed -- #{error_detail}")
+          end
         else
           Output.error("Ping failed (#{response.status_code}): #{response.body}")
         end

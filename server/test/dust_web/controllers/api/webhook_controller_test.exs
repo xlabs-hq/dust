@@ -131,6 +131,17 @@ defmodule DustWeb.Api.WebhookControllerTest do
 
       assert json_response(resp, 404) == %{"error" => "not_found"}
     end
+
+    test "returns 403 for read-only token (Bug 4)", %{conn: conn, ro_token: token, store: store} do
+      {:ok, wh} = Webhooks.create_webhook(store, %{url: "https://example.com/hook"})
+
+      resp =
+        conn
+        |> api_conn(token)
+        |> post("/api/stores/webhookorg/mystore/webhooks/#{wh.id}/ping")
+
+      assert json_response(resp, 403) == %{"error" => "forbidden"}
+    end
   end
 
   describe "GET /api/stores/:org/:store/webhooks/:id/deliveries (deliveries)" do

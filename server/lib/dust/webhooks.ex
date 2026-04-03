@@ -44,9 +44,41 @@ defmodule Dust.Webhooks do
     |> Repo.all()
   end
 
-  def mark_delivered(webhook_id, store_seq) do
-    from(w in Webhook, where: w.id == ^webhook_id and w.last_delivered_seq < ^store_seq)
-    |> Repo.update_all(set: [last_delivered_seq: store_seq, failure_count: 0])
+  def mark_delivered(webhook_id, _store_seq) do
+    advance_contiguous_cursor(webhook_id)
+  end
+
+  defp advance_contiguous_cursor(webhook_id) do
+    webhook = Repo.get!(Webhook, webhook_id)
+    current = webhook.last_delivered_seq
+
+    # Find distinct successful delivery seqs above the current cursor
+    successful_seqs =
+      from(d in DeliveryLog,
+        where:
+          d.webhook_id == ^webhook_id and
+            d.store_seq > ^current and
+            d.status_code >= 200 and d.status_code < 300,
+        distinct: true,
+        order_by: [asc: :store_seq],
+        select: d.store_seq
+      )
+      |> Repo.all()
+
+    # Walk forward to find highest contiguous seq
+    new_cursor =
+      Enum.reduce_while(successful_seqs, current, fn seq, cursor ->
+        if seq == cursor + 1 do
+          {:cont, seq}
+        else
+          {:halt, cursor}
+        end
+      end)
+
+    if new_cursor > current do
+      from(w in Webhook, where: w.id == ^webhook_id and w.last_delivered_seq < ^new_cursor)
+      |> Repo.update_all(set: [last_delivered_seq: new_cursor, failure_count: 0])
+    end
   end
 
   def mark_failed(webhook_id) do
