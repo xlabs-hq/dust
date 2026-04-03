@@ -23,6 +23,7 @@ module Dust
         case command
         when "login"      then Commands::Auth.login(config, rest)
         when "logout"     then Commands::Auth.logout(config, rest)
+        when "init"       then Commands::Init.init(config, rest)
         when "create"     then Commands::Store.create(config, rest)
         when "stores"     then Commands::Store.list(config, rest)
         when "status"     then Commands::Store.status(config, rest)
@@ -62,6 +63,7 @@ module Dust
       Commands:
         login                         Authenticate with Dust
         logout                        Clear credentials
+        init [options]                Zero-config project setup
         create <store>                Create a store
         stores                        List stores
         status [store]                Show sync status

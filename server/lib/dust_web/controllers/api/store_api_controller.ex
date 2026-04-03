@@ -8,6 +8,7 @@ defmodule DustWeb.Api.StoreApiController do
     stores = Stores.list_stores(org)
 
     json(conn, %{
+      org: org.slug,
       stores:
         Enum.map(stores, fn store ->
           %{
