@@ -14,7 +14,10 @@ defmodule DustWeb.Endpoint do
   socket "/ws/sync", DustWeb.StoreSocket,
     websocket: [
       connect_info: [:peer_data],
-      serializer: [{Phoenix.Socket.V2.JSONSerializer, "~> 2.0.0"}]
+      serializer: [
+        {DustWeb.MsgpackSerializer, "~> 2.0.0"},
+        {Phoenix.Socket.V2.JSONSerializer, "~> 2.0.0"}
+      ]
     ]
 
   socket "/live", Phoenix.LiveView.Socket,

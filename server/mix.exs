@@ -69,6 +69,9 @@ defmodule Dust.MixProject do
       # Per-store SQLite
       {:exqlite, "~> 0.27"},
 
+      # MessagePack serialization (WebSocket)
+      {:msgpax, "~> 2.4"},
+
       # Encryption (for token storage)
       {:cloak_ecto, "~> 1.3"},
       {:cloak, "~> 1.1"},
