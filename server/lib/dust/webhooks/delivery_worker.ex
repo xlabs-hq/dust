@@ -1,14 +1,21 @@
 defmodule Dust.Webhooks.DeliveryWorker do
   use Oban.Worker, queue: :webhooks, max_attempts: 5
 
+  alias Dust.Repo
   alias Dust.Webhooks
+  alias Dust.Webhooks.Webhook
 
   @timeout 5_000
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"webhook_id" => webhook_id, "event" => event}}) do
-    webhook = Webhooks.get_webhook!(webhook_id)
+    case Repo.get(Webhook, webhook_id) do
+      nil -> :ok
+      webhook -> deliver(webhook, webhook_id, event)
+    end
+  end
 
+  defp deliver(webhook, webhook_id, event) do
     if not webhook.active do
       :ok
     else

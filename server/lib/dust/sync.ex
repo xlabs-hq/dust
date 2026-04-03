@@ -78,12 +78,12 @@ defmodule Dust.Sync do
       query_all(
         conn,
         """
-          SELECT store_seq, op, path, value, type, device_id, client_op_id
+          SELECT store_seq, op, path, value, type, device_id, client_op_id, inserted_at
           FROM store_ops WHERE store_seq > ? ORDER BY store_seq ASC LIMIT ?
         """,
         [since_seq, limit]
       )
-      |> Enum.map(&row_to_op/1)
+      |> Enum.map(&row_to_op_with_time/1)
     end) || []
   end
 
@@ -201,20 +201,6 @@ defmodule Dust.Sync do
       {:error, _} ->
         nil
     end
-  end
-
-  defp row_to_op([store_seq, op, path, value_json, type, device_id, client_op_id]) do
-    value = if value_json, do: Jason.decode!(value_json)
-
-    %{
-      store_seq: store_seq,
-      op: String.to_existing_atom(op),
-      path: path,
-      value: value,
-      type: type,
-      device_id: device_id,
-      client_op_id: client_op_id
-    }
   end
 
   defp row_to_op_with_time([

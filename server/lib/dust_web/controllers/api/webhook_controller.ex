@@ -80,24 +80,26 @@ defmodule DustWeb.Api.WebhookController do
         {:ok, %{status: status}} ->
           elapsed = System.monotonic_time(:millisecond) - start_time
           if status >= 200 and status < 300, do: Webhooks.reactivate(webhook.id)
-          json(conn, %{status: status, response_ms: elapsed})
+          json(conn, %{ok: true, status_code: status, response_ms: elapsed})
 
         {:error, reason} ->
-          json(conn, %{status: nil, error: inspect(reason)})
+          json(conn, %{ok: false, status_code: nil, error: inspect(reason)})
       end
     else
       {:error, reason} -> error_response(conn, reason)
     end
   end
 
-  def deliveries(conn, %{"org" => org_slug, "store" => store_name, "id" => webhook_id}) do
+  def deliveries(conn, %{"org" => org_slug, "store" => store_name, "id" => webhook_id} = params) do
     with :ok <- verify_org(conn, org_slug),
          {:ok, store} <- find_store(conn, store_name),
          :ok <- verify_token_scope(conn, store),
          :ok <- verify_read_permission(conn),
          {:ok, _webhook} <- Webhooks.get_webhook(webhook_id, store.id) do
+      limit = min(parse_int(params["limit"], 20), 100)
+
       deliveries =
-        Webhooks.list_deliveries(webhook_id)
+        Webhooks.list_deliveries(webhook_id, limit: limit)
         |> Enum.map(&serialize_delivery/1)
 
       json(conn, %{deliveries: deliveries})
@@ -182,6 +184,16 @@ defmodule DustWeb.Api.WebhookController do
   end
 
   # --- Error responses ---
+
+  defp parse_int(nil, default), do: default
+  defp parse_int(val, default) when is_binary(val) do
+    case Integer.parse(val) do
+      {n, _} when n > 0 -> n
+      _ -> default
+    end
+  end
+  defp parse_int(val, _default) when is_integer(val) and val > 0, do: val
+  defp parse_int(_, default), do: default
 
   defp error_response(conn, :not_found),
     do: conn |> put_status(404) |> json(%{error: "not_found"})

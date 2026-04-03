@@ -32,8 +32,10 @@ defmodule Dust.Webhooks do
         {:error, :not_found}
 
       webhook ->
-        Repo.delete(webhook)
-        :ok
+        case Repo.delete(webhook) do
+          {:ok, _} -> :ok
+          {:error, _} = err -> err
+        end
     end
   end
 
@@ -43,16 +45,24 @@ defmodule Dust.Webhooks do
   end
 
   def mark_delivered(webhook_id, store_seq) do
-    from(w in Webhook, where: w.id == ^webhook_id)
+    from(w in Webhook, where: w.id == ^webhook_id and w.last_delivered_seq < ^store_seq)
     |> Repo.update_all(set: [last_delivered_seq: store_seq, failure_count: 0])
   end
 
   def mark_failed(webhook_id) do
-    from(w in Webhook, where: w.id == ^webhook_id)
-    |> Repo.update_all(inc: [failure_count: 1])
+    now = DateTime.utc_now() |> DateTime.truncate(:microsecond)
 
-    from(w in Webhook, where: w.id == ^webhook_id and w.failure_count >= 5)
-    |> Repo.update_all(set: [active: false])
+    from(w in Webhook,
+      where: w.id == ^webhook_id,
+      update: [
+        set: [
+          failure_count: fragment("? + 1", w.failure_count),
+          active: fragment("CASE WHEN ? + 1 >= 5 THEN false ELSE ? END", w.failure_count, w.active),
+          updated_at: ^now
+        ]
+      ]
+    )
+    |> Repo.update_all([])
   end
 
   def reactivate(webhook_id) do

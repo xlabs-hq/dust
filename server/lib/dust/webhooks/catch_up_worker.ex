@@ -31,7 +31,7 @@ defmodule Dust.Webhooks.CatchUpWorker do
       "path" => op.path,
       "value" => op.value,
       "device_id" => op.device_id,
-      "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601()
+      "timestamp" => op[:inserted_at] || DateTime.utc_now() |> DateTime.to_iso8601()
     }
   end
 end
