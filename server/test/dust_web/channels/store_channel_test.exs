@@ -150,6 +150,23 @@ defmodule DustWeb.StoreChannelTest do
 
       assert_reply ref, :error, %{reason: "empty_segment"}
     end
+
+    test "put_file enforces file storage billing check", %{joined_socket: socket} do
+      # Small file should succeed on free plan (100MB limit)
+      small_content = "hello"
+
+      ref =
+        push(socket, "put_file", %{
+          "path" => "docs.small",
+          "content" => Base.encode64(small_content),
+          "filename" => "small.txt",
+          "content_type" => "text/plain",
+          "client_op_id" => "file_billing"
+        })
+
+      # The billing check runs and passes for small files
+      assert_reply ref, :ok, _
+    end
   end
 
   describe "write" do
@@ -275,6 +292,164 @@ defmodule DustWeb.StoreChannelTest do
 
       ref = push(socket, "ack_seq", %{"seq" => 42})
       assert_reply ref, :ok
+    end
+  end
+
+  describe "catch-up materialized values" do
+    test "catch-up sends correct materialized values for sequential increments", %{
+      socket: socket,
+      store: store
+    } do
+      Sync.write(store.id, %{
+        op: :increment,
+        path: "counter",
+        value: 5,
+        device_id: "d",
+        client_op_id: "i1"
+      })
+
+      Sync.write(store.id, %{
+        op: :increment,
+        path: "counter",
+        value: 3,
+        device_id: "d",
+        client_op_id: "i2"
+      })
+
+      {:ok, _, _socket} =
+        subscribe_and_join(socket, DustWeb.StoreChannel, "store:#{store.id}", %{
+          "last_store_seq" => 0
+        })
+
+      # First increment should send 5 (not 8)
+      assert_push "event", %{store_seq: 1, path: "counter", value: 5}
+      # Second increment should send 8
+      assert_push "event", %{store_seq: 2, path: "counter", value: 8}
+    end
+
+    test "catch-up sends correct materialized values for add ops", %{
+      socket: socket,
+      store: store
+    } do
+      Sync.write(store.id, %{
+        op: :add,
+        path: "tags",
+        value: "elixir",
+        device_id: "d",
+        client_op_id: "a1"
+      })
+
+      Sync.write(store.id, %{
+        op: :add,
+        path: "tags",
+        value: "rust",
+        device_id: "d",
+        client_op_id: "a2"
+      })
+
+      {:ok, _, _socket} =
+        subscribe_and_join(socket, DustWeb.StoreChannel, "store:#{store.id}", %{
+          "last_store_seq" => 0
+        })
+
+      # First add should send ["elixir"] (not ["elixir", "rust"])
+      assert_push "event", %{store_seq: 1, path: "tags", value: ["elixir"]}
+      # Second add should send ["elixir", "rust"] (order may vary)
+      assert_push "event", %{store_seq: 2, path: "tags", value: value}
+      assert "elixir" in value
+      assert "rust" in value
+      assert length(value) == 2
+    end
+  end
+
+  describe "billing key count checks" do
+    test "set of map correctly counts only new leaf entries", %{socket: socket, store: store} do
+      # Fill store to 998 entries
+      for i <- 1..998 do
+        Sync.write(store.id, %{
+          op: :set,
+          path: "k#{i}",
+          value: "v",
+          device_id: "d",
+          client_op_id: "fill_#{i}"
+        })
+      end
+
+      # Create data.x → 999 entries total
+      Sync.write(store.id, %{
+        op: :set,
+        path: "data.x",
+        value: "existing",
+        device_id: "d",
+        client_op_id: "setup"
+      })
+
+      {:ok, _, socket} =
+        subscribe_and_join(socket, DustWeb.StoreChannel, "store:#{store.id}", %{
+          "last_store_seq" => 999
+        })
+
+      assert_push "catch_up_complete", _
+
+      # Set data = {x: updated, y: new} — 2 leaves, but only 1 is new (data.y)
+      # Bug: counts 2 new → 999 + 2 = 1001 → rejected
+      # Fix: counts 1 new → 999 + 1 = 1000 → allowed
+      ref =
+        push(socket, "write", %{
+          "op" => "set",
+          "path" => "data",
+          "value" => %{"x" => "updated", "y" => "new"},
+          "client_op_id" => "map_set"
+        })
+
+      assert_reply ref, :ok, _
+    end
+
+    test "merge counts keys using full path prefix", %{socket: socket, store: store} do
+      # Fill store to 998 entries
+      for i <- 1..998 do
+        Sync.write(store.id, %{
+          op: :set,
+          path: "k#{i}",
+          value: "v",
+          device_id: "d",
+          client_op_id: "fill_#{i}"
+        })
+      end
+
+      # Create settings.theme → 999 entries total
+      Sync.write(store.id, %{
+        op: :set,
+        path: "settings.theme",
+        value: "dark",
+        device_id: "d",
+        client_op_id: "setup"
+      })
+
+      {:ok, _, socket} =
+        subscribe_and_join(socket, DustWeb.StoreChannel, "store:#{store.id}", %{
+          "last_store_seq" => 999
+        })
+
+      assert_push "catch_up_complete", _
+
+      # Merge {theme: light, lang: en} into "settings"
+      # Should check "settings.theme" (exists) and "settings.lang" (new)
+      # Bug: checks just "theme" (not found → counts as new) and "lang" (new) = 2 new
+      # Fix: checks "settings.theme" (found → not new) and "settings.lang" (new) = 1 new
+      # 999 + 1 = 1000 → allowed
+      ref =
+        push(socket, "write", %{
+          "op" => "merge",
+          "path" => "settings",
+          "value" => %{"theme" => "light", "lang" => "en"},
+          "client_op_id" => "merge_op"
+        })
+
+      assert_reply ref, :ok, _
+
+      assert Sync.get_entry(store.id, "settings.theme").value == "light"
+      assert Sync.get_entry(store.id, "settings.lang").value == "en"
     end
   end
 

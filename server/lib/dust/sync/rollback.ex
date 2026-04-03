@@ -63,49 +63,95 @@ defmodule Dust.Sync.Rollback do
 
   def validate_retention(store_id, to_seq) do
     with_read_conn(store_id, fn conn ->
-      earliest = query_one_val(conn, "SELECT min(store_seq) FROM store_ops", [])
+      earliest_op = query_one_val(conn, "SELECT min(store_seq) FROM store_ops", [])
+      latest_snapshot = query_one_val(conn, "SELECT max(snapshot_seq) FROM store_snapshots", [])
 
       cond do
-        is_nil(earliest) -> {:error, :no_ops}
-        to_seq < earliest -> {:error, :beyond_retention}
-        true -> :ok
+        # If to_seq is before the snapshot, we can't reconstruct
+        latest_snapshot != nil and to_seq < latest_snapshot ->
+          {:error, :beyond_retention}
+
+        # Snapshot covers this seq
+        latest_snapshot != nil and to_seq >= latest_snapshot ->
+          :ok
+
+        # No snapshot, no ops = empty store
+        earliest_op == nil ->
+          {:error, :no_ops}
+
+        # No snapshot, seq before earliest op
+        to_seq < earliest_op ->
+          {:error, :beyond_retention}
+
+        true ->
+          :ok
       end
     end) || {:error, :no_ops}
   end
 
   def compute_historical_value(store_id, path, to_seq) do
-    with_read_conn(store_id, fn conn ->
-      direct_op =
-        query_one_row(
-          conn,
-          """
-            SELECT store_seq, op, path, value FROM store_ops
-            WHERE path = ? AND store_seq <= ?
-            ORDER BY store_seq DESC LIMIT 1
-          """,
-          [path, to_seq]
-        )
+    state = compute_historical_state(store_id, to_seq)
+    state = state || %{}
 
-      {:ok, segments} = DustProtocol.Path.parse(path)
-      ancestor_op = find_most_recent_ancestor_op(conn, segments, to_seq)
+    case Map.get(state, path) do
+      nil ->
+        # Path may be a map root whose leaves are expanded in state.
+        # Reconstruct the map from descendant paths.
+        assemble_subtree_from_state(state, path)
 
-      resolve_historical_value(direct_op, ancestor_op, segments)
-    end)
+      value ->
+        value
+    end
+  end
+
+  defp assemble_subtree_from_state(state, path) do
+    prefix = path <> "."
+
+    descendants =
+      state
+      |> Enum.filter(fn {k, _v} -> String.starts_with?(k, prefix) end)
+
+    case descendants do
+      [] ->
+        nil
+
+      entries ->
+        map =
+          Enum.reduce(entries, %{}, fn {entry_path, wrapped_value}, acc ->
+            relative = String.replace_prefix(entry_path, prefix, "")
+            keys = String.split(relative, ".")
+            value = ValueCodec.unwrap(wrapped_value)
+            put_nested(acc, keys, value)
+          end)
+
+        ValueCodec.wrap(map)
+    end
+  end
+
+  defp put_nested(map, [key], value), do: Map.put(map, key, value)
+
+  defp put_nested(map, [key | rest], value) do
+    child = Map.get(map, key, %{})
+    Map.put(map, key, put_nested(child, rest, value))
   end
 
   def compute_historical_state(store_id, to_seq) do
     with_read_conn(store_id, fn conn ->
+      # Seed from snapshot if available
+      {seed_state, start_seq} = load_snapshot_seed(conn, to_seq)
+
+      # Replay ops from start_seq to to_seq
       rows =
         query_all(
           conn,
           """
             SELECT store_seq, op, path, value FROM store_ops
-            WHERE store_seq <= ? ORDER BY store_seq ASC
+            WHERE store_seq > ? AND store_seq <= ? ORDER BY store_seq ASC
           """,
-          [to_seq]
+          [start_seq, to_seq]
         )
 
-      Enum.reduce(rows, %{}, fn [_seq, op, path, value_json], state ->
+      Enum.reduce(rows, seed_state, fn [_seq, op, path, value_json], state ->
         op = String.to_existing_atom(op)
         value = if value_json, do: Jason.decode!(value_json)
         apply_op_to_state(state, %{op: op, path: path, value: value})
@@ -114,6 +160,26 @@ defmodule Dust.Sync.Rollback do
   end
 
   # --- Private ---
+
+  defp load_snapshot_seed(conn, to_seq) do
+    case query_one_row(conn, """
+      SELECT snapshot_seq, snapshot_data FROM store_snapshots
+      WHERE snapshot_seq <= ? ORDER BY snapshot_seq DESC LIMIT 1
+    """, [to_seq]) do
+      [seq, json] ->
+        snapshot = Jason.decode!(json)
+
+        state =
+          Map.new(snapshot, fn {path, %{"value" => value, "type" => _type}} ->
+            {path, value}
+          end)
+
+        {state, seq}
+
+      nil ->
+        {%{}, 0}
+    end
+  end
 
   defp resolve_historical_value(nil, nil, _), do: nil
 

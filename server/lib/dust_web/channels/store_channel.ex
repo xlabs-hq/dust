@@ -118,8 +118,16 @@ defmodule DustWeb.StoreChannel do
 
     with true <- Stores.StoreToken.can_write?(store_token),
          :ok <- Dust.RateLimiter.check(store_token.id, :write) do
+      org = store_token.store.organization
+
       with {:ok, _} <- validate_path(path),
-           {:ok, content} <- Base.decode64(base64_content) do
+           {:ok, content} <- Base.decode64(base64_content),
+           :ok <-
+             Dust.Billing.Limits.check_file_storage(
+               socket.assigns.store_id,
+               byte_size(content),
+               org
+             ) do
         filename = params["filename"]
         content_type = params["content_type"] || "application/octet-stream"
 
@@ -144,6 +152,9 @@ defmodule DustWeb.StoreChannel do
       else
         :error ->
           {:reply, {:error, %{reason: "invalid_base64"}}, socket}
+
+        {:error, :limit_exceeded, info} ->
+          {:reply, {:error, %{reason: "limit_exceeded"} |> Map.merge(info)}, socket}
 
         {:error, reason} ->
           {:reply, {:error, %{reason: to_string(reason)}}, socket}
@@ -236,15 +247,28 @@ defmodule DustWeb.StoreChannel do
   defp do_catch_up(store_id, last_seq, socket) do
     ops = Sync.get_ops_since(store_id, last_seq)
 
-    last_sent_seq =
+    {last_sent_seq, _running_state} =
       if ops == [] do
-        last_seq
+        {last_seq, %{}}
       else
-        Enum.each(ops, fn op ->
-          push(socket, "event", format_catch_up_event(store_id, op))
-        end)
+        # Seed running state for paths that have increment/add/remove ops
+        running_state = seed_running_state(store_id, last_seq, ops)
 
-        List.last(ops).store_seq
+        Enum.reduce(ops, {last_seq, running_state}, fn op, {_, state} ->
+          {value, state} = materialize_catch_up_value(op, state)
+
+          event = %{
+            store_seq: op.store_seq,
+            op: op.op,
+            path: op.path,
+            value: value,
+            device_id: op.device_id,
+            client_op_id: op.client_op_id
+          }
+
+          push(socket, "event", event)
+          {op.store_seq, state}
+        end)
       end
 
     # If we got a full batch, there may be more ops to send
@@ -276,27 +300,51 @@ defmodule DustWeb.StoreChannel do
     }
   end
 
-  # For catch-up events (historical ops from DB), read materialized values
-  # for counter/set ops so clients get the correct state, not raw deltas.
-  defp format_catch_up_event(store_id, op) when op.op in [:increment, :add, :remove] do
-    materialized =
-      case Sync.get_entry(store_id, op.path) do
-        nil -> ValueCodec.unwrap(op.value)
-        entry -> entry.value
-      end
+  # Seed running state for paths that need incremental materialization.
+  # For the first occurrence of each path with increment/add/remove in the batch,
+  # we need the value at last_seq so we can replay deltas forward.
+  defp seed_running_state(store_id, last_seq, ops) do
+    needs_seed =
+      ops
+      |> Enum.filter(fn op -> op.op in [:increment, :add, :remove] end)
+      |> Enum.map(& &1.path)
+      |> Enum.uniq()
 
-    %{
-      store_seq: op.store_seq,
-      op: op.op,
-      path: op.path,
-      value: materialized,
-      device_id: op.device_id,
-      client_op_id: op.client_op_id
-    }
+    if needs_seed == [] do
+      %{}
+    else
+      state = Rollback.compute_historical_state(store_id, last_seq)
+
+      (state || %{})
+      |> Map.take(needs_seed)
+      |> Enum.into(%{}, fn {path, wrapped} -> {path, ValueCodec.unwrap(wrapped)} end)
+    end
   end
 
-  defp format_catch_up_event(_store_id, op) do
-    format_event(op)
+  defp materialize_catch_up_value(%{op: :increment} = op, state) do
+    current = Map.get(state, op.path, 0)
+    delta = ValueCodec.unwrap(op.value) || 0
+    new_value = current + delta
+    {new_value, Map.put(state, op.path, new_value)}
+  end
+
+  defp materialize_catch_up_value(%{op: :add} = op, state) do
+    current_set = Map.get(state, op.path, [])
+    member = ValueCodec.unwrap(op.value)
+    new_set = Enum.uniq([member | current_set])
+    {new_set, Map.put(state, op.path, new_set)}
+  end
+
+  defp materialize_catch_up_value(%{op: :remove} = op, state) do
+    current_set = Map.get(state, op.path, [])
+    member = ValueCodec.unwrap(op.value)
+    new_set = List.delete(current_set, member)
+    {new_set, Map.put(state, op.path, new_set)}
+  end
+
+  defp materialize_catch_up_value(op, state) do
+    value = ValueCodec.unwrap(op.value)
+    {value, state}
   end
 
   defp build_status(store_id) do
@@ -384,7 +432,11 @@ defmodule DustWeb.StoreChannel do
     # Count how many new leaf entries this set would create
     new_keys =
       if is_map(value) and not ValueCodec.typed_value?(value) do
-        length(ValueCodec.flatten_map(path, value))
+        leaves = ValueCodec.flatten_map(path, value)
+
+        Enum.count(leaves, fn {leaf_path, _} ->
+          Sync.get_entry(store_id, leaf_path) == nil
+        end)
       else
         if Sync.get_entry(store_id, path), do: 0, else: 1
       end
@@ -396,11 +448,12 @@ defmodule DustWeb.StoreChannel do
     end
   end
 
-  defp check_billing_limits(:merge, %{"value" => value}, store_id, org) when is_map(value) do
-    # Count net-new paths from merge
+  defp check_billing_limits(:merge, %{"path" => path, "value" => value}, store_id, org)
+       when is_map(value) do
+    # Count net-new paths from merge using full path prefix
     new_keys =
       Enum.count(value, fn {key, _v} ->
-        Sync.get_entry(store_id, key) == nil
+        Sync.get_entry(store_id, "#{path}.#{key}") == nil
       end)
 
     if new_keys > 0 do

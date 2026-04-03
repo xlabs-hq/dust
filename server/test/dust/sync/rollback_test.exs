@@ -299,5 +299,94 @@ defmodule Dust.Sync.RollbackTest do
     test "returns error for empty store", %{store: store} do
       assert {:error, :no_ops} = Rollback.validate_retention(store.id, 1)
     end
+
+    test "returns :ok for seq at or after snapshot after compaction", %{store: store} do
+      write!(store.id, :set, "a", "v1")
+      write!(store.id, :set, "b", "v2")
+      # Compact — creates snapshot at seq 2, deletes ops 1-2
+      Dust.Sync.Writer.compact(store.id)
+
+      assert :ok = Rollback.validate_retention(store.id, 2)
+    end
+
+    test "returns error for seq before snapshot after compaction", %{store: store} do
+      write!(store.id, :set, "a", "v1")
+      write!(store.id, :set, "b", "v2")
+      write!(store.id, :set, "c", "v3")
+      Dust.Sync.Writer.compact(store.id)
+
+      # Snapshot is at seq 3, so seq 1 is not reachable
+      assert {:error, :beyond_retention} = Rollback.validate_retention(store.id, 1)
+    end
+  end
+
+  describe "rollback after compaction" do
+    test "rollback_path works after compaction", %{store: store} do
+      write!(store.id, :set, "a", "original")
+      write!(store.id, :set, "b", "keep")
+      # seq 1: a=original, seq 2: b=keep
+
+      # Compact — creates snapshot at seq 2, deletes ops 1-2
+      Dust.Sync.Writer.compact(store.id)
+
+      # Write more data after compaction
+      write!(store.id, :set, "a", "changed")
+      # seq 3: a=changed
+
+      # Rollback to seq 2 (in the compacted range, but snapshot covers it)
+      {:ok, _} = Rollback.rollback_path(store.id, "a", 2)
+
+      # a should be back to "original"
+      assert Sync.get_entry(store.id, "a").value == "original"
+      # b should still be "keep"
+      assert Sync.get_entry(store.id, "b").value == "keep"
+    end
+
+    test "store-level rollback works after compaction", %{store: store} do
+      write!(store.id, :set, "x", "v1")
+      write!(store.id, :set, "y", "v2")
+
+      Dust.Sync.Writer.compact(store.id)
+
+      write!(store.id, :set, "x", "v3")
+      write!(store.id, :set, "z", "v4")
+
+      {:ok, count} = Rollback.rollback_store(store.id, 2)
+
+      assert count >= 1
+      assert Sync.get_entry(store.id, "x").value == "v1"
+      assert Sync.get_entry(store.id, "y").value == "v2"
+      assert Sync.get_entry(store.id, "z") == nil
+    end
+
+    test "compute_historical_state seeds from snapshot", %{store: store} do
+      write!(store.id, :set, "a", "v1")
+      write!(store.id, :set, "b", "v2")
+
+      Dust.Sync.Writer.compact(store.id)
+
+      write!(store.id, :set, "a", "v3")
+
+      # State at seq 2 should come from the snapshot
+      state = Rollback.compute_historical_state(store.id, 2)
+
+      assert state == %{
+               "a" => %{"_scalar" => "v1"},
+               "b" => %{"_scalar" => "v2"}
+             }
+    end
+
+    test "compute_historical_value falls back to snapshot", %{store: store} do
+      write!(store.id, :set, "a", "from_snapshot")
+      write!(store.id, :set, "b", "other")
+
+      Dust.Sync.Writer.compact(store.id)
+
+      write!(store.id, :set, "c", "new")
+
+      # Value at seq 2 for "a" should come from the snapshot
+      value = Rollback.compute_historical_value(store.id, "a", 2)
+      assert value == %{"_scalar" => "from_snapshot"}
+    end
   end
 end

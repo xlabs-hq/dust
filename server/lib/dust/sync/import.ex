@@ -26,13 +26,20 @@ defmodule Dust.Sync.Import do
     |> Enum.chunk_every(@batch_size)
     |> Enum.each(fn batch ->
       Enum.each(batch, fn entry ->
-        Sync.write(store_id, %{
-          op: :set,
+        op = if entry["type"] == "file", do: :put_file, else: :set
+
+        attrs = %{
+          op: op,
           path: entry["path"],
           value: entry["value"],
           device_id: device_id,
           client_op_id: "import:#{entry["path"]}"
-        })
+        }
+
+        # Pass through the type from the export so Writer preserves it
+        attrs = if entry["type"], do: Map.put(attrs, :type, entry["type"]), else: attrs
+
+        Sync.write(store_id, attrs)
       end)
     end)
 
