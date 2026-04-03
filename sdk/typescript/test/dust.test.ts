@@ -250,6 +250,62 @@ describe('Dust', () => {
       expect(dust.catchUpComplete.size).toBe(0)
     })
   })
+
+  describe('reconnect lifecycle', () => {
+    it('rejoinAllStores clears join state and re-joins', () => {
+      const dust = createDust() as any
+      // Simulate a store that was previously joined
+      dust.joinedStores.set('test/store', Promise.resolve())
+      dust.catchUpComplete.set('test/store', true)
+      dust.registeredHandlers.add('store:test/store')
+
+      // Track join attempts via ensureJoined
+      let joinAttempts = 0
+      const originalDoJoin = dust.doJoin.bind(dust)
+      dust.doJoin = async (store: string) => {
+        joinAttempts++
+        // Don't actually connect — just track the call
+        dust.catchUpComplete.set(store, true)
+      }
+
+      dust.rejoinAllStores()
+
+      // joinedStores should have a new promise (not the old resolved one)
+      expect(dust.joinedStores.has('test/store')).toBe(true)
+      expect(joinAttempts).toBe(1)
+    })
+
+    it('ensureJoined clears failed promise on rejection', async () => {
+      const dust = createDust() as any
+      let callCount = 0
+
+      dust.doJoin = async () => {
+        callCount++
+        if (callCount === 1) throw new Error('connection refused')
+        dust.catchUpComplete.set('test/store', true)
+      }
+
+      // First attempt fails
+      await expect(dust.ensureJoined('test/store')).rejects.toThrow('connection refused')
+
+      // joinedStores should be cleared
+      expect(dust.joinedStores.has('test/store')).toBe(false)
+
+      // Second attempt should retry (not return cached failure)
+      await dust.ensureJoined('test/store')
+      expect(callCount).toBe(2)
+    })
+
+    it('on() does not throw unhandled rejection on join failure', () => {
+      const dust = createDust() as any
+      dust.doJoin = async () => { throw new Error('unavailable') }
+
+      // This should NOT throw — the error is caught internally
+      expect(() => {
+        dust.on('test/store', '**', () => {})
+      }).not.toThrow()
+    })
+  })
 })
 
 describe('inferType', () => {

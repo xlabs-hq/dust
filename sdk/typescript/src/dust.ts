@@ -18,6 +18,11 @@ export class Dust {
   constructor(opts: DustOptions) {
     this.connection = new Connection(opts)
     this.cache = new MemoryCache()
+
+    // On reconnect, clear join state so stores get re-joined
+    this.connection.onReconnect(() => {
+      this.rejoinAllStores()
+    })
   }
 
   // -- Public API --
@@ -61,8 +66,10 @@ export class Dust {
     const sub: Subscription = { pattern, callback }
     subs.add(sub)
 
-    // Ensure joined (fire and forget — events will start flowing)
-    this.ensureJoined(store)
+    // Ensure joined — catch errors to prevent unhandled rejections
+    this.ensureJoined(store).catch(() => {
+      // Join failed — will be retried on next operation or reconnect
+    })
 
     // Return unsubscribe function
     return () => { subs!.delete(sub) }
@@ -112,7 +119,11 @@ export class Dust {
     const existing = this.joinedStores.get(store)
     if (existing) return existing
 
-    const promise = this.doJoin(store)
+    const promise = this.doJoin(store).catch((err) => {
+      // Clear the failed promise so the next call retries
+      this.joinedStores.delete(store)
+      throw err
+    })
     this.joinedStores.set(store, promise)
     return promise
   }
@@ -122,14 +133,39 @@ export class Dust {
     const lastSeq = this.cache.lastSeq(store)
 
     // Register event handler BEFORE joining to catch catch-up events
-    this.connection.onEvent(topic, (event: string, payload: unknown) => {
-      this.handleChannelEvent(store, event, payload)
-    })
+    // (idempotent — Connection deduplicates handlers per topic)
+    this.registerEventHandler(store)
 
+    this.catchUpComplete.delete(store)
     await this.connection.join(store, lastSeq)
 
     // Wait for catch-up to complete (with timeout)
     await this.waitForCatchUp(store)
+  }
+
+  private registeredHandlers = new Set<string>()
+
+  private registerEventHandler(store: string): void {
+    const topic = `store:${store}`
+    if (this.registeredHandlers.has(topic)) return
+    this.registeredHandlers.add(topic)
+    this.connection.onEvent(topic, (event: string, payload: unknown) => {
+      this.handleChannelEvent(store, event, payload)
+    })
+  }
+
+  private rejoinAllStores(): void {
+    // Collect stores that were previously joined
+    const stores = Array.from(this.joinedStores.keys())
+    // Clear all join state
+    this.joinedStores.clear()
+    this.catchUpComplete.clear()
+    // Re-join each store (event handlers are already registered)
+    for (const store of stores) {
+      this.ensureJoined(store).catch(() => {
+        // Will retry on next operation
+      })
+    }
   }
 
   private waitForCatchUp(store: string): Promise<void> {

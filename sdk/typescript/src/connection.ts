@@ -263,15 +263,22 @@ export class Connection {
     }
   }
 
+  private onReconnectCallback: (() => void) | null = null
+
+  /** Register a callback to be called after a successful reconnect. */
+  onReconnect(callback: () => void): void {
+    this.onReconnectCallback = callback
+  }
+
   private scheduleReconnect(): void {
     if (this.closed) return
     const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempt), 30_000)
     this.reconnectAttempt++
     this.reconnectTimer = setTimeout(async () => {
       try {
-        await this.doConnect()
-        // Rejoin all channels
-        // (The Dust class will handle rejoining via its ensureJoined logic)
+        // Use connect() (not doConnect) to respect the connectPromise guard
+        await this.connect()
+        this.onReconnectCallback?.()
       } catch {
         this.scheduleReconnect()
       }
