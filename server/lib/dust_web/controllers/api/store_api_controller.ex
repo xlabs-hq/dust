@@ -15,20 +15,24 @@ defmodule DustWeb.Api.StoreApiController do
             name: store.name,
             full_name: "#{org.slug}/#{store.name}",
             status: store.status,
-            inserted_at: store.inserted_at
+            inserted_at: store.inserted_at,
+            expires_at: store.expires_at
           }
         end)
     })
   end
 
-  def create(conn, %{"name" => name}) do
+  def create(conn, %{"name" => name} = params) do
     org = conn.assigns.organization
     store_token = conn.assigns.store_token
 
     if not Stores.StoreToken.can_write?(store_token) do
       conn |> put_status(403) |> json(%{error: "forbidden"})
     else
-      case Stores.create_store(org, %{name: name}) do
+      attrs = %{name: name}
+      attrs = if params["ttl"], do: Map.put(attrs, :ttl, params["ttl"]), else: attrs
+
+      case Stores.create_store(org, attrs) do
         {:ok, store} ->
           conn
           |> put_status(201)
@@ -36,7 +40,8 @@ defmodule DustWeb.Api.StoreApiController do
             id: store.id,
             name: store.name,
             full_name: "#{org.slug}/#{store.name}",
-            status: store.status
+            status: store.status,
+            expires_at: store.expires_at
           })
 
         {:error, :limit_exceeded, info} ->

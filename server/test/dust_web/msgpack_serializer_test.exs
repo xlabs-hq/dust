@@ -55,7 +55,13 @@ defmodule DustWeb.MsgpackSerializerTest do
       assert {:socket_push, :binary, encoded} = MsgpackSerializer.encode!(reply)
       assert is_binary(encoded)
 
-      assert ["1", "3", "store:abc", "phx_reply", %{"status" => "ok", "response" => %{"data" => "value"}}] =
+      assert [
+               "1",
+               "3",
+               "store:abc",
+               "phx_reply",
+               %{"status" => "ok", "response" => %{"data" => "value"}}
+             ] =
                Msgpax.unpack!(encoded)
     end
   end
@@ -141,7 +147,8 @@ defmodule DustWeb.MsgpackSerializerTest do
 
   describe "decode!/2 msgpack binary frame" do
     test "decodes a msgpack-encoded binary frame" do
-      raw = Msgpax.pack!(["j1", "r1", "store:xyz", "event:test", %{"foo" => "bar"}], iodata: false)
+      raw =
+        Msgpax.pack!(["j1", "r1", "store:xyz", "event:test", %{"foo" => "bar"}], iodata: false)
 
       decoded = MsgpackSerializer.decode!(raw, opcode: :binary)
 

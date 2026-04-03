@@ -4,8 +4,53 @@ module Dust
   module Commands
     module Store
       def self.create(config : Config, args : Array(String))
-        Output.success("Store creation is not yet available from the CLI.")
-        Output.success("Use the web dashboard to create stores.")
+        Output.require_auth!(config)
+
+        if args.empty?
+          Output.error("Usage: dust create <org/store> [--ttl seconds]")
+        end
+
+        store_name = args[0]
+        parts = store_name.split("/")
+        if parts.size != 2
+          Output.error("Store must be in org/store format")
+        end
+
+        ttl : Int64? = nil
+        i = 1
+        while i < args.size
+          if args[i] == "--ttl" && i + 1 < args.size
+            ttl = args[i + 1].to_i64
+            i += 2
+          else
+            i += 1
+          end
+        end
+
+        base_url = derive_http_url(config.server_url)
+        body = {} of String => JSON::Any
+        body["name"] = JSON::Any.new(parts[1])
+        body["ttl"] = JSON::Any.new(ttl) if ttl
+
+        response = HTTP::Client.post(
+          "#{base_url}/api/stores",
+          headers: HTTP::Headers{
+            "Authorization" => "Bearer #{config.token.not_nil!}",
+            "Content-Type"  => "application/json",
+          },
+          body: body.to_json
+        )
+
+        if response.status_code == 201
+          result = JSON.parse(response.body)
+          Output.success("Created #{result["full_name"]}")
+          expires = result["expires_at"]?
+          if expires && !expires.raw.nil?
+            puts "Expires: #{expires.as_s}"
+          end
+        else
+          Output.error("Create failed (#{response.status_code}): #{response.body}")
+        end
       end
 
       def self.list(config : Config, args : Array(String))
@@ -104,6 +149,11 @@ module Dust
 
         puts "Storage:     #{format_bytes(db_bytes)} (sqlite) / #{format_bytes(file_bytes)} (files)"
 
+        expires = status["expires_at"]?
+        if expires && !expires.raw.nil?
+          puts "Expires:     #{expires.as_s}"
+        end
+
         recent = status["recent_ops"]?.try(&.as_a)
         if recent && !recent.empty?
           puts ""
@@ -141,6 +191,13 @@ module Dust
         else
           "#{"%.1f" % (bytes / (1024.0 * 1024 * 1024))} GB"
         end
+      end
+
+      private def self.derive_http_url(server_url : String) : String
+        uri = URI.parse(server_url)
+        scheme = (uri.scheme == "wss") ? "https" : "http"
+        port_str = uri.port ? ":#{uri.port}" : ""
+        "#{scheme}://#{uri.host}#{port_str}"
       end
 
       private def self.handle_event(cache : Cache, store_name : String, payload : JSON::Any)

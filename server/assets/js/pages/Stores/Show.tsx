@@ -36,6 +36,7 @@ interface Store {
   full_name: string;
   status: string;
   inserted_at: string;
+  expires_at: string | null;
   entry_count: number;
 }
 
@@ -72,6 +73,11 @@ export default function StoreShow() {
               >
                 {store.status}
               </Badge>
+              {store.expires_at && (
+                <Badge variant="outline">
+                  Expires {new Date(store.expires_at).toLocaleString()}
+                </Badge>
+              )}
             </div>
             <p className="text-sm text-muted-foreground mt-1">
               Seq {current_seq} · {store.entry_count}{" "}

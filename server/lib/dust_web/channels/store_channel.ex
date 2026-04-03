@@ -357,7 +357,11 @@ defmodule DustWeb.StoreChannel do
       Dust.Repo.one(
         from(s in Dust.Stores.Store,
           where: s.id == ^store_id,
-          select: %{op_count: s.op_count, file_storage_bytes: s.file_storage_bytes}
+          select: %{
+            op_count: s.op_count,
+            file_storage_bytes: s.file_storage_bytes,
+            expires_at: s.expires_at
+          }
         )
       )
 
@@ -383,6 +387,7 @@ defmodule DustWeb.StoreChannel do
       op_count: (store_meta && store_meta.op_count) || 0,
       file_storage_bytes: (store_meta && store_meta.file_storage_bytes) || 0,
       db_size_bytes: db_size,
+      expires_at: store_meta && store_meta.expires_at,
       latest_snapshot_seq: snapshot && snapshot.snapshot_seq,
       latest_snapshot_at: snapshot && Map.get(snapshot, :inserted_at),
       recent_ops:

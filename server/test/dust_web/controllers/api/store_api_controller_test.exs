@@ -70,6 +70,17 @@ defmodule DustWeb.Api.StoreApiControllerTest do
       assert body["full_name"] == "apitest/new-store"
     end
 
+    test "creates an ephemeral store with TTL", %{conn: conn, org: org, rw_token: token} do
+      org |> Ecto.Changeset.change(plan: "pro") |> Dust.Repo.update!()
+
+      conn = conn |> api_conn(token) |> post("/api/stores", %{name: "ephemeral", ttl: 3600})
+
+      assert conn.status == 201
+      body = json_response(conn, 201)
+      assert body["name"] == "ephemeral"
+      assert body["expires_at"] != nil
+    end
+
     test "rejects create when store limit reached on free plan", %{conn: conn, rw_token: token} do
       conn = conn |> api_conn(token) |> post("/api/stores", %{name: "second-store"})
 

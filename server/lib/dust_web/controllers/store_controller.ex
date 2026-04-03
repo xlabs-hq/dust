@@ -64,6 +64,7 @@ defmodule DustWeb.StoreController do
       full_name: "#{organization.slug}/#{store.name}",
       status: store.status,
       inserted_at: store.inserted_at,
+      expires_at: store.expires_at,
       entry_count: Dust.Sync.entry_count(store.id)
     }
   end

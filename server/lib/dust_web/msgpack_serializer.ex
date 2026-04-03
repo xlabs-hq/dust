@@ -129,7 +129,8 @@ defmodule DustWeb.MsgpackSerializer do
   end
 
   # Binary frames: distinguish between custom header format and msgpack
-  defp decode_binary(<<type::size(8), _::binary>> = raw) when type in [@push, @reply, @broadcast] do
+  defp decode_binary(<<type::size(8), _::binary>> = raw)
+       when type in [@push, @reply, @broadcast] do
     decode_binary_header(raw)
   end
 

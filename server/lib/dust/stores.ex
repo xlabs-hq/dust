@@ -29,12 +29,16 @@ defmodule Dust.Stores do
   end
 
   defp maybe_set_expires_at(%{ttl: ttl} = attrs) when is_integer(ttl) and ttl > 0 do
-    expires_at = DateTime.utc_now() |> DateTime.add(ttl, :second) |> DateTime.truncate(:microsecond)
+    expires_at =
+      DateTime.utc_now() |> DateTime.add(ttl, :second) |> DateTime.truncate(:microsecond)
+
     attrs |> Map.delete(:ttl) |> Map.put(:expires_at, expires_at)
   end
 
   defp maybe_set_expires_at(%{"ttl" => ttl} = attrs) when is_integer(ttl) and ttl > 0 do
-    expires_at = DateTime.utc_now() |> DateTime.add(ttl, :second) |> DateTime.truncate(:microsecond)
+    expires_at =
+      DateTime.utc_now() |> DateTime.add(ttl, :second) |> DateTime.truncate(:microsecond)
+
     attrs |> Map.delete("ttl") |> Map.put(:expires_at, expires_at)
   end
 

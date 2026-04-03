@@ -8,7 +8,10 @@ defmodule Dust.Workers.StoreExpiryTest do
 
   setup do
     {:ok, user} = Accounts.create_user(%{email: "expiry@example.com"})
-    {:ok, org} = Accounts.create_organization_with_owner(user, %{name: "Test", slug: "expirytest"})
+
+    {:ok, org} =
+      Accounts.create_organization_with_owner(user, %{name: "Test", slug: "expirytest"})
+
     org |> Ecto.Changeset.change(plan: "pro") |> Dust.Repo.update!()
     %{org: org}
   end
