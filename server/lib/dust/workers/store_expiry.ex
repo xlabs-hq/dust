@@ -14,7 +14,8 @@ defmodule Dust.Workers.StoreExpiry do
 
     expired_stores =
       from(s in Store,
-        where: s.status == :active and not is_nil(s.expires_at) and s.expires_at < ^now
+        where: s.status == :active and not is_nil(s.expires_at) and s.expires_at < ^now,
+        preload: [:organization]
       )
       |> Repo.all()
 
@@ -28,8 +29,9 @@ defmodule Dust.Workers.StoreExpiry do
       # Stop the Writer if running
       Writer.stop(store.id)
 
-      # Disconnect any connected clients
+      # Disconnect any connected clients — broadcast to both topic formats
       DustWeb.Endpoint.broadcast("store:#{store.id}", "phx_close", %{})
+      DustWeb.Endpoint.broadcast("store:#{store.organization.slug}/#{store.name}", "phx_close", %{})
     end)
 
     :ok

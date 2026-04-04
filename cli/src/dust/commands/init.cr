@@ -47,16 +47,23 @@ module Dust
           Output.error("No package.json found. Run `dust init` from a TypeScript/Node.js project directory.")
         end
 
-        # Get org slug
+        # Always fetch org slug from the API (determined by auth token)
         base_url = derive_http_url(config.server_url)
-        org_slug = org_flag || fetch_org_slug(config, base_url)
+        org_slug = fetch_org_slug(config, base_url)
+
+        # Warn if user-provided --org doesn't match the token's org
+        if org_flag && org_flag != org_slug
+          puts "Warning: --org #{org_flag} does not match your token's org (#{org_slug}). Using #{org_slug}."
+        end
 
         # Derive store name
         store_name = if sa = store_arg
           parts = sa.split("/")
           if parts.size == 2
-            # org/store format — also override org_slug
-            org_slug = parts[0]
+            # org/store format — extract store name but use the token's org
+            if parts[0] != org_slug
+              puts "Warning: org '#{parts[0]}' does not match your token's org (#{org_slug}). Using #{org_slug}."
+            end
             parts[1]
           else
             sa

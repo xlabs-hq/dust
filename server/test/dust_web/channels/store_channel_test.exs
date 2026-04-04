@@ -498,6 +498,60 @@ defmodule DustWeb.StoreChannelTest do
     end
   end
 
+  describe "writes after archive" do
+    test "write is rejected after store is archived", %{socket: socket, store: store} do
+      {:ok, _, socket} =
+        subscribe_and_join(socket, DustWeb.StoreChannel, "store:#{store.id}", %{
+          "last_store_seq" => 0
+        })
+
+      # Drain catch-up
+      assert_push "catch_up_complete", _
+
+      # Archive the store while client is connected
+      import Ecto.Query
+
+      from(s in Dust.Stores.Store, where: s.id == ^store.id)
+      |> Dust.Repo.update_all(set: [status: :archived])
+
+      # Attempt to write — should be rejected
+      ref =
+        push(socket, "write", %{
+          "op" => "set",
+          "path" => "sneaky",
+          "value" => "after-expiry",
+          "client_op_id" => "late_1"
+        })
+
+      assert_reply ref, :error, %{reason: "store_archived"}
+    end
+
+    test "put_file is rejected after store is archived", %{socket: socket, store: store} do
+      {:ok, _, socket} =
+        subscribe_and_join(socket, DustWeb.StoreChannel, "store:#{store.id}", %{
+          "last_store_seq" => 0
+        })
+
+      # Drain catch-up
+      assert_push "catch_up_complete", _
+
+      # Archive the store
+      import Ecto.Query
+
+      from(s in Dust.Stores.Store, where: s.id == ^store.id)
+      |> Dust.Repo.update_all(set: [status: :archived])
+
+      ref =
+        push(socket, "put_file", %{
+          "path" => "docs.sneaky",
+          "content" => Base.encode64("payload"),
+          "client_op_id" => "late_file"
+        })
+
+      assert_reply ref, :error, %{reason: "store_archived"}
+    end
+  end
+
   describe "webhook delivery" do
     test "write enqueues webhook delivery jobs", %{socket: socket, store: store} do
       {:ok, _webhook} = Dust.Webhooks.create_webhook(store, %{url: "https://example.com/hook"})

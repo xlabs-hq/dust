@@ -65,7 +65,7 @@ defmodule Dust.Stores do
   def get_store_by_org_and_name!(organization, name) do
     Repo.one!(
       from(s in Store,
-        where: s.organization_id == ^organization.id and s.name == ^name
+        where: s.organization_id == ^organization.id and s.name == ^name and s.status == :active
       )
     )
   end
@@ -73,7 +73,7 @@ defmodule Dust.Stores do
   def get_store_by_name(organization, name) do
     Repo.one(
       from(s in Store,
-        where: s.organization_id == ^organization.id and s.name == ^name
+        where: s.organization_id == ^organization.id and s.name == ^name and s.status == :active
       )
     )
   end

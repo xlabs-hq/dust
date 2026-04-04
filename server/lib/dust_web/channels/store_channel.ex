@@ -83,7 +83,8 @@ defmodule DustWeb.StoreChannel do
          :ok <- Dust.RateLimiter.check(store_token.id, :write) do
       org = store_token.store.organization
 
-      with {:ok, _} <- validate_path(path),
+      with :ok <- verify_store_active(socket.assigns.store_id),
+           {:ok, _} <- validate_path(path),
            {:ok, content} <- Base.decode64(base64_content),
            :ok <-
              Dust.Billing.Limits.check_file_storage(
@@ -113,6 +114,9 @@ defmodule DustWeb.StoreChannel do
             {:reply, {:error, %{reason: inspect(reason)}}, socket}
         end
       else
+        {:error, :store_archived} ->
+          {:reply, {:error, %{reason: "store_archived"}}, socket}
+
         :error ->
           {:reply, {:error, %{reason: "invalid_base64"}}, socket}
 
@@ -188,7 +192,8 @@ defmodule DustWeb.StoreChannel do
       op ->
         org = socket.assigns.store_token.store.organization
 
-        with {:ok, _} <- validate_path(params["path"]),
+        with :ok <- verify_store_active(socket.assigns.store_id),
+             {:ok, _} <- validate_path(params["path"]),
              :ok <- validate_merge_value(op, params["value"]),
              :ok <- check_billing_limits(op, params, socket.assigns.store_id, org) do
           op_attrs = %{
@@ -208,6 +213,9 @@ defmodule DustWeb.StoreChannel do
               {:reply, {:error, %{reason: inspect(reason)}}, socket}
           end
         else
+          {:error, :store_archived} ->
+            {:reply, {:error, %{reason: "store_archived"}}, socket}
+
           {:error, :limit_exceeded, info} ->
             {:reply, {:error, %{reason: "limit_exceeded"} |> Map.merge(info)}, socket}
 
@@ -469,6 +477,15 @@ defmodule DustWeb.StoreChannel do
   end
 
   defp check_billing_limits(_, _, _, _), do: :ok
+
+  defp verify_store_active(store_id) do
+    import Ecto.Query
+
+    case Dust.Repo.one(from(s in Dust.Stores.Store, where: s.id == ^store_id, select: s.status)) do
+      :active -> :ok
+      _ -> {:error, :store_archived}
+    end
+  end
 
   @impl true
   def terminate(_reason, socket) do

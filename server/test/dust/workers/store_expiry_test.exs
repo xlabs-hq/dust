@@ -50,4 +50,30 @@ defmodule Dust.Workers.StoreExpiryTest do
     updated = Dust.Repo.get!(Stores.Store, store.id)
     assert updated.status == :active
   end
+
+  test "broadcasts phx_close to both topic formats", %{org: org} do
+    {:ok, store} = Stores.create_store(org, %{name: "closing", ttl: 1})
+    past = DateTime.utc_now() |> DateTime.add(-60, :second) |> DateTime.truncate(:microsecond)
+
+    Dust.Repo.update_all(
+      from(s in Stores.Store, where: s.id == ^store.id),
+      set: [expires_at: past]
+    )
+
+    # Subscribe to both topic formats to verify broadcasts
+    DustWeb.Endpoint.subscribe("store:#{store.id}")
+    DustWeb.Endpoint.subscribe("store:expirytest/closing")
+
+    :ok = perform_job(Dust.Workers.StoreExpiry, %{})
+
+    assert_receive %Phoenix.Socket.Broadcast{
+      topic: "store:" <> _,
+      event: "phx_close"
+    }
+
+    assert_receive %Phoenix.Socket.Broadcast{
+      topic: "store:expirytest/closing",
+      event: "phx_close"
+    }
+  end
 end

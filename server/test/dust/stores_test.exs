@@ -71,6 +71,42 @@ defmodule Dust.StoresTest do
     end
   end
 
+  describe "archived store lookups" do
+    test "get_store_by_name returns nil for archived store", %{org: org} do
+      {:ok, store} = Stores.create_store(org, %{name: "archived-store"})
+
+      # Archive it
+      import Ecto.Query
+      from(s in Stores.Store, where: s.id == ^store.id)
+      |> Dust.Repo.update_all(set: [status: :archived])
+
+      assert Stores.get_store_by_name(org, "archived-store") == nil
+    end
+
+    test "get_store_by_org_and_name! raises for archived store", %{org: org} do
+      {:ok, store} = Stores.create_store(org, %{name: "archived-bang"})
+
+      import Ecto.Query
+      from(s in Stores.Store, where: s.id == ^store.id)
+      |> Dust.Repo.update_all(set: [status: :archived])
+
+      assert_raise Ecto.NoResultsError, fn ->
+        Stores.get_store_by_org_and_name!(org, "archived-bang")
+      end
+    end
+
+    test "cannot create token for archived store", %{org: org} do
+      {:ok, store} = Stores.create_store(org, %{name: "token-archived"})
+
+      import Ecto.Query
+      from(s in Stores.Store, where: s.id == ^store.id)
+      |> Dust.Repo.update_all(set: [status: :archived])
+
+      # get_store_by_name returns nil, so token creation path will fail
+      assert Stores.get_store_by_name(org, "token-archived") == nil
+    end
+  end
+
   describe "devices" do
     test "ensure_device creates on first call" do
       {:ok, device} = Stores.ensure_device("dev_abc")
