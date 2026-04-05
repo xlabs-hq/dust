@@ -60,7 +60,8 @@ module Dust
     # Push an event on an already-joined topic. Waits for the server reply.
     def push(topic : String, event : String, payload : Hash(String, JSON::Any)) : JSON::Any
       ref = next_ref
-      send_message(nil, ref, topic, event, payload)
+      join_ref = @channels[topic]?.try(&.join_ref)
+      send_message(join_ref, ref, topic, event, payload)
       wait_for_reply(ref)
     end
 

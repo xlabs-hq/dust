@@ -54,8 +54,45 @@ module Dust
       end
 
       def self.list(config : Config, args : Array(String))
-        Output.success("Store listing is not yet available from the CLI.")
-        Output.success("Use the web dashboard to view your stores.")
+        Output.require_auth!(config)
+
+        json_output = args.includes?("--json")
+
+        base_url = derive_http_url(config.server_url)
+        response = HTTP::Client.get(
+          "#{base_url}/api/stores",
+          headers: HTTP::Headers{
+            "Authorization" => "Bearer #{config.token.not_nil!}",
+          }
+        )
+
+        unless response.status.success?
+          Output.error("Failed to list stores (#{response.status_code}): #{response.body}")
+        end
+
+        result = JSON.parse(response.body)
+        stores = result["stores"].as_a
+
+        if json_output
+          puts result.to_pretty_json
+          return
+        end
+
+        if stores.empty?
+          puts "No stores. Create one with: dust create <org/store>"
+          return
+        end
+
+        printf "%-30s %-10s %-20s %-20s\n", "Store", "Status", "Created", "Expires"
+        printf "%-30s %-10s %-20s %-20s\n", "-" * 28, "-" * 8, "-" * 18, "-" * 18
+
+        stores.each do |store|
+          full_name = store["full_name"].as_s
+          status = store["status"].as_s
+          created = store["inserted_at"].raw.nil? ? "-" : store["inserted_at"].as_s
+          expires = store["expires_at"].raw.nil? ? "-" : store["expires_at"].as_s
+          printf "%-30s %-10s %-20s %-20s\n", full_name, status, created, expires
+        end
       end
 
       def self.status(config : Config, args : Array(String))

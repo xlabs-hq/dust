@@ -168,7 +168,7 @@ export class Connection {
     base.searchParams.set('token', this.opts.token)
     base.searchParams.set('device_id', this.deviceId)
     base.searchParams.set('capver', '1')
-    base.searchParams.set('vsn', '2.0.0')
+    base.searchParams.set('vsn', this.format === 'msgpack' ? '3.0.0' : '2.0.0')
     return base.toString()
   }
 

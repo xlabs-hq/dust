@@ -70,6 +70,8 @@ defmodule DustWeb.Router do
     post "/stores/:org/:store/import", ImportController, :create
     post "/stores/:org/:store/clone", CloneController, :create
 
+    get "/stores/:org/:store/log", AuditApiController, :index
+
     get "/stores/:org/:store/webhooks", WebhookController, :index
     post "/stores/:org/:store/webhooks", WebhookController, :create
     delete "/stores/:org/:store/webhooks/:id", WebhookController, :delete

@@ -15,7 +15,7 @@ defmodule DustWeb.Endpoint do
     websocket: [
       connect_info: [:peer_data],
       serializer: [
-        {DustWeb.MsgpackSerializer, "~> 2.0.0"},
+        {DustWeb.MsgpackSerializer, "3.0.0"},
         {Phoenix.Socket.V2.JSONSerializer, "~> 2.0.0"}
       ]
     ]
