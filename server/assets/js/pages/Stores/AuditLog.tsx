@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { Head, Link, router, usePage } from "@inertiajs/react";
+import { useChannel, useChannelEvent } from "@/lib/use-channel";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -65,9 +66,18 @@ interface AuditLogProps extends SharedProps {
 }
 
 export default function AuditLog() {
-  const { store, ops, filters, pagination, current_organization } =
+  const { store, ops, filters, pagination, current_organization, socket_token } =
     usePage<AuditLogProps>().props;
   const orgSlug = current_organization?.slug || "";
+
+  const { channel } = useChannel({
+    token: socket_token as string | null,
+    topic: `ui:store:${store.full_name}`,
+  });
+
+  useChannelEvent(channel, "changed", () => {
+    router.reload({ only: ["ops", "pagination"] });
+  });
 
   const [path, setPath] = useState(filters.path);
   const [deviceId, setDeviceId] = useState(filters.device_id);

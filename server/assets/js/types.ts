@@ -14,6 +14,7 @@ export interface SharedProps {
   current_user: User | null;
   current_organization: Organization | null;
   user_organizations: Organization[];
+  socket_token: string | null;
   flash: { info: string | null; error: string | null };
   [key: string]: unknown;
 }

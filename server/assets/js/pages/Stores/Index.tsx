@@ -1,5 +1,6 @@
 import React from "react";
 import { Head, Link, router, usePage } from "@inertiajs/react";
+import { useChannel, useChannelEvent } from "@/lib/use-channel";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import {
@@ -27,8 +28,18 @@ interface StoresIndexProps extends SharedProps {
 }
 
 export default function StoresIndex() {
-  const { stores, current_organization } = usePage<StoresIndexProps>().props;
+  const { stores, current_organization, socket_token } =
+    usePage<StoresIndexProps>().props;
   const orgSlug = current_organization?.slug || "";
+
+  const { channel } = useChannel({
+    token: socket_token as string | null,
+    topic: `ui:org:${orgSlug}`,
+  });
+
+  useChannelEvent(channel, "changed", () => {
+    router.reload({ only: ["stores"] });
+  });
 
   return (
     <>

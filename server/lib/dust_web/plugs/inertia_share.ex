@@ -14,6 +14,7 @@ defmodule DustWeb.Plugs.InertiaShare do
     |> assign_prop(:current_user, serialize_user(scope))
     |> assign_prop(:current_organization, serialize_organization(scope))
     |> assign_prop(:user_organizations, serialize_user_organizations(scope))
+    |> assign_prop(:socket_token, build_socket_token(scope))
     |> assign_prop(:flash, %{
       info: Phoenix.Flash.get(conn.assigns.flash, :info),
       error: Phoenix.Flash.get(conn.assigns.flash, :error)
@@ -57,6 +58,14 @@ defmodule DustWeb.Plugs.InertiaShare do
     else
       []
     end
+  end
+
+  defp build_socket_token(nil), do: nil
+  defp build_socket_token(%{user: nil}), do: nil
+  defp build_socket_token(%{organization: nil}), do: nil
+
+  defp build_socket_token(%{user: user, organization: org}) do
+    DustWeb.UISocket.generate_token(user.id, org.id)
   end
 
   defp user_display_name(user) do

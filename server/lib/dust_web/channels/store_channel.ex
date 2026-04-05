@@ -108,6 +108,7 @@ defmodule DustWeb.StoreChannel do
         case Sync.write(socket.assigns.store_id, op_attrs) do
           {:ok, db_op} ->
             broadcast!(socket, "event", format_event(db_op))
+            notify_org(socket)
             {:reply, {:ok, %{store_seq: db_op.store_seq, hash: ref["hash"]}}, socket}
 
           {:error, reason} ->
@@ -207,6 +208,7 @@ defmodule DustWeb.StoreChannel do
           case Sync.write(socket.assigns.store_id, op_attrs) do
             {:ok, db_op} ->
               broadcast!(socket, "event", format_event(db_op))
+              notify_org(socket)
               {:reply, {:ok, %{store_seq: db_op.store_seq}}, socket}
 
             {:error, reason} ->
@@ -477,6 +479,16 @@ defmodule DustWeb.StoreChannel do
   end
 
   defp check_billing_limits(_, _, _, _), do: :ok
+
+  defp notify_org(socket) do
+    org_slug = socket.assigns.store_token.store.organization.slug
+
+    Phoenix.PubSub.broadcast(
+      Dust.PubSub,
+      "org_stores:#{org_slug}",
+      {:store_changed, socket.assigns.store_id}
+    )
+  end
 
   defp verify_store_active(store_id) do
     import Ecto.Query
