@@ -9,7 +9,8 @@ defmodule Dust.Sync.StoreDB do
 
   require Logger
 
-  @store_data_dir Application.compile_env(:dust, :store_data_dir, "priv/stores")
+  # Read at runtime so production can override via STORE_DATA_DIR env var
+  defp store_data_dir_config, do: Application.get_env(:dust, :store_data_dir, "priv/stores")
 
   @schema_sql """
   PRAGMA journal_mode=WAL;
@@ -39,11 +40,11 @@ defmodule Dust.Sync.StoreDB do
   );
   """
 
-  def store_data_dir, do: @store_data_dir
+  def store_data_dir, do: store_data_dir_config()
 
   @doc "Returns the SQLite file path for a store, given org slug and store name."
   def path(org_slug, store_name) do
-    Path.join([@store_data_dir, org_slug, "#{store_name}.db"])
+    Path.join([store_data_dir_config(), org_slug, "#{store_name}.db"])
   end
 
   @doc "Looks up the store in Postgres and returns the SQLite file path."

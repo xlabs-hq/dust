@@ -1,0 +1,53 @@
+# Production deployment configuration
+# Deploy with: kamal deploy -d production
+service: dust-prod
+image: level4/dust
+require_destination: true
+
+servers:
+  web:
+    hosts:
+      - CHANGE_ME
+    options:
+      network-alias: dust
+
+registry:
+  username: jtippett
+  server: ghcr.io
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+
+proxy:
+  ssl: false
+  host: dustlayer.io
+  app_port: 7755
+  healthcheck:
+    path: /healthz
+  run:
+    http_port: 8080
+    https_port: 8443
+
+builder:
+  context: ".."
+  depot: true
+  arch: amd64
+
+volumes:
+  - "dust-prod-stores:/app/data/stores"
+
+env:
+  clear:
+    DEPLOY_ENV: production
+    PHX_HOST: dustlayer.io
+    PORT: "7755"
+    ADMIN_HOST: admin.dustlayer.io
+    ADMIN_PORT: "7766"
+    STORE_DATA_DIR: "/app/data/stores"
+  secret:
+    - SECRET_KEY_BASE
+    - DATABASE_URL
+    - WORKOS_API_KEY
+    - WORKOS_CLIENT_ID
+
+ssh:
+  user: root

@@ -1,0 +1,43 @@
+# Build context is the dust/ root directory.
+# All paths are relative to that.
+
+# Git
+.git
+.gitignore
+
+# Server build artifacts
+server/_build/
+server/deps/
+server/doc/
+server/cover/
+server/tmp/
+
+# Node modules
+server/assets/node_modules/
+
+# Dev-only data
+server/priv/stores/
+server/priv/blobs/
+server/priv/static/assets/
+server/priv/static/cache_manifest.json
+
+# Protocol build artifacts
+protocol/elixir/_build/
+protocol/elixir/deps/
+
+# Kamal secrets
+server/.kamal/secrets.*
+
+# IDE / OS
+.elixir_ls/
+.vscode/
+.zed/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Unrelated directories
+cli/
+sdk/
+docs/

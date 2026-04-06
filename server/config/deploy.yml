@@ -1,0 +1,5 @@
+service: dust
+image: level4/dust
+
+# Require explicit destination
+require_destination: true

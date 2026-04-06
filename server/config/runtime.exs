@@ -1,5 +1,10 @@
 import Config
 
+# Load .env file in dev/test
+if config_env() in [:dev, :test] do
+  Dotenv.load!()
+end
+
 # config/runtime.exs is executed for all environments, including
 # during releases. It is executed after compilation and before the
 # system starts, so it is typically used to load production configuration
@@ -18,6 +23,25 @@ import Config
 # script that automatically sets the env var above.
 if System.get_env("PHX_SERVER") do
   config :dust, DustWeb.Endpoint, server: true
+  config :dust, AdminWeb.Endpoint, server: true
+end
+
+# Configure WorkOS
+workos_api_key =
+  System.get_env("WORKOS_API_KEY") ||
+    raise "WORKOS_API_KEY is not set. Add it to server/.env"
+
+workos_client_id =
+  System.get_env("WORKOS_CLIENT_ID") ||
+    raise "WORKOS_CLIENT_ID is not set. Add it to server/.env"
+
+config :workos, WorkOS.Client,
+  api_key: workos_api_key,
+  client_id: workos_client_id
+
+# Enable dev bypass when no WorkOS API key is set
+if config_env() == :dev do
+  config :dust, :dev_bypass_auth, !System.get_env("WORKOS_API_KEY")
 end
 
 config :dust, DustWeb.Endpoint, http: [port: String.to_integer(System.get_env("PORT", "7755"))]
@@ -56,8 +80,14 @@ if config_env() == :prod do
       """
 
   host = System.get_env("PHX_HOST") || "example.com"
+  admin_host = System.get_env("ADMIN_HOST") || "admin.example.com"
+  port = String.to_integer(System.get_env("PORT") || "7755")
+  admin_port = String.to_integer(System.get_env("ADMIN_PORT") || "7766")
 
   config :dust, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
+
+  # Persistent store data directory (mounted as a Docker volume)
+  config :dust, :store_data_dir, System.get_env("STORE_DATA_DIR", "/app/data/stores")
 
   config :dust, DustWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
@@ -66,9 +96,22 @@ if config_env() == :prod do
       # Set it to  {0, 0, 0, 0, 0, 0, 0, 1} for local network only access.
       # See the documentation on https://hexdocs.pm/bandit/Bandit.html#t:options/0
       # for details about using IPv6 vs IPv4 and loopback vs public addresses.
-      ip: {0, 0, 0, 0, 0, 0, 0, 0}
+      ip: {0, 0, 0, 0, 0, 0, 0, 0},
+      port: port
     ],
     secret_key_base: secret_key_base
+
+  config :dust, AdminWeb.Endpoint,
+    url: [host: admin_host, port: 443, scheme: "https"],
+    http: [
+      ip: {0, 0, 0, 0, 0, 0, 0, 0},
+      port: admin_port
+    ],
+    secret_key_base: secret_key_base,
+    check_origin: [
+      "//#{admin_host}",
+      "//localhost"
+    ]
 
   # ## SSL Support
   #
