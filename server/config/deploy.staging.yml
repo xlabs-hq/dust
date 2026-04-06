@@ -43,6 +43,7 @@ env:
     ADMIN_HOST: staging-admin.dustlayer.io
     ADMIN_PORT: "7766"
     STORE_DATA_DIR: "/app/data/stores"
+    DB_SSL: "true"
   secret:
     - SECRET_KEY_BASE
     - DATABASE_URL
