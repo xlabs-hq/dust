@@ -61,8 +61,7 @@ if config_env() == :prod do
   db_ssl = System.get_env("DB_SSL") in ~w(true 1)
 
   config :dust, Dust.Repo,
-    ssl: db_ssl,
-    ssl_opts: [verify: :verify_none],
+    ssl: if(db_ssl, do: [verify: :verify_none], else: false),
     url: database_url,
     pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),
     socket_options: maybe_ipv6
