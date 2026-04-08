@@ -447,3 +447,135 @@ And **never** do this:
 <!-- phoenix:liveview-end -->
 
 <!-- usage-rules-end -->
+
+## Essential Commands
+
+### Development Setup
+
+```bash
+mix setup                    # Install deps, setup DB, build assets
+mix phx.server              # Start development server
+iex -S mix phx.server       # Start with interactive shell
+```
+
+### Database Operations
+
+```bash
+mix ecto.migrate            # Run pending migrations
+mix ecto.reset              # Drop, create, migrate, seed
+mix ecto.gen.migration name # Generate new migration
+```
+
+### Testing
+
+```bash
+mix test                    # Run all tests
+mix test test/path/file.exs # Run specific test file
+mix test --failed           # Re-run only failed tests
+```
+
+### Asset Management
+
+```bash
+mix assets.build           # Build CSS/JS assets
+mix assets.deploy          # Build and minify for production
+```
+
+## Architecture Overview
+
+**Dust** is a Phoenix application providing reactive state management for AI agents. It uses SQLite-per-store for data isolation, WebSocket for real-time sync, and webhooks for event delivery.
+
+### Core Domains
+
+- `Dust.Stores` - Multi-tenant store management with organization-scoped access
+- `Dust.Sync` - Real-time state synchronization via WebSocket and LWW (Last Write Wins)
+- `Dust.Webhooks` - Event delivery to external systems
+- `Dust.Accounts` - User/organization management via WorkOS
+
+### Dual-Endpoint Architecture
+
+- **DustWeb** (port 7755) - Main app using React + Inertia.js
+- **AdminWeb** (port 7766) - Admin interface using Phoenix LiveView
+
+## Must-dos
+
+- Run `mix format` after code edits to guarantee consistent formatting
+- If it can be live, make it live! Prefer streams for data display in LiveView (admin)
+- Use :if={} syntax in LiveViews, not <% if %>
+- Aliases and imports go at the TOP of the file
+- One alias per line - don't group multiple aliases on one line
+- We use fixtures, not factories - look at other tests for patterns
+- Prefer simple, easily comprehensible but slightly longer code over something short but obscure
+- Follow existing design patterns and conventions wherever possible
+
+## Inertia/React UI
+
+The main user-facing frontend uses Inertia.js and React. All new UI work should target that. The admin LiveViews are a separate concern on port 7766.
+
+## Tools
+
+Use tidewave MCP tools when available, as they let you interrogate the running application in various useful ways.
+
+## Use Eval
+
+Use the `project_eval` tool to execute code in the running instance of the application. Eval `h Module.fun` to get documentation for a module or function.
+
+## Logs & Tests
+
+When you're done executing code, try to compile the code, and check the logs or run any applicable tests to see what effect your changes have had.
+
+## Code Generation
+
+Start with generators wherever possible. They provide a starting point for your code and can be modified if needed.
+
+## ALWAYS research, NEVER assume
+
+Always use `package_docs_search` to find relevant documentation before beginning work.
+
+Run `h Module.function` in tidewave:project_eval to read docs for any function in the project!
+
+## Don't start or stop phoenix applications
+
+Never attempt to start or stop a phoenix application.
+Your tidewave tools work by being connected to the running application, and starting or stopping it can cause issues.
+
+## Logger function doesn't take keyword options
+
+IMPORTANT: this DOES NOT WORK:
+
+BAD:
+
+Logger.info("Using session",
+session_id: session.id,
+store_id: store.id
+)
+
+The session_id and store_id information are ignored and not logged. DO NOT DO THIS.
+
+Instead, simply inline relevant information:
+
+Logger.info("Using session -
+session_id: #{session.id},
+store_id: #{store.id}"
+)
+
+## FORBIDDEN
+
+Never use `rescue` or `try` blocks without direct written permission from the user. They swallow errors and make debugging and production monitoring more difficult than it should be. Rescue is FORBIDDEN without an explicit waiver.
+
+## Tidewave troubleshooting
+
+If you see an error like this: Error: Error POSTing to endpoint (HTTP 404):
+{"error":"Could not find session"}
+
+This is a transient error. You simply need to reconnect to tidewave and it will work.
+
+## Conventions
+
+- aliases and imports go at the TOP of the file
+- one alias per line!
+- DO NOT try to stop, start or restart the server - this will cause errors. You can do everything you need from inside tidewave
+
+## FINAL NOTE
+
+ALWAYS confirm to the user that you have read this file - a simple "I've read the Agents doc" is sufficient

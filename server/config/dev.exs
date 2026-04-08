@@ -23,7 +23,7 @@ config :dust, DustWeb.Endpoint,
   debug_errors: true,
   secret_key_base: "dev-secret-at-least-64-bytes-long-for-dust-application-development-only",
   watchers: [
-    vite: {PhoenixVite.Npm, :run, [:vite, ~w(dev)]}
+    vite: {Bun, :install_and_run, [:vite, ~w(dev)]}
   ],
   static_url: [host: "localhost", port: 5288]
 
@@ -100,5 +100,4 @@ config :inertia, static_paths: []
 # Disable swoosh api client as it is only required for production adapters.
 config :swoosh, :api_client, false
 
-# Enable dev bypass for WorkOS auth (auto-login as dev@dust.local)
-config :dust, :dev_bypass_auth, !System.get_env("WORKOS_API_KEY")
+# Dev bypass for WorkOS auth is configured in runtime.exs (after .env loads)

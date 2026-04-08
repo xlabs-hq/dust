@@ -12,7 +12,7 @@ import { createRoot } from "react-dom/client";
 import React from "react";
 import axios from "axios";
 
-// Configure axios to include CSRF token from meta tag
+// Configure axios CSRF for Inertia's internal requests
 const csrfToken = document
   .querySelector('meta[name="csrf-token"]')
   ?.getAttribute("content");

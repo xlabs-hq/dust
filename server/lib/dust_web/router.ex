@@ -22,6 +22,14 @@ defmodule DustWeb.Router do
     plug :accepts, ["json"]
   end
 
+  # JSON endpoints that need session/CSRF (auth forms)
+  pipeline :browser_api do
+    plug :accepts, ["json"]
+    plug :fetch_session
+    plug :protect_from_forgery
+    plug :put_secure_browser_headers
+  end
+
   pipeline :mcp do
     plug :accepts, ["json"]
     plug DustWeb.Plugs.MCPAuth
@@ -33,14 +41,30 @@ defmodule DustWeb.Router do
     get "/", LandingController, :index
   end
 
-  # Public auth routes
+  # Public auth pages (HTML/Inertia)
   scope "/auth", DustWeb do
     pipe_through [:browser, :inertia]
 
     get "/login", WorkOSAuthController, :login
+    get "/register", WorkOSAuthController, :register
+    get "/forgot-password", WorkOSAuthController, :forgot_password
+    get "/reset-password", WorkOSAuthController, :reset_password_page
     get "/authorize", WorkOSAuthController, :authorize
     get "/callback", WorkOSAuthController, :callback
     delete "/logout", WorkOSAuthController, :logout
+  end
+
+  # Auth form submissions (JSON)
+  scope "/auth", DustWeb do
+    pipe_through [:browser_api]
+
+    post "/check-email", WorkOSAuthController, :check_email
+    post "/sign-in", WorkOSAuthController, :sign_in
+    post "/sign-up", WorkOSAuthController, :sign_up
+    post "/verify-email", WorkOSAuthController, :verify_email
+    post "/resend-verification", WorkOSAuthController, :resend_verification
+    post "/forgot-password", WorkOSAuthController, :send_reset_email
+    post "/reset-password", WorkOSAuthController, :do_reset_password
   end
 
   # Health check endpoints (no auth)

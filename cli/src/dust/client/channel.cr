@@ -1,30 +1,42 @@
 require "json"
 
 module Dust
-  # Represents a joined Phoenix Channel topic (e.g. "store:james/blog").
-  # Holds join state and provides a push helper that delegates to Connection.
-  #
-  # Named StoreChannel to avoid collision with Crystal's stdlib Channel(T)
-  # used for fiber communication.
+  # Wraps a Phoenix::Channel to provide a synchronous push API.
+  # Named StoreChannel to avoid collision with Crystal's stdlib Channel(T).
   class StoreChannel
     getter topic : String
-    getter join_ref : String
     property store_seq : Int64 = 0_i64
 
-    def initialize(@connection : Connection, @topic : String, @join_ref : String)
+    def initialize(@channel : Phoenix::Channel, @topic : String)
     end
 
-    # Push an event to the server and wait for the reply.
+    # Push an event to the server and block for the reply.
+    # Returns a JSON object with "status" and "response" keys,
+    # matching the shape the CLI commands already expect.
     def push(event : String, payload : Hash(String, JSON::Any)) : JSON::Any
-      @connection.push(@topic, event, payload)
+      result = ::Channel(JSON::Any).new(1)
+      error = ::Channel(String).new(1)
+
+      @channel.push(event, JSON.parse(payload.to_json))
+        .receive("ok") { |resp| result.send(wrap_reply("ok", resp)) }
+        .receive("error") { |resp| result.send(wrap_reply("error", resp)) }
+        .receive("timeout") { |_| error.send("push timed out") }
+
+      select
+      when resp = result.receive
+        resp
+      when err = error.receive
+        raise err
+      when timeout(10.seconds)
+        raise "Timeout waiting for reply"
+      end
     end
 
-    # Called by Connection when the join reply arrives.
-    def handle_join_reply(reply : JSON::Any)
-      status = reply["status"].as_s
-      raise "Join failed: #{reply.to_json}" unless status == "ok"
-      response = reply["response"]
-      @store_seq = response["store_seq"].as_i64
+    private def wrap_reply(status : String, response : JSON::Any) : JSON::Any
+      JSON::Any.new({
+        "status"   => JSON::Any.new(status),
+        "response" => response,
+      })
     end
   end
 end

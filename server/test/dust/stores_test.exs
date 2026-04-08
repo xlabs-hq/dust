@@ -77,6 +77,7 @@ defmodule Dust.StoresTest do
 
       # Archive it
       import Ecto.Query
+
       from(s in Stores.Store, where: s.id == ^store.id)
       |> Dust.Repo.update_all(set: [status: :archived])
 
@@ -87,6 +88,7 @@ defmodule Dust.StoresTest do
       {:ok, store} = Stores.create_store(org, %{name: "archived-bang"})
 
       import Ecto.Query
+
       from(s in Stores.Store, where: s.id == ^store.id)
       |> Dust.Repo.update_all(set: [status: :archived])
 
@@ -99,6 +101,7 @@ defmodule Dust.StoresTest do
       {:ok, store} = Stores.create_store(org, %{name: "token-archived"})
 
       import Ecto.Query
+
       from(s in Stores.Store, where: s.id == ^store.id)
       |> Dust.Repo.update_all(set: [status: :archived])
 

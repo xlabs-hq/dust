@@ -36,10 +36,7 @@ config :dust, AdminWeb.Endpoint,
   pubsub_server: Dust.PubSub,
   live_view: [signing_salt: "dust_admin_lv_salt"]
 
-# Configure WorkOS
-config :workos, WorkOS.Client,
-  api_key: System.get_env("WORKOS_API_KEY"),
-  client_id: System.get_env("WORKOS_CLIENT_ID")
+# WorkOS is configured in runtime.exs (needs env vars loaded from .env)
 
 # Configure the mailer
 #
@@ -50,12 +47,14 @@ config :workos, WorkOS.Client,
 # at the `config/runtime.exs`.
 config :dust, Dust.Mailer, adapter: Swoosh.Adapters.Local
 
-# Configure PhoenixVite for npm-based Vite
-config :phoenix_vite, PhoenixVite.Npm,
+# Configure Bun for Vite
+config :bun,
+  version: "1.2.16",
+  assets: [args: [], cd: Path.expand("../assets", __DIR__)],
   vite: [
     args: ~w(x vite),
     cd: Path.expand("../assets", __DIR__),
-    env: %{}
+    env: %{"MIX_BUILD_PATH" => Mix.Project.build_path()}
   ]
 
 # Configure Inertia

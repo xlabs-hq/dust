@@ -51,6 +51,7 @@ defmodule Dust.MixProject do
 
       # Vite + Inertia
       {:phoenix_vite, "~> 0.4", runtime: Mix.env() == :dev},
+      {:bun, "~> 1.5 and >= 1.5.1", runtime: Mix.env() == :dev},
       {:inertia, "~> 2.0"},
 
       # Auth
@@ -117,10 +118,10 @@ defmodule Dust.MixProject do
       "ecto.setup": ["ecto.create", "ecto.migrate", "run priv/repo/seeds.exs"],
       "ecto.reset": ["ecto.drop", "ecto.setup"],
       test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"],
-      "assets.setup": ["cmd --cd assets npm install"],
-      "assets.build": ["cmd --cd assets npx vite build"],
+      "assets.setup": ["bun.install --if-missing", "bun assets install"],
+      "assets.build": ["bun vite build"],
       "assets.deploy": [
-        "cmd --cd assets npx vite build",
+        "bun vite build",
         "phx.digest"
       ],
       precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "test"]

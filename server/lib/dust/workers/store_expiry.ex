@@ -31,7 +31,12 @@ defmodule Dust.Workers.StoreExpiry do
 
       # Disconnect any connected clients — broadcast to both topic formats
       DustWeb.Endpoint.broadcast("store:#{store.id}", "phx_close", %{})
-      DustWeb.Endpoint.broadcast("store:#{store.organization.slug}/#{store.name}", "phx_close", %{})
+
+      DustWeb.Endpoint.broadcast(
+        "store:#{store.organization.slug}/#{store.name}",
+        "phx_close",
+        %{}
+      )
     end)
 
     :ok

@@ -4,6 +4,10 @@ shards:
     git: https://github.com/crystal-lang/crystal-db.git
     version: 0.13.1
 
+  phoenix_client:
+    git: https://github.com/jtippett/phoenix-client-cr.git
+    version: 0.1.0+git.commit.f30dd0494d5eb35a80dd423545b75ab0b409f7f0
+
   sqlite3:
     git: https://github.com/crystal-lang/crystal-sqlite3.git
     version: 0.21.0

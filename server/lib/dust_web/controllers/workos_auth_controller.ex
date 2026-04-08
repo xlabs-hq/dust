@@ -9,8 +9,241 @@ defmodule DustWeb.WorkOSAuthController do
     url(conn, ~p"/auth/callback")
   end
 
+  # --- Page renders ---
+
+  def login(conn, _params) do
+    if conn.assigns[:current_scope] && conn.assigns.current_scope.user do
+      redirect_to_org(conn, conn.assigns.current_scope.user)
+    else
+      render_inertia(conn, "Auth/Login", %{dev_bypass: dev_bypass?()})
+    end
+  end
+
+  def register(conn, _params) do
+    render_inertia(conn, "Auth/Register")
+  end
+
+  def forgot_password(conn, _params) do
+    render_inertia(conn, "Auth/ForgotPassword")
+  end
+
+  def reset_password_page(conn, %{"token" => token}) do
+    render_inertia(conn, "Auth/ResetPassword", %{token: token})
+  end
+
+  def reset_password_page(conn, _params) do
+    conn
+    |> put_flash(:error, "Invalid password reset link.")
+    |> redirect(to: ~p"/auth/forgot-password")
+  end
+
+  # --- Embedded auth actions ---
+
   @doc """
-  Redirect to WorkOS AuthKit hosted login.
+  Check if an email requires SSO. If so, redirect to SSO.
+  Otherwise return JSON {mode: "password"}.
+  """
+  def check_email(conn, %{"email" => email}) do
+    with {:ok, %{data: [user | _]}} <-
+           WorkOS.UserManagement.list_users(%{email: email}),
+         org_id when is_binary(org_id) <- get_sso_org_id(user) do
+      # User belongs to an SSO-enforced org — redirect to SSO
+      case WorkOS.UserManagement.get_authorization_url(%{
+             organization_id: org_id,
+             redirect_uri: redirect_uri(conn),
+             client_id: WorkOS.client_id()
+           }) do
+        {:ok, url} ->
+          json(conn, %{mode: "sso", redirect_url: url})
+
+        {:error, _} ->
+          json(conn, %{mode: "password"})
+      end
+    else
+      _ ->
+        # No user found or no SSO org — proceed with password
+        json(conn, %{mode: "password"})
+    end
+  end
+
+  @doc """
+  Authenticate with email and password.
+  """
+  def sign_in(conn, %{"email" => email, "password" => password}) do
+    if dev_bypass?() do
+      dev_login(conn)
+    else
+      case authenticate_with_password_raw(email, password, conn) do
+        {:ok, workos_user} ->
+          case find_or_create_user(workos_user) do
+            {:ok, user} ->
+              log_in_user(conn, user)
+
+            {:error, reason} ->
+              Logger.error("Account creation failed after password auth: #{inspect(reason)}")
+
+              conn
+              |> put_status(422)
+              |> json(%{error: "Account creation failed. Please try again."})
+          end
+
+        {:error, :email_verification_required, pending_token} ->
+          conn
+          |> put_status(200)
+          |> json(%{
+            requires_verification: true,
+            pending_authentication_token: pending_token,
+            email: email
+          })
+
+        {:error, :sso_required} ->
+          conn
+          |> put_status(422)
+          |> json(%{error: "Your organization requires SSO. Please use the SSO login."})
+
+        {:error, message} when is_binary(message) ->
+          conn
+          |> put_status(401)
+          |> json(%{error: message})
+      end
+    end
+  end
+
+  @doc """
+  Create a new user with email and password, then log them in.
+  """
+  def sign_up(conn, %{"email" => email, "password" => password} = params) do
+    user_attrs = %{
+      email: email,
+      password: password,
+      first_name: params["first_name"],
+      last_name: params["last_name"]
+    }
+
+    case WorkOS.UserManagement.create_user(user_attrs) do
+      {:ok, workos_user} ->
+        # Try to authenticate immediately
+        case authenticate_with_password_raw(email, password, conn) do
+          {:ok, _} ->
+            case find_or_create_user(workos_user) do
+              {:ok, user} -> log_in_user(conn, user)
+              {:error, _} -> fallback_login(conn, workos_user)
+            end
+
+          {:error, :email_verification_required, pending_token} ->
+            conn
+            |> put_status(200)
+            |> json(%{
+              requires_verification: true,
+              pending_authentication_token: pending_token,
+              email: email
+            })
+
+          {:error, _} ->
+            # Auth failed for another reason — still create local user and log in
+            fallback_login(conn, workos_user)
+        end
+
+      {:error, %WorkOS.Error{} = error} ->
+        conn
+        |> put_status(422)
+        |> json(%{error: format_workos_error(error)})
+
+      {:error, error} ->
+        Logger.error("WorkOS create_user failed: #{inspect(error)}")
+
+        conn
+        |> put_status(422)
+        |> json(%{error: "Could not create account. Please try again."})
+    end
+  end
+
+  @doc """
+  Complete email verification and authenticate.
+  Uses authenticate_with_email_verification with the pending token + code.
+  """
+  def verify_email(conn, %{"pending_authentication_token" => pending_token, "code" => code}) do
+    case WorkOS.UserManagement.authenticate_with_email_verification(%{
+           code: code,
+           pending_authentication_code: pending_token,
+           ip_address: get_peer_ip(conn),
+           user_agent: get_req_header(conn, "user-agent") |> List.first()
+         }) do
+      {:ok, %{user: workos_user}} ->
+        case find_or_create_user(workos_user) do
+          {:ok, user} -> log_in_user(conn, user)
+
+          {:error, _} ->
+            conn
+            |> put_status(422)
+            |> json(%{error: "Verification succeeded. Please sign in."})
+        end
+
+      {:error, %WorkOS.Error{} = error} ->
+        conn
+        |> put_status(422)
+        |> json(%{error: format_workos_error(error)})
+
+      {:error, _} ->
+        conn
+        |> put_status(422)
+        |> json(%{error: "Invalid or expired code. Please try again."})
+    end
+  end
+
+  @doc """
+  Resend the email verification code.
+  """
+  def resend_verification(conn, %{"user_id" => user_id}) do
+    _ = WorkOS.UserManagement.send_verification_email(user_id)
+    json(conn, %{sent: true})
+  end
+
+  @doc """
+  Send a password reset email. Always returns success to avoid leaking accounts.
+  """
+  def send_reset_email(conn, %{"email" => email}) do
+    reset_url = url(conn, ~p"/auth/reset-password")
+
+    # Always return success to avoid leaking whether an account exists
+    _ =
+      WorkOS.UserManagement.send_password_reset_email(%{
+        email: email,
+        password_reset_url: reset_url
+      })
+
+    json(conn, %{sent: true})
+  end
+
+  @doc """
+  Reset password with token from email link.
+  """
+  def do_reset_password(conn, %{"token" => token, "new_password" => new_password}) do
+    case WorkOS.UserManagement.reset_password(%{
+           token: token,
+           new_password: new_password
+         }) do
+      {:ok, _} ->
+        json(conn, %{success: true})
+
+      {:error, %WorkOS.Error{} = error} ->
+        conn
+        |> put_status(422)
+        |> json(%{error: format_workos_error(error)})
+
+      {:error, error} ->
+        Logger.error("Password reset failed: #{inspect(error)}")
+
+        conn
+        |> put_status(422)
+        |> json(%{error: "Could not reset password. The link may have expired."})
+    end
+  end
+
+  # --- Existing SSO/callback flow ---
+
+  @doc """
+  Redirect to WorkOS AuthKit hosted login (SSO fallback).
   In dev mode without WorkOS credentials, auto-creates a dev user.
   """
   def authorize(conn, _params) do
@@ -49,9 +282,7 @@ defmodule DustWeb.WorkOSAuthController do
         case find_or_create_user(workos_user) do
           {:ok, user} ->
             maybe_sync_sso_org(user, workos_org_id)
-
-            conn
-            |> log_in_user(user)
+            log_in_user(conn, user)
 
           {:error, reason} ->
             Logger.error("Account creation failed: #{inspect(reason)}")
@@ -77,18 +308,6 @@ defmodule DustWeb.WorkOSAuthController do
   end
 
   @doc """
-  Render the login page via Inertia.
-  """
-  def login(conn, _params) do
-    # If already logged in, redirect to home
-    if conn.assigns[:current_scope] && conn.assigns.current_scope.user do
-      redirect_to_org(conn, conn.assigns.current_scope.user)
-    else
-      render_inertia(conn, "Auth/Login")
-    end
-  end
-
-  @doc """
   Clear session and redirect to login.
   """
   def logout(conn, _params) do
@@ -102,7 +321,7 @@ defmodule DustWeb.WorkOSAuthController do
     |> redirect(to: ~p"/auth/login")
   end
 
-  # --- Private ---
+  # --- Private helpers ---
 
   defp find_or_create_user(%{"id" => workos_id, "email" => email} = workos_user) do
     first_name = workos_user["first_name"]
@@ -126,6 +345,16 @@ defmodule DustWeb.WorkOSAuthController do
             })
         end
     end
+  end
+
+  # Handle WorkOS structs (returned by create_user)
+  defp find_or_create_user(%{id: workos_id, email: email} = workos_user) do
+    find_or_create_user(%{
+      "id" => workos_id,
+      "email" => email,
+      "first_name" => Map.get(workos_user, :first_name),
+      "last_name" => Map.get(workos_user, :last_name)
+    })
   end
 
   defp create_user_with_org(attrs) do
@@ -170,6 +399,18 @@ defmodule DustWeb.WorkOSAuthController do
     end
   end
 
+  defp get_sso_org_id(%{organization_memberships: memberships})
+       when is_list(memberships) and memberships != [] do
+    # If user has org memberships, check if any require SSO
+    # For now, return the first org ID (can be refined later)
+    case List.first(memberships) do
+      %{organization_id: org_id} -> org_id
+      _ -> nil
+    end
+  end
+
+  defp get_sso_org_id(_), do: nil
+
   defp dev_bypass? do
     Application.get_env(:dust, :dev_bypass_auth, false)
   end
@@ -191,20 +432,45 @@ defmodule DustWeb.WorkOSAuthController do
           user
       end
 
-    conn
-    |> log_in_user(user)
+    log_in_user(conn, user)
+  end
+
+  defp fallback_login(conn, workos_user) do
+    case find_or_create_user(workos_user) do
+      {:ok, user} -> log_in_user(conn, user)
+
+      {:error, _} ->
+        conn
+        |> put_status(422)
+        |> json(%{error: "Account created but login failed. Try signing in."})
+    end
   end
 
   defp log_in_user(conn, user) do
     token = Accounts.generate_user_session_token(user)
     user_return_to = get_session(conn, :user_return_to)
+    redirect_to = user_return_to || signed_in_path(user)
 
-    conn
+    conn = conn
     |> configure_session(renew: true)
     |> clear_session()
     |> put_session(:user_token, token)
     |> put_session(:live_socket_id, "users_sessions:#{Base.url_encode64(token)}")
-    |> redirect(to: user_return_to || signed_in_path(user))
+
+    # JSON requests (from fetch-based auth forms) get a redirect URL;
+    # HTML requests (from SSO callback) get a server-side redirect.
+    if json_request?(conn) do
+      json(conn, %{redirect_to: redirect_to})
+    else
+      redirect(conn, to: redirect_to)
+    end
+  end
+
+  defp json_request?(conn) do
+    case get_req_header(conn, "accept") do
+      [accept | _] -> String.contains?(accept, "application/json")
+      _ -> false
+    end
   end
 
   defp signed_in_path(user) do
@@ -226,4 +492,60 @@ defmodule DustWeb.WorkOSAuthController do
       _ -> nil
     end
   end
+
+  # Make a raw authenticate_with_password call that preserves the
+  # pending_authentication_token from email_verification_required errors.
+  # The WorkOS SDK's Error struct drops this field.
+  defp authenticate_with_password_raw(email, password, conn) do
+    client = WorkOS.client()
+    body = %{
+      client_id: WorkOS.client_id(client),
+      client_secret: WorkOS.api_key(client),
+      grant_type: "password",
+      email: email,
+      password: password,
+      ip_address: get_peer_ip(conn),
+      user_agent: get_req_header(conn, "user-agent") |> List.first()
+    }
+
+    case Req.post("#{client.base_url}/user_management/authenticate",
+           json: body,
+           headers: [{"authorization", "Bearer #{WorkOS.api_key(client)}"}]
+         ) do
+      {:ok, %{status: status, body: body}} when status in 200..299 ->
+        {:ok, body["user"]}
+
+      {:ok, %{body: %{"code" => "email_verification_required", "pending_authentication_token" => token}}} ->
+        {:error, :email_verification_required, token}
+
+      {:ok, %{body: %{"code" => "sso_required"}}} ->
+        {:error, :sso_required}
+
+      {:ok, %{body: %{"message" => message}}} ->
+        {:error, message}
+
+      {:error, _} ->
+        {:error, "Authentication failed. Please try again."}
+    end
+  end
+
+
+  defp format_workos_error(%WorkOS.Error{message: message, errors: errors})
+       when is_list(errors) and errors != [] do
+    details =
+      errors
+      |> Enum.map(fn
+        %{"message" => msg} -> String.trim(msg)
+        _ -> nil
+      end)
+      |> Enum.reject(&is_nil/1)
+
+    case details do
+      [] -> message
+      msgs -> Enum.join(msgs, " ")
+    end
+  end
+
+  defp format_workos_error(%WorkOS.Error{message: message}) when is_binary(message), do: message
+  defp format_workos_error(_), do: "Something went wrong. Please try again."
 end

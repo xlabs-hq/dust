@@ -44,6 +44,14 @@ defmodule DustWeb.StoreController do
         |> put_flash(:info, "Store created")
         |> redirect(to: ~p"/#{scope.organization.slug}/stores/#{store.name}")
 
+      {:error, :limit_exceeded, %{limit: limit}} ->
+        conn
+        |> put_flash(
+          :error,
+          "Store limit reached (maximum #{limit}). Delete an existing store or upgrade your plan."
+        )
+        |> redirect(to: ~p"/#{scope.organization.slug}/stores")
+
       {:error, changeset} ->
         conn
         |> assign(:page_title, "Create Store")
