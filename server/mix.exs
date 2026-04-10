@@ -50,7 +50,7 @@ defmodule Dust.MixProject do
       {:bandit, "~> 1.5"},
 
       # Vite + Inertia
-      {:phoenix_vite, "~> 0.4", runtime: Mix.env() == :dev},
+      {:phoenix_vite, "~> 0.4"},
       {:bun, "~> 1.5 and >= 1.5.1", runtime: Mix.env() == :dev},
       {:inertia, "~> 2.0"},
 
