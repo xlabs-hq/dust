@@ -122,26 +122,37 @@ defmodule DustWeb.WorkOSAuthController do
 
     case WorkOS.UserManagement.create_user(user_attrs) do
       {:ok, workos_user} ->
-        # Try to authenticate immediately
-        case authenticate_with_password_raw(email, password, conn) do
-          {:ok, _} ->
-            case find_or_create_user(workos_user) do
-              {:ok, user} -> log_in_user(conn, user)
-              {:error, _} -> fallback_login(conn, workos_user)
-            end
+        authenticate_and_login(conn, workos_user, email, password)
 
-          {:error, :email_verification_required, pending_token} ->
-            conn
-            |> put_status(200)
-            |> json(%{
-              requires_verification: true,
-              pending_authentication_token: pending_token,
-              email: email
-            })
+      {:error, %WorkOS.Error{code: "user_creation_error"} = error}
+      when is_list(error.errors) ->
+        # User already exists on WorkOS (e.g. previous attempt created user but
+        # password validation failed). Look up the existing user, update their
+        # password, and proceed normally.
+        if Enum.any?(error.errors, &(&1["code"] == "email_not_available")) do
+          case find_workos_user_by_email(email) do
+            {:ok, workos_user} ->
+              case WorkOS.UserManagement.update_user(workos_user.id, %{password: password}) do
+                {:ok, workos_user} ->
+                  authenticate_and_login(conn, workos_user, email, password)
 
-          {:error, _} ->
-            # Auth failed for another reason — still create local user and log in
-            fallback_login(conn, workos_user)
+                {:error, %WorkOS.Error{} = update_error} ->
+                  conn
+                  |> put_status(422)
+                  |> json(%{error: format_workos_error(update_error)})
+              end
+
+            {:error, reason} ->
+              Logger.error("WorkOS list_users failed during retry: #{inspect(reason)}")
+
+              conn
+              |> put_status(422)
+              |> json(%{error: "Could not create account. Please try again."})
+          end
+        else
+          conn
+          |> put_status(422)
+          |> json(%{error: format_workos_error(error)})
         end
 
       {:error, %WorkOS.Error{} = error} ->
@@ -171,7 +182,8 @@ defmodule DustWeb.WorkOSAuthController do
          }) do
       {:ok, %{user: workos_user}} ->
         case find_or_create_user(workos_user) do
-          {:ok, user} -> log_in_user(conn, user)
+          {:ok, user} ->
+            log_in_user(conn, user)
 
           {:error, _} ->
             conn
@@ -323,6 +335,37 @@ defmodule DustWeb.WorkOSAuthController do
 
   # --- Private helpers ---
 
+  defp authenticate_and_login(conn, workos_user, email, password) do
+    case authenticate_with_password_raw(email, password, conn) do
+      {:ok, _} ->
+        case find_or_create_user(workos_user) do
+          {:ok, user} -> log_in_user(conn, user)
+          {:error, _} -> fallback_login(conn, workos_user)
+        end
+
+      {:error, :email_verification_required, pending_token} ->
+        conn
+        |> put_status(200)
+        |> json(%{
+          requires_verification: true,
+          pending_authentication_token: pending_token,
+          email: email
+        })
+
+      {:error, _} ->
+        # Auth failed for another reason — still create local user and log in
+        fallback_login(conn, workos_user)
+    end
+  end
+
+  defp find_workos_user_by_email(email) do
+    case WorkOS.UserManagement.list_users(%{email: email, limit: 1}) do
+      {:ok, %{data: [workos_user | _]}} -> {:ok, workos_user}
+      {:ok, %{data: []}} -> {:error, :not_found}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   defp find_or_create_user(%{"id" => workos_id, "email" => email} = workos_user) do
     first_name = workos_user["first_name"]
     last_name = workos_user["last_name"]
@@ -437,7 +480,8 @@ defmodule DustWeb.WorkOSAuthController do
 
   defp fallback_login(conn, workos_user) do
     case find_or_create_user(workos_user) do
-      {:ok, user} -> log_in_user(conn, user)
+      {:ok, user} ->
+        log_in_user(conn, user)
 
       {:error, _} ->
         conn
@@ -451,11 +495,12 @@ defmodule DustWeb.WorkOSAuthController do
     user_return_to = get_session(conn, :user_return_to)
     redirect_to = user_return_to || signed_in_path(user)
 
-    conn = conn
-    |> configure_session(renew: true)
-    |> clear_session()
-    |> put_session(:user_token, token)
-    |> put_session(:live_socket_id, "users_sessions:#{Base.url_encode64(token)}")
+    conn =
+      conn
+      |> configure_session(renew: true)
+      |> clear_session()
+      |> put_session(:user_token, token)
+      |> put_session(:live_socket_id, "users_sessions:#{Base.url_encode64(token)}")
 
     # JSON requests (from fetch-based auth forms) get a redirect URL;
     # HTML requests (from SSO callback) get a server-side redirect.
@@ -498,6 +543,7 @@ defmodule DustWeb.WorkOSAuthController do
   # The WorkOS SDK's Error struct drops this field.
   defp authenticate_with_password_raw(email, password, conn) do
     client = WorkOS.client()
+
     body = %{
       client_id: WorkOS.client_id(client),
       client_secret: WorkOS.api_key(client),
@@ -515,7 +561,10 @@ defmodule DustWeb.WorkOSAuthController do
       {:ok, %{status: status, body: body}} when status in 200..299 ->
         {:ok, body["user"]}
 
-      {:ok, %{body: %{"code" => "email_verification_required", "pending_authentication_token" => token}}} ->
+      {:ok,
+       %{
+         body: %{"code" => "email_verification_required", "pending_authentication_token" => token}
+       }} ->
         {:error, :email_verification_required, token}
 
       {:ok, %{body: %{"code" => "sso_required"}}} ->
@@ -528,7 +577,6 @@ defmodule DustWeb.WorkOSAuthController do
         {:error, "Authentication failed. Please try again."}
     end
   end
-
 
   defp format_workos_error(%WorkOS.Error{message: message, errors: errors})
        when is_list(errors) and errors != [] do
