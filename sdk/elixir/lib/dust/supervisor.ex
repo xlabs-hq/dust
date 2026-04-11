@@ -22,9 +22,15 @@ defmodule Dust.Supervisor do
     token = Keyword.get(opts, :token, System.get_env("DUST_API_KEY"))
     device_id = Keyword.get(opts, :device_id)
 
+    activity_name = Keyword.get(opts, :activity_buffer_name, Dust.ActivityBuffer)
+
+    activity_children = [
+      {Dust.ActivityBuffer, name: activity_name}
+    ]
+
     engine_children =
       Enum.map(stores, fn store ->
-        {Dust.SyncEngine, store: store, cache: cache}
+        {Dust.SyncEngine, store: store, cache: cache, activity_buffer: activity_name}
       end)
 
     connection_children =
@@ -70,6 +76,7 @@ defmodule Dust.Supervisor do
 
     children =
       registry_children ++
+        activity_children ++
         engine_children ++
         connection_children ++
         subscriber_children

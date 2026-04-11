@@ -1,7 +1,7 @@
 defmodule Dust.SyncEngine do
   use GenServer
 
-  defstruct [:store, :cache, :cache_target, :callbacks, :pending_ops, :status, :last_store_seq, :catch_up_seq]
+  defstruct [:store, :cache, :cache_target, :callbacks, :pending_ops, :status, :last_store_seq, :catch_up_seq, :activity_buffer]
 
   def start_link(opts) do
     store = Keyword.fetch!(opts, :store)
@@ -107,6 +107,7 @@ defmodule Dust.SyncEngine do
 
     callbacks = Dust.CallbackRegistry.new()
     last_seq = cache_mod.last_seq(cache_target, store)
+    activity_buffer = Keyword.get(opts, :activity_buffer)
 
     state = %__MODULE__{
       store: store,
@@ -115,7 +116,8 @@ defmodule Dust.SyncEngine do
       callbacks: callbacks,
       pending_ops: %{},
       status: :disconnected,
-      last_store_seq: last_seq
+      last_store_seq: last_seq,
+      activity_buffer: activity_buffer
     }
 
     {:ok, state}
@@ -476,6 +478,16 @@ defmodule Dust.SyncEngine do
     # Reconcile pending ops
     was_pending = Map.has_key?(state.pending_ops, client_op_id)
     pending = Map.delete(state.pending_ops, client_op_id)
+
+    # Append to activity buffer for dashboard
+    if state.activity_buffer do
+      Dust.ActivityBuffer.append(state.activity_buffer, state.store, %{
+        path: path,
+        op: op,
+        source: (if was_pending, do: :local, else: :server),
+        seq: store_seq
+      })
+    end
 
     # If this was our own write accepted as-is, don't fire callback again
     unless was_pending do
