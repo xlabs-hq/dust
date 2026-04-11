@@ -363,6 +363,11 @@ defmodule Dust.SyncEngine do
   end
 
   @impl true
+  def handle_call(:cache_info, _from, state) do
+    {:reply, {state.cache, state.cache_target}, state}
+  end
+
+  @impl true
   def handle_call({:on, pattern, callback, opts}, _from, state) do
     ref = Dust.CallbackRegistry.register(state.callbacks, state.store, pattern, callback, opts)
     {:reply, ref, state}

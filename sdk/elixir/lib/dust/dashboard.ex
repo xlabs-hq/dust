@@ -179,6 +179,7 @@ if Code.ensure_loaded?(Phoenix.LiveDashboard.PageBuilder) do
       {:noreply, socket}
     end
 
+    @impl true
     def handle_event("filter_entries", %{"pattern" => pattern}, socket) do
       store = socket.assigns.selected_store
       {entries, cursor} = browse_store(store, nil, pattern)
@@ -192,6 +193,7 @@ if Code.ensure_loaded?(Phoenix.LiveDashboard.PageBuilder) do
       {:noreply, socket}
     end
 
+    @impl true
     def handle_event("next_page", _, socket) do
       store = socket.assigns.selected_store
       cursor = socket.assigns.entries_cursor
@@ -250,7 +252,7 @@ if Code.ensure_loaded?(Phoenix.LiveDashboard.PageBuilder) do
           case Registry.lookup(Dust.SyncEngineRegistry, store) do
             [{pid, _}] when is_pid(pid) ->
               if Process.alive?(pid) do
-                %{cache: cache_mod, cache_target: target} = :sys.get_state(pid)
+                {cache_mod, target} = GenServer.call(pid, :cache_info, 1000)
 
                 if function_exported?(cache_mod, :browse, 3) do
                   opts = [limit: 50, cursor: cursor]
