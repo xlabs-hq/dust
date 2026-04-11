@@ -343,10 +343,19 @@ defmodule Dust.SyncEngine do
 
   @impl true
   def handle_call(:status, _from, state) do
+    entry_count =
+      if function_exported?(state.cache, :count, 2) do
+        state.cache.count(state.cache_target, state.store)
+      else
+        nil
+      end
+
     status = %{
       connection: state.status,
       last_store_seq: state.last_store_seq,
-      pending_ops: map_size(state.pending_ops)
+      pending_ops: map_size(state.pending_ops),
+      entry_count: entry_count,
+      store: state.store
     }
     {:reply, status, state}
   end

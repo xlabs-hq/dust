@@ -14,6 +14,10 @@ defmodule Dust.Connection do
     Slipstream.start_link(__MODULE__, opts, name: opts[:name])
   end
 
+  def info(pid) do
+    GenServer.call(pid, :info)
+  end
+
   @impl Slipstream
   def init(opts) do
     url = Keyword.fetch!(opts, :url)
@@ -30,6 +34,9 @@ defmodule Dust.Connection do
       |> assign(:joined_stores, MapSet.new())
       |> assign(:outbox, %{})
       |> assign(:pending_refs, %{})
+      |> assign(:url, url)
+      |> assign(:status, :disconnected)
+      |> assign(:connected_at, nil)
 
     if test_mode? do
       {:ok, socket}
@@ -61,6 +68,12 @@ defmodule Dust.Connection do
   @impl Slipstream
   def handle_connect(socket) do
     Logger.info("[Dust.Connection] Connected to server")
+
+    socket =
+      socket
+      |> assign(:status, :connected)
+      |> assign(:connected_at, DateTime.utc_now())
+
     stores = socket.assigns.stores
 
     # Join each store's channel topic
@@ -120,6 +133,8 @@ defmodule Dust.Connection do
   @impl Slipstream
   def handle_disconnect(reason, socket) do
     Logger.warning("[Dust.Connection] Disconnected: #{inspect(reason)}")
+
+    socket = assign(socket, :status, :reconnecting)
 
     # Update all joined stores to :reconnecting
     Enum.each(socket.assigns.joined_stores, fn store_name ->
@@ -229,6 +244,31 @@ defmodule Dust.Connection do
       outbox = Map.put(outbox, store_name, store_queue)
       {:noreply, assign(socket, :outbox, outbox)}
     end
+  end
+
+  # Note: Slipstream processes support handle_call via GenServer
+  def handle_call(:info, _from, socket) do
+    now = DateTime.utc_now()
+    connected_at = socket.assigns.connected_at
+
+    uptime_seconds =
+      if connected_at do
+        DateTime.diff(now, connected_at, :second)
+      else
+        nil
+      end
+
+    info = %{
+      status: socket.assigns.status,
+      url: socket.assigns.url,
+      device_id: socket.assigns.device_id,
+      connected_at: connected_at,
+      uptime_seconds: uptime_seconds,
+      stores: socket.assigns.stores,
+      joined_stores: MapSet.to_list(socket.assigns.joined_stores)
+    }
+
+    {:reply, info, socket}
   end
 
   # -- Private helpers --
