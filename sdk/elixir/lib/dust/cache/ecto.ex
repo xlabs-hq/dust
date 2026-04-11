@@ -106,6 +106,72 @@ if Code.ensure_loaded?(Ecto.Query) do
       repo.one(query) || 0
     end
 
+    @impl Dust.Cache
+    def count(repo, store) do
+      query =
+        from(c in CacheEntry,
+          where: c.store == ^store and c.path != ^@seq_sentinel_path,
+          select: count()
+        )
+
+      repo.one(query)
+    end
+
+    @impl Dust.Cache
+    def browse(repo, store, opts) do
+      pattern = Keyword.get(opts, :pattern, "**")
+      cursor = Keyword.get(opts, :cursor)
+      limit = Keyword.get(opts, :limit, 50)
+
+      compiled = Dust.Protocol.Glob.compile(pattern)
+
+      query =
+        from(c in CacheEntry,
+          where: c.store == ^store and c.path != ^@seq_sentinel_path,
+          order_by: [asc: c.path],
+          limit: ^(limit + 1),
+          select: {c.path, c.value, c.type, c.seq}
+        )
+
+      query =
+        if cursor do
+          from(c in query, where: c.path > ^cursor)
+        else
+          query
+        end
+
+      rows = repo.all(query)
+
+      # Post-filter by glob pattern (only when pattern is not "**")
+      filtered =
+        if pattern == "**" do
+          rows
+        else
+          Enum.filter(rows, fn {path, _, _, _} ->
+            Dust.Protocol.Glob.match?(compiled, String.split(path, "."))
+          end)
+        end
+
+      # Decode JSON values
+      decoded =
+        Enum.map(filtered, fn {path, json, type, seq} ->
+          {path, Jason.decode!(json), type, seq}
+        end)
+
+      # Determine pagination
+      page = Enum.take(decoded, limit)
+
+      next_cursor =
+        if length(decoded) > limit do
+          {last_path, _, _, _} = List.last(page)
+          last_path
+        else
+          nil
+        end
+
+      {page, next_cursor}
+    end
+
     defp update_seq_sentinel(repo, store, seq) do
       import Ecto.Query
 

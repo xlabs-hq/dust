@@ -38,6 +38,16 @@ defmodule Dust.Cache.Memory do
     GenServer.call(pid, {:last_seq, store})
   end
 
+  @impl Dust.Cache
+  def count(pid, store) do
+    GenServer.call(pid, {:count, store})
+  end
+
+  @impl Dust.Cache
+  def browse(pid, store, opts) do
+    GenServer.call(pid, {:browse, store, opts})
+  end
+
   # Server
 
   @impl true
@@ -97,5 +107,52 @@ defmodule Dust.Cache.Memory do
   @impl true
   def handle_call({:last_seq, store}, _from, state) do
     {:reply, Map.get(state.seqs, store, 0), state}
+  end
+
+  @impl true
+  def handle_call({:count, store}, _from, state) do
+    count =
+      state.entries
+      |> Enum.count(fn {{s, _path}, _} -> s == store end)
+
+    {:reply, count, state}
+  end
+
+  @impl true
+  def handle_call({:browse, store, opts}, _from, state) do
+    pattern = Keyword.get(opts, :pattern, "**")
+    cursor = Keyword.get(opts, :cursor)
+    limit = Keyword.get(opts, :limit, 50)
+
+    compiled = Dust.Protocol.Glob.compile(pattern)
+
+    entries =
+      state.entries
+      |> Enum.filter(fn {{s, path}, _} ->
+        s == store and Dust.Protocol.Glob.match?(compiled, String.split(path, "."))
+      end)
+      |> Enum.map(fn {{_s, path}, {value, type, seq}} -> {path, value, type, seq} end)
+      |> Enum.sort_by(fn {path, _, _, _} -> path end)
+
+    # Apply cursor (keyset: path > cursor)
+    entries =
+      if cursor do
+        Enum.drop_while(entries, fn {path, _, _, _} -> path <= cursor end)
+      else
+        entries
+      end
+
+    # Apply limit
+    page = Enum.take(entries, limit)
+
+    next_cursor =
+      if length(page) < limit or length(page) == 0 do
+        nil
+      else
+        {last_path, _, _, _} = List.last(page)
+        last_path
+      end
+
+    {:reply, {page, next_cursor}, state}
   end
 end
