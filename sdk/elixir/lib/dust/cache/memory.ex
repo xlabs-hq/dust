@@ -56,12 +56,12 @@ defmodule Dust.Cache.Memory do
 
   @impl true
   def handle_call({:read_all, store, pattern}, _from, state) do
-    compiled = DustProtocol.Glob.compile(pattern)
+    compiled = Dust.Protocol.Glob.compile(pattern)
 
     results =
       state.entries
       |> Enum.filter(fn {{s, path}, _} ->
-        s == store and DustProtocol.Glob.match?(compiled, String.split(path, "."))
+        s == store and Dust.Protocol.Glob.match?(compiled, String.split(path, "."))
       end)
       |> Enum.map(fn {{_s, path}, {value, _type, _seq}} -> {path, value} end)
 

@@ -21,7 +21,7 @@ defmodule Dust.CallbackRegistry do
   """
   def register(table, store, pattern, callback, opts \\ []) when is_function(callback, 1) do
     ref = make_ref()
-    compiled = DustProtocol.Glob.compile(pattern)
+    compiled = Dust.Protocol.Glob.compile(pattern)
     max_queue_size = Keyword.get(opts, :max_queue_size, @default_max_queue_size)
     on_resync = Keyword.get(opts, :on_resync)
 
@@ -58,7 +58,7 @@ defmodule Dust.CallbackRegistry do
 
     :ets.lookup(table, store)
     |> Enum.filter(fn {_store, compiled, _pattern, _pid, _ref, _max, _resync} ->
-      DustProtocol.Glob.match?(compiled, path_segments)
+      Dust.Protocol.Glob.match?(compiled, path_segments)
     end)
     |> Enum.map(fn {_store, _compiled, _pattern, pid, ref, max, on_resync} ->
       {pid, ref, max, on_resync}

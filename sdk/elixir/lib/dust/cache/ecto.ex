@@ -23,7 +23,7 @@ defmodule Dust.Cache.Ecto do
 
   @impl Dust.Cache
   def read_all(repo, store, pattern) do
-    compiled = DustProtocol.Glob.compile(pattern)
+    compiled = Dust.Protocol.Glob.compile(pattern)
 
     query =
       from(c in CacheEntry,
@@ -33,7 +33,7 @@ defmodule Dust.Cache.Ecto do
 
     repo.all(query)
     |> Enum.filter(fn {path, _} ->
-      DustProtocol.Glob.match?(compiled, String.split(path, "."))
+      Dust.Protocol.Glob.match?(compiled, String.split(path, "."))
     end)
     |> Enum.map(fn {path, json} -> {path, Jason.decode!(json)} end)
   end
