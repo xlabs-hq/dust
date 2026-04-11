@@ -1,0 +1,6 @@
+[
+  {"format": "json", "input": {"key": "value"}, "roundtrip": true},
+  {"format": "json", "input": {"nested": {"a": 1}}, "roundtrip": true},
+  {"format": "msgpack", "input": {"key": "value"}, "roundtrip": true},
+  {"format": "msgpack", "input": {"num": 42, "str": "hello"}, "roundtrip": true}
+]

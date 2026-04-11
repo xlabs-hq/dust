@@ -1,0 +1,8 @@
+[
+  {"input": "a.b.c", "segments": ["a", "b", "c"], "valid": true},
+  {"input": "hello", "segments": ["hello"], "valid": true},
+  {"input": "", "valid": false, "error": "empty_path"},
+  {"input": "a..b", "valid": false, "error": "empty_segment"},
+  {"input": ".a", "valid": false, "error": "empty_segment"},
+  {"input": "a.", "valid": false, "error": "empty_segment"}
+]

@@ -1,0 +1,13 @@
+[
+  {"pattern": "**", "path": ["a"], "match": true},
+  {"pattern": "**", "path": ["a", "b", "c"], "match": true},
+  {"pattern": "*", "path": ["a"], "match": true},
+  {"pattern": "*", "path": ["a", "b"], "match": false},
+  {"pattern": "posts.*", "path": ["posts", "hello"], "match": true},
+  {"pattern": "posts.*", "path": ["posts", "hello", "title"], "match": false},
+  {"pattern": "posts.**", "path": ["posts", "hello", "title"], "match": true},
+  {"pattern": "a.b.c", "path": ["a", "b", "c"], "match": true},
+  {"pattern": "a.b.c", "path": ["a", "b", "d"], "match": false},
+  {"pattern": "a.*.c", "path": ["a", "b", "c"], "match": true},
+  {"pattern": "a.*.c", "path": ["a", "b", "d"], "match": false}
+]
