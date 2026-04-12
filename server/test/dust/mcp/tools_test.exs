@@ -1,8 +1,10 @@
 defmodule Dust.MCP.ToolsTest do
   use Dust.DataCase
 
+  alias Dust.Accounts
   alias Dust.IntegrationHelpers
   alias Dust.MCP.Principal
+  alias Dust.Stores
   alias GenMCP.MCP
   alias GenMCP.Mux.Channel
 
@@ -39,6 +41,22 @@ defmodule Dust.MCP.ToolsTest do
         name: "test",
         arguments: arguments
       }
+    }
+  end
+
+  defp user_session_principal(user) do
+    %Principal{kind: :user_session, user: user}
+  end
+
+  defp user_session_channel(user) do
+    principal = user_session_principal(user)
+
+    %Channel{
+      client: self(),
+      progress_token: nil,
+      status: :request,
+      assigns: %{mcp_principal: principal},
+      log_level: :notice
     }
   end
 
@@ -192,6 +210,28 @@ defmodule Dust.MCP.ToolsTest do
       stores = Jason.decode!(text)
       assert length(stores) == 1
       assert hd(stores)["name"] == ctx.store_full_name
+    end
+
+    test "under user_session lists stores across all the user's orgs" do
+      {:ok, user} = Accounts.create_user(%{email: "multi-org@example.com"})
+
+      {:ok, org_a} =
+        Accounts.create_organization_with_owner(user, %{name: "OrgA", slug: "org-a"})
+
+      {:ok, org_b} = Accounts.create_organization(%{name: "OrgB", slug: "org-b"})
+      {:ok, _} = Accounts.ensure_membership(user, org_b)
+
+      {:ok, _} = Stores.create_store(org_a, %{name: "alpha"})
+      {:ok, _} = Stores.create_store(org_b, %{name: "beta"})
+
+      req = make_req(%{})
+      channel = user_session_channel(user)
+      {:result, result, _} = Dust.MCP.Tools.DustStores.call(req, channel, [])
+
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
+      names = text |> Jason.decode!() |> Enum.map(& &1["name"])
+      assert "org-a/alpha" in names
+      assert "org-b/beta" in names
     end
   end
 
