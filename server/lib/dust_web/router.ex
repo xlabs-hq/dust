@@ -163,7 +163,12 @@ defmodule DustWeb.Router do
         Dust.MCP.Tools.DustStatus,
         Dust.MCP.Tools.DustLog,
         Dust.MCP.Tools.DustPutFile,
-        Dust.MCP.Tools.DustFetchFile
+        Dust.MCP.Tools.DustFetchFile,
+        Dust.MCP.Tools.DustCreateStore,
+        Dust.MCP.Tools.DustExport,
+        Dust.MCP.Tools.DustDiff,
+        Dust.MCP.Tools.DustImport,
+        Dust.MCP.Tools.DustClone
       ]
   end
 
