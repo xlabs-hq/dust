@@ -32,7 +32,7 @@ defmodule Dust.MCP.Tools.DustImport do
 
       true ->
         with {:ok, store} <- Authz.authorize_store(principal, full_name, :write),
-             lines = String.split(payload, "\n"),
+             lines = String.split(payload, ~r/\r?\n/),
              {:ok, count} <- Sync.Import.from_jsonl(store.id, lines, device_id(principal)) do
           {:result,
            MCP.call_tool_result(text: Jason.encode!(%{ok: true, entries_imported: count})),

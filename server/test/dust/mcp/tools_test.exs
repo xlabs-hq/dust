@@ -925,6 +925,25 @@ defmodule Dust.MCP.ToolsTest do
       {:error, reason, _} = Dust.MCP.Tools.DustImport.call(req, ro_channel, [])
       assert reason =~ "write permission"
     end
+
+    test "tolerates CRLF line endings in payload", ctx do
+      header = Jason.encode!(%{_header: true, store: ctx.store_full_name, seq: 0, entry_count: 1})
+      entry = Jason.encode!(%{path: "crlf.foo", value: "bar"})
+      payload = Enum.join([header, entry], "\r\n")
+
+      req = make_req(%{"store" => ctx.store_full_name, "payload" => payload})
+      {:result, result, _} = Dust.MCP.Tools.DustImport.call(req, ctx.channel, [])
+
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
+      decoded = Jason.decode!(text)
+      assert decoded["ok"] == true
+      assert decoded["entries_imported"] == 1
+
+      get_req = make_req(%{"store" => ctx.store_full_name, "path" => "crlf.foo"})
+      {:result, get_result, _} = Dust.MCP.Tools.DustGet.call(get_req, ctx.channel, [])
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: gtext}]} = get_result
+      assert Jason.decode!(gtext) == "bar"
+    end
   end
 
   describe "dust_clone" do
