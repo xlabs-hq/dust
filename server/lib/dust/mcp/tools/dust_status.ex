@@ -9,23 +9,25 @@ defmodule Dust.MCP.Tools.DustStatus do
       type: :object,
       properties: %{
         store: %{type: :string, description: "Full store name (org/store)"}
-      },
-      required: [:store]
+      }
     },
     annotations: %{readOnlyHint: true}
 
+  alias Dust.MCP.Authz
+  alias Dust.MCP.Principal
+  alias Dust.Sync
   alias GenMCP.MCP
 
   @impl true
   def call(req, channel, _arg) do
-    %{"store" => store_name} = req.params.arguments
-    store_token = channel.assigns.store_token
+    principal = channel.assigns.mcp_principal
+    store_arg = Map.get(req.params.arguments, "store")
 
-    with {:ok, store} <- resolve_store(store_name, store_token) do
+    with {:ok, store, full_name} <- resolve(principal, store_arg) do
       status = %{
-        store: store_name,
-        current_seq: Dust.Sync.current_seq(store.id),
-        entry_count: Dust.Sync.entry_count(store.id)
+        store: full_name,
+        current_seq: Sync.current_seq(store.id),
+        entry_count: Sync.entry_count(store.id)
       }
 
       {:result, MCP.call_tool_result(text: Jason.encode!(status)), channel}
@@ -35,21 +37,27 @@ defmodule Dust.MCP.Tools.DustStatus do
     end
   end
 
-  defp resolve_store(full_name, store_token) do
-    case Dust.Stores.get_store_by_full_name(full_name) do
-      nil ->
-        {:error, "Store not found: #{full_name}"}
+  defp resolve(%Principal{kind: :store_token, store_token: token}, nil) do
+    store = token.store
+    org = store.organization
+    {:ok, store, "#{org.slug}/#{store.name}"}
+  end
 
-      store ->
-        if store.id == store_token.store_id do
-          if Dust.Stores.StoreToken.can_read?(store_token) do
-            {:ok, store}
-          else
-            {:error, "Token does not have read permission"}
-          end
-        else
-          {:error, "Token does not have access to store: #{full_name}"}
-        end
+  defp resolve(%Principal{kind: :store_token} = principal, full_name)
+       when is_binary(full_name) do
+    with {:ok, store} <- Authz.authorize_store(principal, full_name, :read) do
+      {:ok, store, full_name}
+    end
+  end
+
+  defp resolve(%Principal{kind: :user_session}, nil) do
+    {:error, "store argument is required for user-session callers"}
+  end
+
+  defp resolve(%Principal{kind: :user_session} = principal, full_name)
+       when is_binary(full_name) do
+    with {:ok, store} <- Authz.authorize_store(principal, full_name, :read) do
+      {:ok, store, full_name}
     end
   end
 end

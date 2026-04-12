@@ -252,6 +252,59 @@ defmodule Dust.MCP.ToolsTest do
       assert status["current_seq"] >= 1
       assert status["entry_count"] >= 1
     end
+
+    test "store_token without store argument returns the bound store", ctx do
+      req =
+        make_req(%{"store" => ctx.store_full_name, "path" => "key", "value" => "val"})
+
+      {:result, _, _} = Dust.MCP.Tools.DustPut.call(req, ctx.channel, [])
+
+      status_req = make_req(%{})
+      {:result, result, _} = Dust.MCP.Tools.DustStatus.call(status_req, ctx.channel, [])
+
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
+      status = Jason.decode!(text)
+      assert status["store"] == ctx.store_full_name
+      assert status["current_seq"] >= 1
+      assert status["entry_count"] >= 1
+    end
+
+    test "user_session with explicit store argument returns status for that store" do
+      {:ok, user} = Accounts.create_user(%{email: "status-user@example.com"})
+
+      {:ok, org} =
+        Accounts.create_organization_with_owner(user, %{name: "StatusOrg", slug: "statusorg"})
+
+      {:ok, store} = Stores.create_store(org, %{name: "notes"})
+
+      Dust.Sync.write(store.id, %{
+        op: :set,
+        path: "key",
+        value: "val",
+        device_id: "test",
+        client_op_id: Ecto.UUID.generate()
+      })
+
+      full_name = "#{org.slug}/#{store.name}"
+      status_req = make_req(%{"store" => full_name})
+      channel = user_session_channel(user)
+      {:result, result, _} = Dust.MCP.Tools.DustStatus.call(status_req, channel, [])
+
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
+      status = Jason.decode!(text)
+      assert status["store"] == full_name
+      assert status["current_seq"] >= 1
+      assert status["entry_count"] >= 1
+    end
+
+    test "user_session without store argument returns an error" do
+      {:ok, user} = Accounts.create_user(%{email: "status-noarg@example.com"})
+
+      status_req = make_req(%{})
+      channel = user_session_channel(user)
+      {:error, reason, _} = Dust.MCP.Tools.DustStatus.call(status_req, channel, [])
+      assert reason =~ "store argument is required"
+    end
   end
 
   describe "dust_merge" do
