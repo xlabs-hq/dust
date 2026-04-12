@@ -15,14 +15,15 @@ defmodule Dust.MCP.Tools.DustPut do
     },
     annotations: %{readOnlyHint: false}
 
+  alias Dust.MCP.Authz
   alias GenMCP.MCP
 
   @impl true
   def call(req, channel, _arg) do
     %{"store" => store_name, "path" => path, "value" => value} = req.params.arguments
-    store_token = channel.assigns.store_token
+    principal = channel.assigns.mcp_principal
 
-    with {:ok, store} <- resolve_store(store_name, store_token) do
+    with {:ok, store} <- Authz.authorize_store(principal, store_name, :write) do
       case Dust.Sync.write(store.id, %{
              op: :set,
              path: path,
@@ -40,24 +41,6 @@ defmodule Dust.MCP.Tools.DustPut do
     else
       {:error, reason} ->
         {:error, reason, channel}
-    end
-  end
-
-  defp resolve_store(full_name, store_token) do
-    case Dust.Stores.get_store_by_full_name(full_name) do
-      nil ->
-        {:error, "Store not found: #{full_name}"}
-
-      store ->
-        if store.id == store_token.store_id do
-          if Dust.Stores.StoreToken.can_write?(store_token) do
-            {:ok, store}
-          else
-            {:error, "Token does not have write permission"}
-          end
-        else
-          {:error, "Token does not have access to store: #{full_name}"}
-        end
     end
   end
 end
