@@ -767,6 +767,43 @@ defmodule Dust.MCP.ToolsTest do
     end
   end
 
+  describe "dust_create_store" do
+    test "creates store under user's org" do
+      {:ok, user} = Accounts.create_user(%{email: "create-store@example.com"})
+
+      {:ok, org} =
+        Accounts.create_organization_with_owner(user, %{name: "CreateOrg", slug: "create-org"})
+
+      req = make_req(%{"org" => org.slug, "name" => "fresh"})
+      channel = user_session_channel(user)
+
+      {:result, result, _} = Dust.MCP.Tools.DustCreateStore.call(req, channel, [])
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
+      decoded = Jason.decode!(text)
+      assert decoded["store"] == "#{org.slug}/fresh"
+      assert is_binary(decoded["id"])
+    end
+
+    test "denies when user not in org" do
+      {:ok, user} = Accounts.create_user(%{email: "outsider@example.com"})
+
+      {:ok, _other_user} = Accounts.create_user(%{email: "owner@example.com"})
+      {:ok, org} = Accounts.create_organization(%{name: "OtherOrg", slug: "other-org"})
+
+      req = make_req(%{"org" => org.slug, "name" => "fresh"})
+      channel = user_session_channel(user)
+
+      {:error, reason, _} = Dust.MCP.Tools.DustCreateStore.call(req, channel, [])
+      assert reason =~ "Not a member"
+    end
+
+    test "store_token principals cannot create stores", ctx do
+      req = make_req(%{"org" => ctx.org.slug, "name" => "fresh"})
+      {:error, reason, _} = Dust.MCP.Tools.DustCreateStore.call(req, ctx.channel, [])
+      assert reason =~ "Store tokens cannot create"
+    end
+  end
+
   describe "permission checks" do
     test "read-only token cannot write", ctx do
       # Create a read-only token
