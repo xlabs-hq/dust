@@ -149,7 +149,7 @@ defmodule DustWeb.Router do
       server: GenMCP.Suite,
       server_name: "Dust",
       server_version: "0.1.0",
-      copy_assigns: [:store_token],
+      copy_assigns: [:mcp_principal, :store_token],
       tools: [
         Dust.MCP.Tools.DustGet,
         Dust.MCP.Tools.DustPut,
