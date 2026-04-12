@@ -101,3 +101,8 @@ config :inertia, static_paths: []
 config :swoosh, :api_client, false
 
 # Dev bypass for WorkOS auth is configured in runtime.exs (after .env loads)
+
+# MCP OAuth dev defaults (overridden in runtime.exs for prod)
+config :dust, :mcp_base_url, "http://localhost:7755"
+config :dust, :authkit_base_url, System.get_env("AUTHKIT_BASE_URL", "")
+config :workos, :mcp_client_id, System.get_env("WORKOS_MCP_CLIENT_ID", "client_dev_unconfigured")

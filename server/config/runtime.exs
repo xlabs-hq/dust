@@ -50,6 +50,14 @@ config :dust, AdminWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("ADMIN_PORT", "7766"))]
 
 if config_env() == :prod do
+  config :dust,
+         :mcp_base_url,
+         System.get_env("MCP_BASE_URL") || "https://#{System.get_env("PHX_HOST")}"
+
+  config :dust, :authkit_base_url, System.fetch_env!("AUTHKIT_BASE_URL")
+
+  config :workos, :mcp_client_id, System.fetch_env!("WORKOS_MCP_CLIENT_ID")
+
   database_url =
     System.get_env("DATABASE_URL") ||
       raise """
