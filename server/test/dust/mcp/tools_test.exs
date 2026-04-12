@@ -881,6 +881,52 @@ defmodule Dust.MCP.ToolsTest do
     end
   end
 
+  describe "dust_import" do
+    test "imports JSONL payload into store", ctx do
+      header = Jason.encode!(%{_header: true, store: ctx.store_full_name, seq: 0, entry_count: 1})
+      entry = Jason.encode!(%{path: "imported.foo", value: "bar"})
+      payload = Enum.join([header, entry], "\n")
+
+      req = make_req(%{"store" => ctx.store_full_name, "payload" => payload})
+      {:result, result, _} = Dust.MCP.Tools.DustImport.call(req, ctx.channel, [])
+
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
+      decoded = Jason.decode!(text)
+      assert decoded["ok"] == true
+      assert decoded["entries_imported"] == 1
+
+      get_req = make_req(%{"store" => ctx.store_full_name, "path" => "imported.foo"})
+      {:result, get_result, _} = Dust.MCP.Tools.DustGet.call(get_req, ctx.channel, [])
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: gtext}]} = get_result
+      assert Jason.decode!(gtext) == "bar"
+    end
+
+    test "denies write when principal lacks permission", ctx do
+      {:ok, ro_token} =
+        Dust.Stores.create_store_token(ctx.store, %{
+          name: "readonly",
+          read: true,
+          write: false,
+          created_by_id: ctx.token.created_by_id
+        })
+
+      {:ok, ro_token} = Dust.Stores.authenticate_token(ro_token.raw_token)
+      ro_principal = %Principal{kind: :store_token, store_token: ro_token}
+
+      ro_channel = %Channel{
+        client: self(),
+        progress_token: nil,
+        status: :request,
+        assigns: %{store_token: ro_token, mcp_principal: ro_principal},
+        log_level: :notice
+      }
+
+      req = make_req(%{"store" => ctx.store_full_name, "payload" => ""})
+      {:error, reason, _} = Dust.MCP.Tools.DustImport.call(req, ro_channel, [])
+      assert reason =~ "write permission"
+    end
+  end
+
   describe "permission checks" do
     test "read-only token cannot write", ctx do
       # Create a read-only token
