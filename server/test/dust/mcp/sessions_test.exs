@@ -168,6 +168,58 @@ defmodule Dust.MCP.SessionsTest do
     end
   end
 
+  describe "touch_and_slide/1" do
+    test "always bumps last_activity_at" do
+      {:ok, user} =
+        Accounts.create_user(%{
+          email: "test_#{System.unique_integer([:positive])}@example.com"
+        })
+
+      {_raw, session} = issue_test_token(user)
+
+      {:ok, stale} =
+        session
+        |> Ecto.Changeset.change(
+          last_activity_at: DateTime.add(DateTime.utc_now(), -120, :second)
+        )
+        |> Dust.Repo.update()
+
+      {:ok, touched} = Sessions.touch_and_slide(stale)
+      assert DateTime.compare(touched.last_activity_at, stale.last_activity_at) == :gt
+    end
+
+    test "extends expires_at when remaining lifetime is less than (30d - 1h)" do
+      {:ok, user} =
+        Accounts.create_user(%{
+          email: "test_#{System.unique_integer([:positive])}@example.com"
+        })
+
+      {_raw, session} = issue_test_token(user)
+
+      short_expiry = DateTime.add(DateTime.utc_now(), 28 * 86_400, :second)
+
+      {:ok, narrowed} =
+        session
+        |> Ecto.Changeset.change(expires_at: short_expiry)
+        |> Dust.Repo.update()
+
+      {:ok, slid} = Sessions.touch_and_slide(narrowed)
+      assert DateTime.diff(slid.expires_at, DateTime.utc_now(), :day) >= 29
+    end
+
+    test "does NOT extend expires_at when remaining lifetime is still close to 30d" do
+      {:ok, user} =
+        Accounts.create_user(%{
+          email: "test_#{System.unique_integer([:positive])}@example.com"
+        })
+
+      {_raw, session} = issue_test_token(user)
+
+      {:ok, slid} = Sessions.touch_and_slide(session)
+      assert DateTime.diff(slid.expires_at, session.expires_at, :second) |> abs() < 5
+    end
+  end
+
   def issue_test_token(user) do
     verifier = :crypto.strong_rand_bytes(32) |> Base.url_encode64(padding: false)
     challenge = :crypto.hash(:sha256, verifier) |> Base.url_encode64(padding: false)

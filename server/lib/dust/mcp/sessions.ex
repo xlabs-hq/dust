@@ -64,6 +64,27 @@ defmodule Dust.MCP.Sessions do
     |> Repo.update()
   end
 
+  def touch_and_slide(%Session{} = session) do
+    now = DateTime.utc_now()
+    remaining = DateTime.diff(session.expires_at, now, :second)
+    full_lifetime = @token_lifetime_seconds
+    slide? = remaining < full_lifetime - @slide_threshold_seconds
+
+    attrs =
+      if slide? do
+        %{
+          last_activity_at: now,
+          expires_at: DateTime.add(now, full_lifetime, :second)
+        }
+      else
+        %{last_activity_at: now}
+      end
+
+    session
+    |> Session.changeset(attrs)
+    |> Repo.update()
+  end
+
   def exchange_code(session_id, %{
         code_verifier: verifier,
         client_id: client_id,
