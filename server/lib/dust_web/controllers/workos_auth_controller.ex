@@ -174,13 +174,8 @@ defmodule DustWeb.WorkOSAuthController do
   Uses authenticate_with_email_verification with the pending token + code.
   """
   def verify_email(conn, %{"pending_authentication_token" => pending_token, "code" => code}) do
-    case WorkOS.UserManagement.authenticate_with_email_verification(%{
-           code: code,
-           pending_authentication_code: pending_token,
-           ip_address: get_peer_ip(conn),
-           user_agent: get_req_header(conn, "user-agent") |> List.first()
-         }) do
-      {:ok, %{user: workos_user}} ->
+    case authenticate_with_email_verification_raw(pending_token, code, conn) do
+      {:ok, workos_user} ->
         case find_or_create_user(workos_user) do
           {:ok, user} ->
             log_in_user(conn, user)
@@ -191,15 +186,10 @@ defmodule DustWeb.WorkOSAuthController do
             |> json(%{error: "Verification succeeded. Please sign in."})
         end
 
-      {:error, %WorkOS.Error{} = error} ->
+      {:error, message} ->
         conn
         |> put_status(422)
-        |> json(%{error: format_workos_error(error)})
-
-      {:error, _} ->
-        conn
-        |> put_status(422)
-        |> json(%{error: "Invalid or expired code. Please try again."})
+        |> json(%{error: message})
     end
   end
 
@@ -535,6 +525,39 @@ defmodule DustWeb.WorkOSAuthController do
     case Plug.Conn.get_peer_data(conn) do
       %{address: address} -> :inet.ntoa(address) |> to_string()
       _ -> nil
+    end
+  end
+
+  # Raw email verification authenticate call. The WorkOS SDK sends the field as
+  # `pending_authentication_code`, but the API expects `pending_authentication_token`.
+  defp authenticate_with_email_verification_raw(pending_token, code, conn) do
+    client = WorkOS.client()
+
+    body = %{
+      client_id: WorkOS.client_id(client),
+      client_secret: WorkOS.api_key(client),
+      grant_type: "urn:workos:oauth:grant-type:email-verification:code",
+      code: code,
+      pending_authentication_token: pending_token,
+      ip_address: get_peer_ip(conn),
+      user_agent: get_req_header(conn, "user-agent") |> List.first()
+    }
+
+    case Req.post("#{client.base_url}/user_management/authenticate",
+           json: body,
+           headers: [{"authorization", "Bearer #{WorkOS.api_key(client)}"}]
+         ) do
+      {:ok, %{status: status, body: %{"user" => user}}} when status in 200..299 ->
+        {:ok, user}
+
+      {:ok, %{body: %{"errors" => [%{"message" => msg} | _]}}} ->
+        {:error, msg}
+
+      {:ok, %{body: %{"message" => message}}} ->
+        {:error, message}
+
+      {:error, _} ->
+        {:error, "Invalid or expired code. Please try again."}
     end
   end
 

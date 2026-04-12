@@ -1,4 +1,4 @@
-import React, { useState, FormEvent } from "react";
+import React, { useState, useEffect, FormEvent } from "react";
 import { Head, Link } from "@inertiajs/react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -19,6 +19,13 @@ function Register() {
   const [pendingToken, setPendingToken] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
+
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const id = setInterval(() => setResendCooldown((s) => s - 1), 1000);
+    return () => clearInterval(id);
+  }, [resendCooldown]);
 
   async function handleRegister(e: FormEvent) {
     e.preventDefault();
@@ -140,8 +147,9 @@ function Register() {
                 </button>
                 <button
                   type="button"
+                  disabled={resendCooldown > 0}
                   onClick={async () => {
-                    // Re-authenticate to get a fresh pending token
+                    setResendCooldown(30);
                     const { data: d } = await api.post<{
                       pending_authentication_token?: string;
                     }>("/auth/sign-up", { email, password });
@@ -150,9 +158,13 @@ function Register() {
                     }
                     toast.success("Verification code resent");
                   }}
-                  className="text-foreground underline-offset-4 hover:underline"
+                  className={
+                    resendCooldown > 0
+                      ? "text-muted-foreground cursor-not-allowed"
+                      : "text-foreground underline-offset-4 hover:underline"
+                  }
                 >
-                  Resend code
+                  {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : "Resend code"}
                 </button>
               </div>
             </form>
