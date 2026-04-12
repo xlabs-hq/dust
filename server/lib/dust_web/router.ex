@@ -162,6 +162,7 @@ defmodule DustWeb.Router do
         Dust.MCP.Tools.DustStores,
         Dust.MCP.Tools.DustStatus,
         Dust.MCP.Tools.DustLog,
+        Dust.MCP.Tools.DustRollback,
         Dust.MCP.Tools.DustPutFile,
         Dust.MCP.Tools.DustFetchFile,
         Dust.MCP.Tools.DustCreateStore,
