@@ -32,16 +32,17 @@ defmodule Dust.MCP.Tools.DustLog do
     },
     annotations: %{readOnlyHint: true}
 
-  alias GenMCP.MCP
+  alias Dust.MCP.Authz
   alias Dust.Sync.Audit
+  alias GenMCP.MCP
 
   @impl true
   def call(req, channel, _arg) do
     args = req.params.arguments
     store_name = args["store"]
-    store_token = channel.assigns.store_token
+    principal = channel.assigns.mcp_principal
 
-    with {:ok, store} <- resolve_store(store_name, store_token) do
+    with {:ok, store} <- Authz.authorize_store(principal, store_name, :read) do
       limit = min(args["limit"] || 50, 200)
 
       opts =
@@ -75,22 +76,4 @@ defmodule Dust.MCP.Tools.DustLog do
   defp maybe_add(opts, _key, nil), do: opts
   defp maybe_add(opts, _key, ""), do: opts
   defp maybe_add(opts, key, value), do: [{key, value} | opts]
-
-  defp resolve_store(full_name, store_token) do
-    case Dust.Stores.get_store_by_full_name(full_name) do
-      nil ->
-        {:error, "Store not found: #{full_name}"}
-
-      store ->
-        if store.id == store_token.store_id do
-          if Dust.Stores.StoreToken.can_read?(store_token) do
-            {:ok, store}
-          else
-            {:error, "Token does not have read permission"}
-          end
-        else
-          {:error, "Token does not have access to store: #{full_name}"}
-        end
-    end
-  end
 end
