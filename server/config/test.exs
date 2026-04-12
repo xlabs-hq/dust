@@ -30,6 +30,10 @@ config :swoosh, :api_client, false
 config :dust, :blob_dir, Path.expand("../tmp/test_blobs", __DIR__)
 config :dust, :store_data_dir, Path.expand("../tmp/test_stores", __DIR__)
 
+# MCP OAuth test config
+config :dust, :mcp_base_url, "http://localhost:4002"
+config :workos, :mcp_client_id, "client_test_mcp"
+
 # Disable Oban in tests
 config :dust, Oban, testing: :manual
 

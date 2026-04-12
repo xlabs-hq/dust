@@ -35,6 +35,11 @@ defmodule DustWeb.Router do
     plug DustWeb.Plugs.MCPAuth
   end
 
+  pipeline :mcp_oauth do
+    plug :accepts, ["json", "html"]
+    plug :fetch_session
+  end
+
   # Public landing page
   scope "/", DustWeb do
     pipe_through [:browser, :inertia]
@@ -101,6 +106,15 @@ defmodule DustWeb.Router do
     delete "/stores/:org/:store/webhooks/:id", WebhookController, :delete
     post "/stores/:org/:store/webhooks/:id/ping", WebhookController, :ping
     get "/stores/:org/:store/webhooks/:id/deliveries", WebhookController, :deliveries
+  end
+
+  # MCP OAuth discovery + DCR endpoints (unauthenticated)
+  # Must be above /:org to prevent that catch-all from matching well-known URLs
+  scope "/", DustWeb do
+    pipe_through :mcp_oauth
+
+    get "/.well-known/oauth-protected-resource", MCPAuthController, :oauth_protected_resource
+    get "/.well-known/oauth-authorization-server", MCPAuthController, :oauth_authorization_server
   end
 
   # Protected routes scoped to an organization
