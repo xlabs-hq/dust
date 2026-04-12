@@ -63,6 +63,23 @@ defmodule Dust.AccountsTest do
       assert user.workos_id == workos_user.id
     end
 
+    test "links workos_id to existing user matched by email" do
+      {:ok, existing} = Accounts.create_user(%{email: "link-me@example.com"})
+      assert existing.workos_id == nil
+
+      workos_user =
+        workos_user_fixture(%{
+          id: "user_brand_new_workos_id_xyz",
+          email: "link-me@example.com",
+          first_name: "Link",
+          last_name: "Me"
+        })
+
+      assert {:ok, user} = Accounts.find_or_create_user_from_workos(workos_user)
+      assert user.id == existing.id
+      assert user.workos_id == "user_brand_new_workos_id_xyz"
+    end
+
     test "returns existing user when called twice with same workos_id" do
       workos_user =
         workos_user_fixture(%{
