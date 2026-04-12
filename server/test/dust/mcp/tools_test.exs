@@ -927,6 +927,56 @@ defmodule Dust.MCP.ToolsTest do
     end
   end
 
+  describe "dust_clone" do
+    test "clones a store within the same org", ctx do
+      # Bump org to pro plan so it can hold more than 1 store
+      ctx.org
+      |> Ecto.Changeset.change(plan: "pro")
+      |> Dust.Repo.update!()
+
+      Dust.Sync.write(ctx.store.id, %{
+        op: :set,
+        path: "greeting",
+        value: "hello",
+        device_id: "test",
+        client_op_id: Ecto.UUID.generate()
+      })
+
+      req = make_req(%{"source" => ctx.store_full_name, "target_name" => "blog-copy"})
+      {:result, result, _} = Dust.MCP.Tools.DustClone.call(req, ctx.channel, [])
+
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
+      decoded = Jason.decode!(text)
+      assert decoded["store"] == "#{ctx.org.slug}/blog-copy"
+      assert is_binary(decoded["id"])
+    end
+
+    test "denies clone for read-only token", ctx do
+      {:ok, ro_token} =
+        Dust.Stores.create_store_token(ctx.store, %{
+          name: "readonly",
+          read: true,
+          write: false,
+          created_by_id: ctx.token.created_by_id
+        })
+
+      {:ok, ro_token} = Dust.Stores.authenticate_token(ro_token.raw_token)
+      ro_principal = %Principal{kind: :store_token, store_token: ro_token}
+
+      ro_channel = %Channel{
+        client: self(),
+        progress_token: nil,
+        status: :request,
+        assigns: %{store_token: ro_token, mcp_principal: ro_principal},
+        log_level: :notice
+      }
+
+      req = make_req(%{"source" => ctx.store_full_name, "target_name" => "blog-copy-ro"})
+      {:error, reason, _} = Dust.MCP.Tools.DustClone.call(req, ro_channel, [])
+      assert reason =~ "write permission"
+    end
+  end
+
   describe "permission checks" do
     test "read-only token cannot write", ctx do
       # Create a read-only token
