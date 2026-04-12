@@ -144,4 +144,83 @@ defmodule DustWeb.MCPAuthControllerTest do
       assert session.client_redirect_uri == "http://localhost:33418/oauth/callback"
     end
   end
+
+  describe "POST /oauth/token" do
+    setup do
+      {:ok, user} =
+        Dust.Accounts.create_user(%{
+          email: "token-#{System.unique_integer([:positive])}@example.com"
+        })
+
+      verifier = :crypto.strong_rand_bytes(32) |> Base.url_encode64(padding: false)
+      challenge = :crypto.hash(:sha256, verifier) |> Base.url_encode64(padding: false)
+
+      {:ok, session} =
+        Dust.MCP.Sessions.create_authorization_code(user, %{
+          client_id: "client_test",
+          client_redirect_uri: "http://localhost:33418/cb",
+          code_challenge: challenge,
+          code_challenge_method: "S256"
+        })
+
+      %{user: user, session: session, verifier: verifier}
+    end
+
+    test "exchanges session_id for opaque bearer token on valid PKCE", %{
+      conn: conn,
+      session: session,
+      verifier: verifier
+    } do
+      conn =
+        post(conn, ~p"/oauth/token", %{
+          "grant_type" => "authorization_code",
+          "code" => session.session_id,
+          "code_verifier" => verifier,
+          "client_id" => "client_test",
+          "redirect_uri" => "http://localhost:33418/cb"
+        })
+
+      body = json_response(conn, 200)
+      assert is_binary(body["access_token"])
+      assert body["token_type"] == "Bearer"
+      assert body["expires_in"] > 86_400
+    end
+
+    test "rejects mismatched code_verifier with invalid_grant", %{conn: conn, session: session} do
+      conn =
+        post(conn, ~p"/oauth/token", %{
+          "grant_type" => "authorization_code",
+          "code" => session.session_id,
+          "code_verifier" => "wrong",
+          "client_id" => "client_test",
+          "redirect_uri" => "http://localhost:33418/cb"
+        })
+
+      assert json_response(conn, 400)["error"] == "invalid_grant"
+    end
+
+    test "rejects already-consumed session_id", %{
+      conn: conn,
+      session: session,
+      verifier: verifier
+    } do
+      params = %{
+        "grant_type" => "authorization_code",
+        "code" => session.session_id,
+        "code_verifier" => verifier,
+        "client_id" => "client_test",
+        "redirect_uri" => "http://localhost:33418/cb"
+      }
+
+      _ = post(conn, ~p"/oauth/token", params)
+      second = post(build_conn(), ~p"/oauth/token", params)
+
+      assert json_response(second, 400)["error"] == "invalid_grant"
+    end
+
+    test "rejects unsupported grant_type" do
+      conn = post(build_conn(), ~p"/oauth/token", %{"grant_type" => "client_credentials"})
+      assert json_response(conn, 400)["error"] == "unsupported_grant_type"
+    end
+  end
 end

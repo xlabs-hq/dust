@@ -159,6 +159,47 @@ defmodule DustWeb.MCPAuthController do
     end
   end
 
+  def oauth_token(conn, %{
+        "grant_type" => "authorization_code",
+        "code" => code,
+        "code_verifier" => verifier,
+        "client_id" => client_id,
+        "redirect_uri" => redirect_uri
+      }) do
+    case Sessions.exchange_code(code, %{
+           code_verifier: verifier,
+           client_id: client_id,
+           client_redirect_uri: redirect_uri
+         }) do
+      {:ok, raw, session} ->
+        expires_in = DateTime.diff(session.expires_at, DateTime.utc_now(), :second) |> max(0)
+
+        json(conn, %{
+          access_token: raw,
+          token_type: "Bearer",
+          expires_in: expires_in,
+          scope: "profile email"
+        })
+
+      {:error, reason}
+      when reason in [:invalid_grant, :already_used, :pkce_mismatch, :client_mismatch] ->
+        json_error(conn, :bad_request, "invalid_grant", to_string(reason))
+    end
+  end
+
+  def oauth_token(conn, %{"grant_type" => "authorization_code"}) do
+    json_error(conn, :bad_request, "invalid_request", "Missing required token parameters")
+  end
+
+  def oauth_token(conn, _params) do
+    json_error(
+      conn,
+      :bad_request,
+      "unsupported_grant_type",
+      "Only authorization_code is supported"
+    )
+  end
+
   defp build_callback_url(redirect_uri, code, state) do
     uri = URI.parse(redirect_uri)
     existing = if uri.query, do: URI.decode_query(uri.query), else: %{}
