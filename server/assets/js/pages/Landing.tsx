@@ -96,7 +96,15 @@ end)
         {/* Footer */}
         <footer className="max-w-4xl mx-auto px-6 py-12 border-t border-border">
           <p className="text-sm text-muted-foreground text-center">
-            Built by James
+            Built by{" "}
+            <a
+              href="https://xlabs.io"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline hover:text-foreground transition-colors"
+            >
+              xlabs.io
+            </a>
           </p>
         </footer>
       </div>

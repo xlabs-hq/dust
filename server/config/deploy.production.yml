@@ -7,7 +7,7 @@ require_destination: true
 servers:
   web:
     hosts:
-      - CHANGE_ME
+      - 5.223.56.63
     options:
       network-alias: dust
 
