@@ -5,7 +5,7 @@ defmodule Dust.MCP.SessionsTest do
   alias Dust.MCP.Sessions
 
   describe "create_authorization_code/2" do
-    test "creates a session with PKCE binding and 30-day expiry" do
+    test "creates a session with PKCE binding and short auth-code lifetime" do
       {:ok, user} =
         Accounts.create_user(%{
           email: "test_#{System.unique_integer([:positive])}@example.com"
@@ -28,7 +28,11 @@ defmodule Dust.MCP.SessionsTest do
       assert session.code_challenge == "abc123def456"
       assert session.code_challenge_method == "S256"
       assert session.remote_ip == "1.2.3.4"
-      assert DateTime.diff(session.expires_at, DateTime.utc_now(), :day) >= 29
+      # RFC 6749 §4.1.2: auth codes are short-lived (~10 minutes).
+      # The bearer-token phase resets expires_at to 30d in do_issue/1.
+      diff = DateTime.diff(session.expires_at, DateTime.utc_now(), :second)
+      assert diff > 0
+      assert diff <= 700
     end
   end
 
@@ -123,6 +127,39 @@ defmodule Dust.MCP.SessionsTest do
       assert {:error, :invalid_grant} =
                Sessions.exchange_code("mcp_does_not_exist", %{
                  code_verifier: "x",
+                 client_id: "client_test",
+                 client_redirect_uri: "http://localhost:33418/cb"
+               })
+    end
+
+    test "rejects expired auth code with invalid_grant", %{
+      session: session,
+      verifier: verifier
+    } do
+      past = DateTime.add(DateTime.utc_now(), -1, :second)
+
+      {:ok, _} =
+        session
+        |> Ecto.Changeset.change(expires_at: past)
+        |> Dust.Repo.update()
+
+      assert {:error, :invalid_grant} =
+               Sessions.exchange_code(session.session_id, %{
+                 code_verifier: verifier,
+                 client_id: "client_test",
+                 client_redirect_uri: "http://localhost:33418/cb"
+               })
+    end
+
+    test "rejects invalidated auth code with invalid_grant", %{
+      session: session,
+      verifier: verifier
+    } do
+      {:ok, _} = Sessions.invalidate(session)
+
+      assert {:error, :invalid_grant} =
+               Sessions.exchange_code(session.session_id, %{
+                 code_verifier: verifier,
                  client_id: "client_test",
                  client_redirect_uri: "http://localhost:33418/cb"
                })

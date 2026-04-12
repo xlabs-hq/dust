@@ -22,6 +22,10 @@ defmodule Dust.MCP.Sessions do
 
   @token_lifetime_seconds 30 * 86_400
   @slide_threshold_seconds 60 * 60
+  # RFC 6749 §4.1.2: authorization codes MUST be short-lived.
+  # This is the auth-code phase lifetime; on successful exchange, do_issue/1
+  # resets expires_at to now + @token_lifetime_seconds (the bearer-token phase).
+  @auth_code_lifetime_seconds 600
 
   def create_authorization_code(user, attrs) do
     now = DateTime.utc_now()
@@ -29,7 +33,7 @@ defmodule Dust.MCP.Sessions do
     base = %{
       session_id: "mcp_" <> Ecto.UUID.generate(),
       user_id: user.id,
-      expires_at: DateTime.add(now, @token_lifetime_seconds, :second),
+      expires_at: DateTime.add(now, @auth_code_lifetime_seconds, :second),
       last_activity_at: now
     }
 
@@ -91,7 +95,14 @@ defmodule Dust.MCP.Sessions do
         client_redirect_uri: redirect_uri
       })
       when is_binary(session_id) do
-    case Repo.get_by(Session, session_id: session_id) do
+    now = DateTime.utc_now()
+
+    query =
+      from(s in Session,
+        where: s.session_id == ^session_id and is_nil(s.invalidated_at) and s.expires_at > ^now
+      )
+
+    case Repo.one(query) do
       nil ->
         {:error, :invalid_grant}
 
