@@ -42,6 +42,28 @@ defmodule Dust.MCP.Sessions do
     :crypto.hash(:sha256, raw) |> Base.encode16(case: :lower)
   end
 
+  def find_by_session_id(session_id) when is_binary(session_id) do
+    from(s in Session,
+      where: s.session_id == ^session_id and is_nil(s.invalidated_at),
+      preload: [:user]
+    )
+    |> Repo.one()
+  end
+
+  def find_by_access_token_hash(hash) when is_binary(hash) do
+    from(s in Session,
+      where: s.access_token_hash == ^hash and is_nil(s.invalidated_at),
+      preload: [:user]
+    )
+    |> Repo.one()
+  end
+
+  def invalidate(%Session{} = session) do
+    session
+    |> Session.changeset(%{invalidated_at: DateTime.utc_now()})
+    |> Repo.update()
+  end
+
   def exchange_code(session_id, %{
         code_verifier: verifier,
         client_id: client_id,
