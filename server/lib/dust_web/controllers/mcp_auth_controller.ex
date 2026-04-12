@@ -30,6 +30,23 @@ defmodule DustWeb.MCPAuthController do
     })
   end
 
+  def register(conn, params) do
+    client_id = Application.fetch_env!(:workos, :mcp_client_id)
+
+    response = %{
+      client_id: client_id,
+      client_name: params["client_name"],
+      redirect_uris: params["redirect_uris"] || [],
+      grant_types: params["grant_types"] || ["authorization_code"],
+      response_types: params["response_types"] || ["code"],
+      token_endpoint_auth_method: params["token_endpoint_auth_method"] || "none",
+      authorization_endpoint: "#{base_url()}/oauth/authorize",
+      token_endpoint: "#{base_url()}/oauth/token"
+    }
+
+    json(conn, response)
+  end
+
   defp base_url do
     Application.fetch_env!(:dust, :mcp_base_url)
   end

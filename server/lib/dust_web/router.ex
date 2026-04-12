@@ -115,6 +115,7 @@ defmodule DustWeb.Router do
 
     get "/.well-known/oauth-protected-resource", MCPAuthController, :oauth_protected_resource
     get "/.well-known/oauth-authorization-server", MCPAuthController, :oauth_authorization_server
+    post "/register", MCPAuthController, :register
   end
 
   # Protected routes scoped to an organization
