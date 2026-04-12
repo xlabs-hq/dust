@@ -1,0 +1,90 @@
+name: CLI CI
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'cli/**'
+      - '.github/workflows/cli-ci.yml'
+  pull_request:
+    paths:
+      - 'cli/**'
+      - '.github/workflows/cli-ci.yml'
+
+jobs:
+  lint:
+    name: Format check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: crystal-lang/install-crystal@v1
+      - name: crystal tool format --check
+        working-directory: cli
+        run: crystal tool format --check src/ spec/
+
+  test:
+    name: Unit tests (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            name: macos-arm64
+          - os: ubuntu-latest
+            name: linux-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: crystal-lang/install-crystal@v1
+      - name: Install sqlite3 (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - name: Install shards
+        working-directory: cli
+        run: shards install
+      - name: Run unit tests
+        working-directory: cli
+        run: crystal spec spec/config_spec.cr
+
+  build-macos-arm64:
+    name: Build (macos-arm64)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: crystal-lang/install-crystal@v1
+      - name: Install shards
+        working-directory: cli
+        run: shards install --production
+      - name: Build release binary
+        working-directory: cli
+        run: crystal build src/dust.cr --release --no-debug -o dust
+      - name: Verify binary
+        working-directory: cli
+        run: file dust && ls -lh dust
+
+  build-linux:
+    name: Build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: crystallang/crystal:latest-alpine
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build deps
+        run: apk add --no-cache sqlite-static sqlite-dev
+      - name: Install shards
+        working-directory: cli
+        run: shards install --production
+      - name: Build static binary
+        working-directory: cli
+        run: crystal build src/dust.cr --release --no-debug --static -o dust
+      - name: Verify binary
+        working-directory: cli
+        run: file dust && ls -lh dust

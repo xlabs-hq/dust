@@ -1,0 +1,112 @@
+name: CLI Release
+
+on:
+  push:
+    tags:
+      - 'cli-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos-arm64:
+    name: Build macos-arm64
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: crystal-lang/install-crystal@v1
+      - name: Extract version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#cli-v}" >> "$GITHUB_OUTPUT"
+      - name: Install shards
+        working-directory: cli
+        run: shards install --production
+      - name: Build release binary
+        working-directory: cli
+        run: crystal build src/dust.cr --release --no-debug -o dust
+      - name: Package archive
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TARGET: aarch64-apple-darwin
+        run: |
+          PKG="dust-cli-${VERSION}-${TARGET}"
+          mkdir -p "$PKG"
+          cp cli/dust "$PKG/"
+          cp LICENSE "$PKG/"
+          cp README.md "$PKG/"
+          tar czf "${PKG}.tar.gz" "$PKG"
+          ls -lh "${PKG}.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dust-cli-aarch64-apple-darwin
+          path: dust-cli-*.tar.gz
+          if-no-files-found: error
+
+  build-linux:
+    name: Build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: crystallang/crystal:latest-alpine
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build deps
+        run: apk add --no-cache sqlite-static sqlite-dev tar
+      - name: Extract version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#cli-v}" >> "$GITHUB_OUTPUT"
+      - name: Install shards
+        working-directory: cli
+        run: shards install --production
+      - name: Build static binary
+        working-directory: cli
+        run: crystal build src/dust.cr --release --no-debug --static -o dust
+      - name: Package archive
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          PKG="dust-cli-${VERSION}-${TARGET}"
+          mkdir -p "$PKG"
+          cp cli/dust "$PKG/"
+          cp LICENSE "$PKG/"
+          cp README.md "$PKG/"
+          tar czf "${PKG}.tar.gz" "$PKG"
+          ls -lh "${PKG}.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dust-cli-${{ matrix.target }}
+          path: dust-cli-*.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: [build-macos-arm64, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Generate checksums
+        working-directory: artifacts
+        run: |
+          sha256sum *.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+      - name: List artifacts
+        run: ls -lh artifacts/
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/*.tar.gz
+            artifacts/SHA256SUMS
+          generate_release_notes: true
+          fail_on_unmatched_files: true
