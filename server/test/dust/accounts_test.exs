@@ -38,6 +38,46 @@ defmodule Dust.AccountsTest do
     end
   end
 
+  describe "find_or_create_user_from_workos/1" do
+    defp workos_user_fixture(attrs) do
+      defaults = %{
+        email_verified: true,
+        updated_at: "2026-01-01T00:00:00.000Z",
+        created_at: "2026-01-01T00:00:00.000Z"
+      }
+
+      struct!(WorkOS.UserManagement.User, Map.merge(defaults, attrs))
+    end
+
+    test "creates new user when workos_user is unknown" do
+      workos_user =
+        workos_user_fixture(%{
+          id: "user_test_#{System.unique_integer([:positive])}",
+          email: "newmcp@example.com",
+          first_name: "New",
+          last_name: "MCP"
+        })
+
+      assert {:ok, user} = Accounts.find_or_create_user_from_workos(workos_user)
+      assert user.email == "newmcp@example.com"
+      assert user.workos_id == workos_user.id
+    end
+
+    test "returns existing user when called twice with same workos_id" do
+      workos_user =
+        workos_user_fixture(%{
+          id: "user_existing_#{System.unique_integer([:positive])}",
+          email: "exists@example.com",
+          first_name: "Ex",
+          last_name: "Ist"
+        })
+
+      assert {:ok, first} = Accounts.find_or_create_user_from_workos(workos_user)
+      assert {:ok, second} = Accounts.find_or_create_user_from_workos(workos_user)
+      assert first.id == second.id
+    end
+  end
+
   describe "user_belongs_to_org?/2" do
     test "returns true when membership exists" do
       {:ok, user} = Accounts.create_user(%{email: "member@example.com"})

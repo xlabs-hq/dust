@@ -361,72 +361,7 @@ defmodule DustWeb.WorkOSAuthController do
     end
   end
 
-  defp find_or_create_user(%{"id" => workos_id, "email" => email} = workos_user) do
-    first_name = workos_user["first_name"]
-    last_name = workos_user["last_name"]
-
-    case Accounts.get_user_by_workos_id(workos_id) do
-      %Accounts.User{} = user ->
-        {:ok, user}
-
-      nil ->
-        case Accounts.get_user_by_email(email) do
-          %Accounts.User{} = user ->
-            Accounts.link_user_to_workos(user, workos_id)
-
-          nil ->
-            create_user_with_org(%{
-              workos_id: workos_id,
-              email: email,
-              first_name: first_name,
-              last_name: last_name
-            })
-        end
-    end
-  end
-
-  # Handle WorkOS structs (returned by create_user)
-  defp find_or_create_user(%{id: workos_id, email: email} = workos_user) do
-    find_or_create_user(%{
-      "id" => workos_id,
-      "email" => email,
-      "first_name" => Map.get(workos_user, :first_name),
-      "last_name" => Map.get(workos_user, :last_name)
-    })
-  end
-
-  defp create_user_with_org(attrs) do
-    case Accounts.create_user(attrs) do
-      {:ok, user} ->
-        slug = email_to_slug(attrs.email)
-
-        case Accounts.create_organization_with_owner(user, %{
-               name: slug,
-               slug: slug
-             }) do
-          {:ok, _org} -> {:ok, user}
-          {:error, _} -> {:ok, user}
-        end
-
-      error ->
-        error
-    end
-  end
-
-  defp email_to_slug(email) do
-    email
-    |> String.split("@")
-    |> List.first()
-    |> String.downcase()
-    |> String.replace(~r/[^a-z0-9-]/, "-")
-    |> String.replace(~r/-+/, "-")
-    |> String.trim_leading("-")
-    |> String.trim_trailing("-")
-    |> case do
-      "" -> "user"
-      slug -> slug
-    end
-  end
+  defdelegate find_or_create_user(workos_user), to: Accounts, as: :find_or_create_user_from_workos
 
   defp maybe_sync_sso_org(_user, nil), do: :ok
 
@@ -461,7 +396,7 @@ defmodule DustWeb.WorkOSAuthController do
 
         nil ->
           {:ok, user} =
-            create_user_with_org(%{
+            Accounts.create_user_with_org(%{
               email: "dev@dust.local",
               first_name: "Dev",
               last_name: "User"

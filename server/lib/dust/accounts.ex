@@ -27,6 +27,78 @@ defmodule Dust.Accounts do
     |> Repo.update()
   end
 
+  @doc """
+  Find or create a local user from a WorkOS user.
+
+  Accepts either a `%WorkOS.UserManagement.User{}` struct (returned by the SDK)
+  or a map with string keys (returned by raw API calls). Looks up by
+  `workos_id` first, then falls back to email lookup and links. If no user is
+  found, creates a new user along with a personal organization.
+  """
+  def find_or_create_user_from_workos(%{"id" => workos_id, "email" => email} = workos_user) do
+    first_name = workos_user["first_name"]
+    last_name = workos_user["last_name"]
+
+    case get_user_by_workos_id(workos_id) do
+      %User{} = user ->
+        {:ok, user}
+
+      nil ->
+        case get_user_by_email(email) do
+          %User{} = user ->
+            link_user_to_workos(user, workos_id)
+
+          nil ->
+            create_user_with_org(%{
+              workos_id: workos_id,
+              email: email,
+              first_name: first_name,
+              last_name: last_name
+            })
+        end
+    end
+  end
+
+  def find_or_create_user_from_workos(%{id: workos_id, email: email} = workos_user) do
+    find_or_create_user_from_workos(%{
+      "id" => workos_id,
+      "email" => email,
+      "first_name" => Map.get(workos_user, :first_name),
+      "last_name" => Map.get(workos_user, :last_name)
+    })
+  end
+
+  @doc """
+  Create a user together with a personal organization derived from their email.
+  If the organization creation fails for any reason (e.g. slug collision), the
+  user is still returned successfully.
+  """
+  def create_user_with_org(attrs) do
+    with {:ok, user} <- create_user(attrs) do
+      slug = email_to_slug(attrs.email)
+
+      case create_organization_with_owner(user, %{name: slug, slug: slug}) do
+        {:ok, _org} -> {:ok, user}
+        {:error, _} -> {:ok, user}
+      end
+    end
+  end
+
+  defp email_to_slug(email) do
+    email
+    |> String.split("@")
+    |> List.first()
+    |> String.downcase()
+    |> String.replace(~r/[^a-z0-9-]/, "-")
+    |> String.replace(~r/-+/, "-")
+    |> String.trim_leading("-")
+    |> String.trim_trailing("-")
+    |> case do
+      "" -> "user"
+      slug -> slug
+    end
+  end
+
   # --- Session tokens ---
 
   @doc """
