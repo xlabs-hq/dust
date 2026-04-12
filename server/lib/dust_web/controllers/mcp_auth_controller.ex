@@ -3,6 +3,10 @@ defmodule DustWeb.MCPAuthController do
 
   require Logger
 
+  alias Dust.Accounts
+  alias Dust.MCP.Sessions
+  alias Dust.WorkOSClient
+
   def oauth_protected_resource(conn, _params) do
     base = base_url()
 
@@ -105,6 +109,81 @@ defmodule DustWeb.MCPAuthController do
       error: "invalid_request",
       error_description: "Missing required OAuth parameters"
     })
+  end
+
+  def oauth_callback(conn, %{"code" => code} = params) do
+    oauth_params = get_session(conn, :oauth_params) || %{}
+    code_verifier = get_session(conn, :code_verifier)
+    client_redirect = oauth_params[:redirect_uri]
+    stored_state = oauth_params[:state] || ""
+    callback_state = Map.get(params, "state", "")
+
+    cond do
+      is_nil(code_verifier) ->
+        json_error(conn, :bad_request, "missing_session", "Missing PKCE verifier")
+
+      is_nil(client_redirect) ->
+        json_error(conn, :bad_request, "missing_redirect_uri", "Missing client redirect_uri")
+
+      stored_state != callback_state ->
+        json_error(conn, :bad_request, "state_mismatch", "State does not match")
+
+      true ->
+        do_callback(conn, code, oauth_params, client_redirect, stored_state)
+    end
+  end
+
+  defp do_callback(conn, code, oauth_params, client_redirect, stored_state) do
+    with {:ok, %{user: workos_user}} <-
+           WorkOSClient.authenticate_with_code(%{
+             client_id: Application.fetch_env!(:workos, :mcp_client_id),
+             code: code
+           }),
+         {:ok, user} <- Accounts.find_or_create_user_from_workos(workos_user),
+         {:ok, session} <-
+           Sessions.create_authorization_code(user, %{
+             client_id: oauth_params[:client_id],
+             client_redirect_uri: oauth_params[:redirect_uri],
+             code_challenge: oauth_params[:code_challenge],
+             code_challenge_method: oauth_params[:code_challenge_method],
+             remote_ip: peer_ip(conn),
+             user_agent: user_agent(conn)
+           }) do
+      original_state = String.replace_prefix(stored_state, "oauth_flow_", "")
+      callback_url = build_callback_url(client_redirect, session.session_id, original_state)
+      redirect(conn, external: callback_url)
+    else
+      {:error, reason} ->
+        Logger.error("MCP oauth_callback failed: #{inspect(reason)}")
+        json_error(conn, :unauthorized, "authentication_failed", "Could not authenticate")
+    end
+  end
+
+  defp build_callback_url(redirect_uri, code, state) do
+    uri = URI.parse(redirect_uri)
+    existing = if uri.query, do: URI.decode_query(uri.query), else: %{}
+    query = existing |> Map.put("code", code) |> Map.put("state", state) |> URI.encode_query()
+    URI.to_string(%{uri | query: query})
+  end
+
+  defp peer_ip(conn) do
+    case conn.remote_ip do
+      {a, b, c, d} -> "#{a}.#{b}.#{c}.#{d}"
+      _ -> nil
+    end
+  end
+
+  defp user_agent(conn) do
+    case Plug.Conn.get_req_header(conn, "user-agent") do
+      [ua | _] -> ua
+      _ -> nil
+    end
+  end
+
+  defp json_error(conn, status, error, description) do
+    conn
+    |> put_status(status)
+    |> json(%{error: error, error_description: description})
   end
 
   defp base_url do

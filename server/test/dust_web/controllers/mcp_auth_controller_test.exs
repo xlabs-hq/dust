@@ -1,6 +1,9 @@
 defmodule DustWeb.MCPAuthControllerTest do
   use DustWeb.ConnCase, async: false
 
+  alias Dust.MCP.Sessions
+  alias Dust.WorkOSStub
+
   describe "GET /.well-known/oauth-protected-resource" do
     test "returns RFC 9728 metadata", %{conn: conn} do
       conn = get(conn, ~p"/.well-known/oauth-protected-resource")
@@ -82,6 +85,63 @@ defmodule DustWeb.MCPAuthControllerTest do
     test "400 on missing params", %{conn: conn} do
       conn = get(conn, ~p"/oauth/authorize", %{})
       assert json_response(conn, 400)["error"] == "invalid_request"
+    end
+  end
+
+  describe "GET /oauth/callback" do
+    setup do
+      workos_user =
+        struct!(WorkOS.UserManagement.User, %{
+          id: "user_workos_#{System.unique_integer([:positive])}",
+          email: "callback-#{System.unique_integer([:positive])}@example.com",
+          first_name: "Call",
+          last_name: "Back",
+          email_verified: true,
+          updated_at: "2026-01-01T00:00:00.000Z",
+          created_at: "2026-01-01T00:00:00.000Z"
+        })
+
+      WorkOSStub.set_response(%{user: workos_user})
+      %{workos_user: workos_user}
+    end
+
+    test "creates session, redirects to client redirect_uri with code=session_id",
+         %{conn: conn, workos_user: workos_user} do
+      conn =
+        conn
+        |> init_test_session(%{
+          oauth_params: %{
+            client_id: "client_dev",
+            redirect_uri: "http://localhost:33418/oauth/callback",
+            state: "oauth_flow_state123",
+            code_challenge: "client_challenge",
+            code_challenge_method: "S256",
+            scope: ""
+          },
+          code_verifier: "upstream_verifier"
+        })
+        |> get(~p"/oauth/callback?code=workos_code&state=oauth_flow_state123")
+
+      location = redirected_to(conn, 302)
+      assert location =~ "http://localhost:33418/oauth/callback"
+      assert location =~ "code=mcp_"
+      assert location =~ "state=state123"
+
+      code =
+        location
+        |> URI.parse()
+        |> Map.get(:query)
+        |> URI.decode_query()
+        |> Map.get("code")
+
+      session = Sessions.find_by_session_id(code)
+      assert session
+      assert session.user.workos_id == workos_user.id
+      assert is_nil(session.access_token_hash)
+      assert session.code_challenge == "client_challenge"
+      assert session.code_challenge_method == "S256"
+      assert session.client_id == "client_dev"
+      assert session.client_redirect_uri == "http://localhost:33418/oauth/callback"
     end
   end
 end
