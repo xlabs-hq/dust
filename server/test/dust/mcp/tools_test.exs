@@ -804,6 +804,45 @@ defmodule Dust.MCP.ToolsTest do
     end
   end
 
+  describe "dust_export" do
+    test "returns jsonl payload for store_token principal", ctx do
+      Dust.Sync.write(ctx.store.id, %{
+        op: :set,
+        path: "users.alice",
+        value: %{"age" => 30},
+        device_id: "test",
+        client_op_id: Ecto.UUID.generate()
+      })
+
+      req = make_req(%{"store" => ctx.store_full_name})
+      {:result, result, _} = Dust.MCP.Tools.DustExport.call(req, ctx.channel, [])
+
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
+      payload = Jason.decode!(text)
+      assert payload["full_name"] == ctx.store_full_name
+      assert is_list(payload["lines"])
+      # at least the header line
+      assert length(payload["lines"]) >= 2
+    end
+
+    test "denies access when principal lacks permission" do
+      {:ok, user} = Accounts.create_user(%{email: "no-access@example.com"})
+
+      {:ok, owner} = Accounts.create_user(%{email: "owner-export@example.com"})
+
+      {:ok, org} =
+        Accounts.create_organization_with_owner(owner, %{name: "ExpOrg", slug: "exp-org"})
+
+      {:ok, _store} = Stores.create_store(org, %{name: "secret"})
+
+      req = make_req(%{"store" => "exp-org/secret"})
+      channel = user_session_channel(user)
+
+      {:error, reason, _} = Dust.MCP.Tools.DustExport.call(req, channel, [])
+      assert reason =~ "does not have access"
+    end
+  end
+
   describe "permission checks" do
     test "read-only token cannot write", ctx do
       # Create a read-only token
