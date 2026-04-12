@@ -144,6 +144,38 @@ defmodule DustWeb.MCPAuthControllerTest do
       assert session.client_redirect_uri == "http://localhost:33418/oauth/callback"
     end
 
+    test "echoes client state verbatim even when it starts with oauth_flow_",
+         %{conn: conn, workos_user: _workos_user} do
+      # Client legitimately sent state="oauth_flow_foo". We stored
+      # "oauth_flow_oauth_flow_foo"; the callback must strip exactly one prefix
+      # and return "oauth_flow_foo" back to the client, not "foo".
+      conn =
+        conn
+        |> init_test_session(%{
+          oauth_params: %{
+            client_id: "client_dev",
+            redirect_uri: "http://localhost:33418/oauth/callback",
+            state: "oauth_flow_oauth_flow_foo",
+            code_challenge: "client_challenge",
+            code_challenge_method: "S256",
+            scope: ""
+          },
+          code_verifier: "upstream_verifier"
+        })
+        |> get(~p"/oauth/callback?code=workos_code&state=oauth_flow_oauth_flow_foo")
+
+      location = redirected_to(conn, 302)
+
+      echoed_state =
+        location
+        |> URI.parse()
+        |> Map.get(:query)
+        |> URI.decode_query()
+        |> Map.get("state")
+
+      assert echoed_state == "oauth_flow_foo"
+    end
+
     test "invokes WorkOS client with MCP client_id, upstream code_verifier, and authorization code",
          %{conn: conn} do
       _ =

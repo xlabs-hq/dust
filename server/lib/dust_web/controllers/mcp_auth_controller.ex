@@ -62,12 +62,11 @@ defmodule DustWeb.MCPAuthController do
           "code_challenge_method" => method
         } = params
       ) do
-    oauth_state =
-      if String.starts_with?(state, "oauth_flow_") do
-        state
-      else
-        "oauth_flow_" <> state
-      end
+    # Always prefix unconditionally. Idempotency ("only prefix if not already
+    # prefixed") is wrong because a client may legitimately send a state that
+    # starts with "oauth_flow_", and the callback strip would then return the
+    # wrong value to the client.
+    oauth_state = "oauth_flow_" <> state
 
     conn =
       put_session(conn, :oauth_params, %{
