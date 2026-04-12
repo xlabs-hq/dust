@@ -2,7 +2,7 @@ defmodule Dust.MixProject do
   use Mix.Project
 
   @version "0.1.0"
-  @source_url "https://github.com/jamestippett/dust"
+  @source_url "https://github.com/xlabs-hq/dust"
 
   def project do
     [
