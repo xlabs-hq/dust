@@ -194,6 +194,13 @@ defmodule Dust.Repo.Migrations.CreateMcpSessions do
       add :session_id, :string, null: false
       add :access_token_hash, :string
       add :user_id, references(:users, type: :binary_id, on_delete: :delete_all), null: false
+
+      # OAuth + PKCE binding (set at /oauth/callback, validated at /oauth/token)
+      add :client_id, :string
+      add :client_redirect_uri, :string
+      add :code_challenge, :string
+      add :code_challenge_method, :string
+
       add :client_name, :string
       add :client_version, :string
       add :remote_ip, :string
@@ -212,6 +219,8 @@ defmodule Dust.Repo.Migrations.CreateMcpSessions do
   end
 end
 ```
+
+**Why the PKCE columns**: the browser session that holds the client's OAuth params during `/oauth/authorize` is the *user's* browser cookie. The token-exchange POST is a back-channel call from the MCP client, which has no access to that cookie. So the PKCE challenge must be persisted server-side, keyed by the auth code (`session_id`), and validated at `/oauth/token` time. See design doc for full rationale.
 
 Verify `users` table primary key is `binary_id` first by checking another migration that references it.
 
@@ -246,6 +255,12 @@ defmodule Dust.MCP.Session do
   schema "mcp_sessions" do
     field :session_id, :string
     field :access_token_hash, :string
+
+    field :client_id, :string
+    field :client_redirect_uri, :string
+    field :code_challenge, :string
+    field :code_challenge_method, :string
+
     field :client_name, :string
     field :client_version, :string
     field :remote_ip, :string
@@ -266,6 +281,10 @@ defmodule Dust.MCP.Session do
       :session_id,
       :access_token_hash,
       :user_id,
+      :client_id,
+      :client_redirect_uri,
+      :code_challenge,
+      :code_challenge_method,
       :client_name,
       :client_version,
       :remote_ip,
@@ -298,11 +317,13 @@ git commit -m "feat(mcp): add Session schema"
 
 ---
 
-### Task 1.3: `Dust.MCP.Sessions` context — `create_for_user/2` + `hash_token/1`
+### Task 1.3: `Dust.MCP.Sessions` context — `create_authorization_code/2` + `hash_token/1`
 
 **Files:**
 - Create: `server/lib/dust/mcp/sessions.ex`
 - Test: `server/test/dust/mcp/sessions_test.exs`
+
+`create_authorization_code/2` is what `/oauth/callback` calls. It persists the PKCE binding so `/oauth/token` can validate later.
 
 **Step 1: Write the failing tests**
 
@@ -312,22 +333,28 @@ defmodule Dust.MCP.SessionsTest do
 
   alias Dust.MCP.Sessions
 
-  describe "create_for_user/2" do
-    test "creates a session with session_id and 30-day expiry" do
+  describe "create_authorization_code/2" do
+    test "creates a session with PKCE binding and 30-day expiry" do
       user = Dust.AccountsFixtures.user_fixture()
-      assert {:ok, session} = Sessions.create_for_user(user, %{})
+
+      attrs = %{
+        client_id: "client_test",
+        client_redirect_uri: "http://localhost:33418/cb",
+        code_challenge: "abc123def456",
+        code_challenge_method: "S256",
+        remote_ip: "1.2.3.4",
+        user_agent: "Claude Desktop/0.7"
+      }
+
+      assert {:ok, session} = Sessions.create_authorization_code(user, attrs)
       assert String.starts_with?(session.session_id, "mcp_")
       assert is_nil(session.access_token_hash)
-      assert DateTime.diff(session.expires_at, DateTime.utc_now(), :day) >= 29
-    end
-
-    test "captures client metadata" do
-      user = Dust.AccountsFixtures.user_fixture()
-      attrs = %{client_name: "Claude Desktop", client_version: "0.7.1", remote_ip: "1.2.3.4"}
-      assert {:ok, session} = Sessions.create_for_user(user, attrs)
-      assert session.client_name == "Claude Desktop"
-      assert session.client_version == "0.7.1"
+      assert session.client_id == "client_test"
+      assert session.client_redirect_uri == "http://localhost:33418/cb"
+      assert session.code_challenge == "abc123def456"
+      assert session.code_challenge_method == "S256"
       assert session.remote_ip == "1.2.3.4"
+      assert DateTime.diff(session.expires_at, DateTime.utc_now(), :day) >= 29
     end
   end
 
@@ -346,7 +373,21 @@ end
 
 ```elixir
 defmodule Dust.MCP.Sessions do
-  @moduledoc "Context for MCP OAuth sessions: create, look up, slide expiry, invalidate."
+  @moduledoc """
+  Context for MCP OAuth sessions.
+
+  A session row plays two roles in its lifetime:
+
+    1. **Authorization code phase** (`access_token_hash IS NULL`) — created by
+       `create_authorization_code/2` at `/oauth/callback` time. The PKCE
+       challenge, client_id, and client redirect_uri are persisted for later
+       back-channel validation.
+
+    2. **Bearer token phase** (`access_token_hash` set) — entered by
+       `exchange_code/2` at `/oauth/token` time, which validates PKCE,
+       generates an opaque token, hashes it, and updates the row in a single
+       transaction guarded by `WHERE access_token_hash IS NULL`.
+  """
 
   import Ecto.Query
 
@@ -356,7 +397,7 @@ defmodule Dust.MCP.Sessions do
   @token_lifetime_seconds 30 * 86_400
   @slide_threshold_seconds 60 * 60
 
-  def create_for_user(user, attrs) do
+  def create_authorization_code(user, attrs) do
     now = DateTime.utc_now()
 
     base = %{
@@ -383,29 +424,102 @@ end
 
 ```bash
 git add server/lib/dust/mcp/sessions.ex server/test/dust/mcp/sessions_test.exs
-git commit -m "feat(mcp): add Sessions.create_for_user and hash_token"
+git commit -m "feat(mcp): add Sessions.create_authorization_code and hash_token"
 ```
 
 ---
 
-### Task 1.4: `Sessions.set_access_token/1`
+### Task 1.4: `Sessions.exchange_code/2` (PKCE-validating token issuance)
 
 **Files:**
 - Modify: `server/lib/dust/mcp/sessions.ex`
 - Modify: `server/test/dust/mcp/sessions_test.exs`
 
-**Step 1: Write the failing test**
+This function is the **only** path that mutates `access_token_hash`. It validates the PKCE verifier, validates `client_id` + `redirect_uri` match the values stored at authorize-time, and atomically issues an opaque bearer token.
+
+**Step 1: Write the failing tests**
 
 ```elixir
-describe "set_access_token/1" do
-  test "generates raw token, stores hash, refreshes expiry" do
+describe "exchange_code/2" do
+  setup do
     user = Dust.AccountsFixtures.user_fixture()
-    {:ok, session} = Sessions.create_for_user(user, %{})
+    code_verifier = :crypto.strong_rand_bytes(32) |> Base.url_encode64(padding: false)
+    code_challenge = :crypto.hash(:sha256, code_verifier) |> Base.url_encode64(padding: false)
 
-    assert {:ok, raw_token, updated} = Sessions.set_access_token(session)
+    {:ok, session} =
+      Sessions.create_authorization_code(user, %{
+        client_id: "client_test",
+        client_redirect_uri: "http://localhost:33418/cb",
+        code_challenge: code_challenge,
+        code_challenge_method: "S256"
+      })
+
+    %{user: user, session: session, verifier: code_verifier}
+  end
+
+  test "issues opaque token on valid PKCE + client binding", %{session: session, verifier: verifier} do
+    assert {:ok, raw_token, updated} =
+             Sessions.exchange_code(session.session_id, %{
+               code_verifier: verifier,
+               client_id: "client_test",
+               client_redirect_uri: "http://localhost:33418/cb"
+             })
+
     assert String.length(raw_token) >= 32
     assert updated.access_token_hash == Sessions.hash_token(raw_token)
     assert DateTime.diff(updated.expires_at, DateTime.utc_now(), :day) >= 29
+  end
+
+  test "rejects mismatched code_verifier", %{session: session} do
+    assert {:error, :pkce_mismatch} =
+             Sessions.exchange_code(session.session_id, %{
+               code_verifier: "totally wrong verifier",
+               client_id: "client_test",
+               client_redirect_uri: "http://localhost:33418/cb"
+             })
+  end
+
+  test "rejects mismatched client_id", %{session: session, verifier: verifier} do
+    assert {:error, :client_mismatch} =
+             Sessions.exchange_code(session.session_id, %{
+               code_verifier: verifier,
+               client_id: "wrong_client",
+               client_redirect_uri: "http://localhost:33418/cb"
+             })
+  end
+
+  test "rejects mismatched redirect_uri", %{session: session, verifier: verifier} do
+    assert {:error, :client_mismatch} =
+             Sessions.exchange_code(session.session_id, %{
+               code_verifier: verifier,
+               client_id: "client_test",
+               client_redirect_uri: "http://attacker/cb"
+             })
+  end
+
+  test "rejects already-exchanged code", %{session: session, verifier: verifier} do
+    assert {:ok, _, _} =
+             Sessions.exchange_code(session.session_id, %{
+               code_verifier: verifier,
+               client_id: "client_test",
+               client_redirect_uri: "http://localhost:33418/cb"
+             })
+
+    assert {:error, :already_used} =
+             Sessions.exchange_code(session.session_id, %{
+               code_verifier: verifier,
+               client_id: "client_test",
+               client_redirect_uri: "http://localhost:33418/cb"
+             })
+  end
+
+  test "rejects unknown session_id" do
+    assert {:error, :invalid_grant} =
+             Sessions.exchange_code("mcp_does_not_exist", %{
+               code_verifier: "x",
+               client_id: "client_test",
+               client_redirect_uri: "http://localhost:33418/cb"
+             })
   end
 end
 ```
@@ -415,41 +529,133 @@ end
 **Step 3: Implement**
 
 ```elixir
-def set_access_token(%Session{} = session) do
+def exchange_code(session_id, %{
+      code_verifier: verifier,
+      client_id: client_id,
+      client_redirect_uri: redirect_uri
+    })
+    when is_binary(session_id) do
+  case Repo.get_by(Session, session_id: session_id) do
+    nil ->
+      {:error, :invalid_grant}
+
+    %Session{access_token_hash: hash} when not is_nil(hash) ->
+      {:error, :already_used}
+
+    %Session{} = session ->
+      cond do
+        session.client_id != client_id ->
+          {:error, :client_mismatch}
+
+        session.client_redirect_uri != redirect_uri ->
+          {:error, :client_mismatch}
+
+        not pkce_matches?(session, verifier) ->
+          {:error, :pkce_mismatch}
+
+        true ->
+          do_issue(session)
+      end
+  end
+end
+
+defp pkce_matches?(%Session{code_challenge: challenge, code_challenge_method: "S256"}, verifier)
+     when is_binary(challenge) and is_binary(verifier) do
+  computed = :crypto.hash(:sha256, verifier) |> Base.url_encode64(padding: false)
+  Plug.Crypto.secure_compare(computed, challenge)
+end
+
+defp pkce_matches?(_session, _verifier), do: false
+
+defp do_issue(%Session{} = session) do
   raw_token = :crypto.strong_rand_bytes(32) |> Base.url_encode64(padding: false)
   hash = hash_token(raw_token)
   expires_at = DateTime.add(DateTime.utc_now(), @token_lifetime_seconds, :second)
 
-  case session
-       |> Session.changeset(%{access_token_hash: hash, expires_at: expires_at})
-       |> Repo.update() do
-    {:ok, updated} -> {:ok, raw_token, updated}
-    {:error, changeset} -> {:error, changeset}
+  # Atomic check-and-set: only update if the row is still in auth-code phase.
+  query =
+    from(s in Session,
+      where: s.id == ^session.id and is_nil(s.access_token_hash),
+      update: [
+        set: [
+          access_token_hash: ^hash,
+          expires_at: ^expires_at,
+          last_activity_at: ^DateTime.utc_now(),
+          updated_at: ^DateTime.utc_now()
+        ]
+      ]
+    )
+
+  case Repo.update_all(query, []) do
+    {1, _} ->
+      {:ok, raw_token, Repo.get!(Session, session.id) |> Repo.preload(:user)}
+
+    {0, _} ->
+      # Someone exchanged this code between our SELECT and UPDATE.
+      {:error, :already_used}
   end
 end
 ```
 
-**Step 4: Run → pass. Step 5: Commit**
+Note the use of `Plug.Crypto.secure_compare/2` for the PKCE check (constant-time). The atomic `update_all` with the `is_nil(access_token_hash)` predicate is the race-free guarantee that one auth code can only mint one token.
+
+**Step 4: Run → pass.**
+
+**Step 5: Commit**
 
 ```bash
 git add server/lib/dust/mcp/sessions.ex server/test/dust/mcp/sessions_test.exs
-git commit -m "feat(mcp): add Sessions.set_access_token"
+git commit -m "feat(mcp): add Sessions.exchange_code with PKCE validation"
 ```
 
 ---
 
-### Task 1.5: `Sessions.find_by_session_id/1`, `find_by_access_token_hash/1`
+### Task 1.5: `Sessions.find_by_session_id/1`, `find_by_access_token_hash/1`, `invalidate/1`
 
 **Files:** same as 1.4
 
 **Step 1: Tests**
 
+Add a small `issue_test_token/1` helper at the top of the test file so other tests in this suite can mint a fully-exchanged session without re-pasting PKCE plumbing:
+
+```elixir
+defp issue_test_token(user) do
+  verifier = :crypto.strong_rand_bytes(32) |> Base.url_encode64(padding: false)
+  challenge = :crypto.hash(:sha256, verifier) |> Base.url_encode64(padding: false)
+
+  {:ok, session} =
+    Sessions.create_authorization_code(user, %{
+      client_id: "client_test",
+      client_redirect_uri: "http://localhost/cb",
+      code_challenge: challenge,
+      code_challenge_method: "S256"
+    })
+
+  {:ok, raw, exchanged} =
+    Sessions.exchange_code(session.session_id, %{
+      code_verifier: verifier,
+      client_id: "client_test",
+      client_redirect_uri: "http://localhost/cb"
+    })
+
+  {raw, exchanged}
+end
+```
+
+Then:
+
 ```elixir
 describe "find_by_session_id/1" do
   test "returns session, ignoring invalidated rows" do
     user = Dust.AccountsFixtures.user_fixture()
-    {:ok, session} = Sessions.create_for_user(user, %{})
-    assert %Session{} = Sessions.find_by_session_id(session.session_id)
+
+    {:ok, session} =
+      Sessions.create_authorization_code(user, %{
+        client_id: "c", client_redirect_uri: "http://x/cb",
+        code_challenge: "x", code_challenge_method: "S256"
+      })
+
+    assert %Dust.MCP.Session{} = Sessions.find_by_session_id(session.session_id)
 
     {:ok, _} = Sessions.invalidate(session)
     assert is_nil(Sessions.find_by_session_id(session.session_id))
@@ -459,8 +665,7 @@ end
 describe "find_by_access_token_hash/1" do
   test "returns session for current hash, not after invalidation" do
     user = Dust.AccountsFixtures.user_fixture()
-    {:ok, session} = Sessions.create_for_user(user, %{})
-    {:ok, raw, _} = Sessions.set_access_token(session)
+    {raw, session} = issue_test_token(user)
 
     found = Sessions.find_by_access_token_hash(Sessions.hash_token(raw))
     assert found.id == session.id
@@ -518,13 +723,10 @@ git commit -m "feat(mcp): add Sessions lookup and invalidate"
 describe "touch_and_slide/1" do
   test "always bumps last_activity_at" do
     user = Dust.AccountsFixtures.user_fixture()
-    {:ok, session} = Sessions.create_for_user(user, %{})
-    {:ok, raw, session} = Sessions.set_access_token(session)
-    {:ok, found} = {:ok, Sessions.find_by_access_token_hash(Sessions.hash_token(raw))}
+    {_raw, session} = issue_test_token(user)
 
-    # Force last_activity_at into the past
     {:ok, stale} =
-      found
+      session
       |> Ecto.Changeset.change(last_activity_at: DateTime.add(DateTime.utc_now(), -120, :second))
       |> Dust.Repo.update()
 
@@ -532,13 +734,12 @@ describe "touch_and_slide/1" do
     assert DateTime.compare(touched.last_activity_at, stale.last_activity_at) == :gt
   end
 
-  test "extends expires_at when remaining lifetime is less than 29d" do
+  test "extends expires_at when remaining lifetime is less than (30d - 1h)" do
     user = Dust.AccountsFixtures.user_fixture()
-    {:ok, session} = Sessions.create_for_user(user, %{})
-    {:ok, _, session} = Sessions.set_access_token(session)
+    {_raw, session} = issue_test_token(user)
 
-    # Roll expires_at back to 28 days from now (within slide window)
     short_expiry = DateTime.add(DateTime.utc_now(), 28 * 86_400, :second)
+
     {:ok, narrowed} =
       session
       |> Ecto.Changeset.change(expires_at: short_expiry)
@@ -550,8 +751,7 @@ describe "touch_and_slide/1" do
 
   test "does NOT extend expires_at when remaining lifetime is still close to 30d" do
     user = Dust.AccountsFixtures.user_fixture()
-    {:ok, session} = Sessions.create_for_user(user, %{})
-    {:ok, _, session} = Sessions.set_access_token(session)
+    {_raw, session} = issue_test_token(user)
 
     {:ok, slid} = Sessions.touch_and_slide(session)
     assert DateTime.diff(slid.expires_at, session.expires_at, :second) |> abs() < 5
@@ -829,8 +1029,7 @@ defmodule DustWeb.Plugs.MCPAuthTest do
 
     test "accepts OAuth session token and sets user_session principal" do
       user = Dust.AccountsFixtures.user_fixture()
-      {:ok, session} = Sessions.create_for_user(user, %{})
-      {:ok, raw, _} = Sessions.set_access_token(session)
+      {raw, _session} = issue_test_token(user)
 
       conn =
         build_conn()
@@ -845,8 +1044,7 @@ defmodule DustWeb.Plugs.MCPAuthTest do
 
     test "rejects expired session token" do
       user = Dust.AccountsFixtures.user_fixture()
-      {:ok, session} = Sessions.create_for_user(user, %{})
-      {:ok, raw, session} = Sessions.set_access_token(session)
+      {raw, session} = issue_test_token(user)
 
       session
       |> Ecto.Changeset.change(expires_at: DateTime.add(DateTime.utc_now(), -60, :second))
@@ -861,6 +1059,10 @@ defmodule DustWeb.Plugs.MCPAuthTest do
       assert conn.halted
     end
   end
+
+  # Reuses the same helper from Sessions tests; either copy it here or
+  # extract it into test/support/dust/mcp/test_helpers.ex.
+  defp issue_test_token(user), do: Dust.MCP.SessionsTest.issue_test_token(user)
 
   defp mcp_store_token_fixture do
     # Inline-port whatever helper tools_test.exs uses to mint a store_token.
@@ -989,7 +1191,9 @@ git commit -m "feat(mcp): plug accepts user-session tokens with sliding expiry"
 
 ---
 
-### Task 2.4: Migrate the 13 existing tools to use Authz + Principal
+### Task 2.4: Mechanical migration of 12 tools to Authz + Principal
+
+`dust_stores` and `dust_status` are **not** mechanical — they get their own tasks (2.5, 2.6) because their semantics change under user-session principals.
 
 **Files (modify each):**
 - `server/lib/dust/mcp/tools/dust_get.ex`
@@ -1000,11 +1204,10 @@ git commit -m "feat(mcp): plug accepts user-session tokens with sliding expiry"
 - `server/lib/dust/mcp/tools/dust_increment.ex`
 - `server/lib/dust/mcp/tools/dust_add.ex`
 - `server/lib/dust/mcp/tools/dust_remove.ex`
-- `server/lib/dust/mcp/tools/dust_stores.ex`
-- `server/lib/dust/mcp/tools/dust_status.ex`
 - `server/lib/dust/mcp/tools/dust_log.ex`
 - `server/lib/dust/mcp/tools/dust_put_file.ex`
 - `server/lib/dust/mcp/tools/dust_fetch_file.ex`
+- `server/lib/dust/mcp/tools/dust_rollback.ex`
 
 This is mechanical. The pattern in each tool's `call/3`:
 
@@ -1028,12 +1231,6 @@ end
 ```
 
 Drop the local `resolve_store/2` and the permission-bit check entirely. Use `:read` for read-only tools (Get, Enum, Stores, Status, Log, FetchFile) and `:write` for the rest.
-
-**Special cases:**
-
-- **`DustStores`** doesn't take a `store` argument — it lists stores. For a `:user_session` principal, list stores across all the user's orgs (use `Dust.Accounts.list_user_organizations/1`). For a `:store_token` principal, it should list only the one store the token grants access to (current behavior). Keep the kind-branch local to this tool.
-- **`DustStatus`** also takes no store; if it currently returns the store_token's store, branch the same way: `:store_token` → return that store's status; `:user_session` → require an explicit `store` argument and route through `Authz`.
-- **`DustLog`** takes a `store` arg already? Verify and route through `Authz`.
 
 **Step 1: Migrate one tool first as a template** — pick `DustGet`.
 
@@ -1100,6 +1297,143 @@ cd server && mix compile --warnings-as-errors
 git add server/lib/dust/mcp/tools/dust_get.ex
 git commit -m "refactor(mcp): dust_get uses Authz principal"
 # repeat for each
+```
+
+---
+
+### Task 2.5: Rewrite `DustStores` for both principal kinds
+
+Today `dust_stores` returns the single store behind the bound `store_token`. Under user-session principals it has to list all stores across every org the user belongs to.
+
+**Files:**
+- Modify: `server/lib/dust/mcp/tools/dust_stores.ex`
+- Modify: `server/test/dust/mcp/tools_test.exs`
+
+**Step 1: Tests**
+
+```elixir
+test "dust_stores under user_session lists stores across all the user's orgs" do
+  user = Dust.AccountsFixtures.user_fixture()
+  org_a = Dust.AccountsFixtures.organization_fixture()
+  org_b = Dust.AccountsFixtures.organization_fixture()
+  Dust.Accounts.ensure_membership(user, org_a)
+  Dust.Accounts.ensure_membership(user, org_b)
+  {:ok, _} = Dust.Stores.create_store(org_a, %{name: "alpha"})
+  {:ok, _} = Dust.Stores.create_store(org_b, %{name: "beta"})
+
+  {:result, %{content: [%{text: text}]}, _} =
+    call_tool(Dust.MCP.Tools.DustStores, %{}, user_session_principal(user))
+
+  names = Jason.decode!(text) |> Enum.map(& &1["name"])
+  assert "#{org_a.slug}/alpha" in names
+  assert "#{org_b.slug}/beta" in names
+end
+
+test "dust_stores under store_token returns just the bound store (legacy)" do
+  # Use existing fixture from tools_test.exs that creates a store + store_token + principal.
+  # Assert the response shape is unchanged from today.
+end
+```
+
+**Step 2: Implement**
+
+```elixir
+defmodule Dust.MCP.Tools.DustStores do
+  @moduledoc "MCP tool: list stores the principal can access."
+
+  use GenMCP.Suite.Tool,
+    name: "dust_stores",
+    description: "List the stores this caller has access to.",
+    input_schema: %{type: :object, properties: %{}},
+    annotations: %{readOnlyHint: true}
+
+  alias Dust.Accounts
+  alias Dust.MCP.Principal
+  alias Dust.Stores
+  alias GenMCP.MCP
+
+  @impl true
+  def call(_req, channel, _arg) do
+    principal = channel.assigns.mcp_principal
+    payload = list_for(principal)
+    {:result, MCP.call_tool_result(text: Jason.encode!(payload)), channel}
+  end
+
+  defp list_for(%Principal{kind: :store_token, store_token: token}) do
+    store = token.store
+    org = store.organization
+    [%{name: "#{org.slug}/#{store.name}", status: store.status}]
+  end
+
+  defp list_for(%Principal{kind: :user_session, user: user}) do
+    user
+    |> Accounts.list_user_organizations()
+    |> Enum.flat_map(fn org ->
+      org
+      |> Stores.list_stores()
+      |> Enum.map(fn store ->
+        %{name: "#{org.slug}/#{store.name}", status: store.status}
+      end)
+    end)
+  end
+end
+```
+
+Verify `Dust.Stores.list_stores/1` returns the expected shape — read `server/lib/dust/stores.ex` first.
+
+**Step 3-5: Run tests, format, commit.**
+
+```bash
+git add server/lib/dust/mcp/tools/dust_stores.ex server/test/dust/mcp/tools_test.exs
+git commit -m "feat(mcp): dust_stores lists across user-session orgs"
+```
+
+---
+
+### Task 2.6: Rewrite `DustStatus` for both principal kinds
+
+Currently returns the bound store's status. Under user sessions, callers can have access to many stores, so the tool needs an explicit `store` argument when the principal is `:user_session`. For `:store_token`, the argument is optional (back-compat).
+
+**Files:**
+- Modify: `server/lib/dust/mcp/tools/dust_status.ex`
+- Modify: `server/test/dust/mcp/tools_test.exs`
+
+**Step 1: Read the current `dust_status.ex`** to see exactly what fields the tool returns. Match those fields in the new implementation.
+
+**Step 2: Tests** — happy path for both principal kinds, plus "missing store argument" error for user_session.
+
+**Step 3: Implement**
+
+```elixir
+def call(req, channel, _arg) do
+  principal = channel.assigns.mcp_principal
+  store_arg = req.params.arguments["store"]
+
+  with {:ok, store} <- resolve(principal, store_arg) do
+    payload = build_status_payload(store)  # whatever shape the existing tool returns
+    {:result, GenMCP.MCP.call_tool_result(text: Jason.encode!(payload)), channel}
+  else
+    {:error, reason} -> {:error, reason, channel}
+  end
+end
+
+defp resolve(%Principal{kind: :store_token, store_token: t}, nil), do: {:ok, t.store}
+defp resolve(%Principal{kind: :store_token} = p, full_name),
+  do: Dust.MCP.Authz.authorize_store(p, full_name, :read)
+
+defp resolve(%Principal{kind: :user_session}, nil),
+  do: {:error, "store argument is required for user-session callers"}
+
+defp resolve(%Principal{kind: :user_session} = p, full_name),
+  do: Dust.MCP.Authz.authorize_store(p, full_name, :read)
+```
+
+Update the input schema: `store` becomes optional (not required).
+
+**Step 4: Commit**
+
+```bash
+git commit -m "feat(mcp): dust_status accepts explicit store for user-session callers"
 ```
 
 ---
@@ -1524,7 +1858,7 @@ def oauth_callback(conn, %{"code" => code} = params) do
   end
 end
 
-defp do_callback(conn, code, _oauth_params, client_redirect, stored_state) do
+defp do_callback(conn, code, oauth_params, client_redirect, stored_state) do
   with {:ok, %{user: workos_user}} <-
          WorkOS.UserManagement.authenticate_with_code(%{
            client_id: Application.fetch_env!(:workos, :mcp_client_id),
@@ -1532,7 +1866,11 @@ defp do_callback(conn, code, _oauth_params, client_redirect, stored_state) do
          }),
        {:ok, user} <- Dust.Accounts.find_or_create_user_from_workos(workos_user),
        {:ok, session} <-
-         Dust.MCP.Sessions.create_for_user(user, %{
+         Dust.MCP.Sessions.create_authorization_code(user, %{
+           client_id: oauth_params[:client_id],
+           client_redirect_uri: oauth_params[:redirect_uri],
+           code_challenge: oauth_params[:code_challenge],
+           code_challenge_method: oauth_params[:code_challenge_method],
            remote_ip: peer_ip(conn),
            user_agent: user_agent(conn)
          }) do
@@ -1588,23 +1926,36 @@ git commit -m "feat(mcp): add /oauth/callback endpoint"
 
 ---
 
-### Task 3.6: `POST /oauth/token`
+### Task 3.6: `POST /oauth/token` (PKCE-validating)
 
 **Step 1: Test**
 
 ```elixir
 describe "POST /oauth/token" do
-  test "exchanges session_id for opaque bearer token", %{conn: conn} do
+  setup do
     user = Dust.AccountsFixtures.user_fixture()
-    {:ok, session} = Dust.MCP.Sessions.create_for_user(user, %{})
+    verifier = :crypto.strong_rand_bytes(32) |> Base.url_encode64(padding: false)
+    challenge = :crypto.hash(:sha256, verifier) |> Base.url_encode64(padding: false)
 
+    {:ok, session} =
+      Dust.MCP.Sessions.create_authorization_code(user, %{
+        client_id: "client_test",
+        client_redirect_uri: "http://localhost:33418/cb",
+        code_challenge: challenge,
+        code_challenge_method: "S256"
+      })
+
+    %{user: user, session: session, verifier: verifier}
+  end
+
+  test "exchanges session_id for opaque bearer token on valid PKCE", %{conn: conn, session: session, verifier: verifier} do
     conn =
       post(conn, ~p"/oauth/token", %{
         "grant_type" => "authorization_code",
         "code" => session.session_id,
-        "code_verifier" => "client_verifier",
-        "client_id" => Application.fetch_env!(:workos, :mcp_client_id),
-        "redirect_uri" => "http://localhost:33418/oauth/callback"
+        "code_verifier" => verifier,
+        "client_id" => "client_test",
+        "redirect_uri" => "http://localhost:33418/cb"
       })
 
     body = json_response(conn, 200)
@@ -1613,8 +1964,32 @@ describe "POST /oauth/token" do
     assert body["expires_in"] > 86_400
   end
 
-  test "rejects already-consumed session_id" do
-    # ... call /oauth/token twice with same code, expect second to be invalid_grant
+  test "rejects mismatched code_verifier with invalid_grant", %{conn: conn, session: session} do
+    conn =
+      post(conn, ~p"/oauth/token", %{
+        "grant_type" => "authorization_code",
+        "code" => session.session_id,
+        "code_verifier" => "wrong",
+        "client_id" => "client_test",
+        "redirect_uri" => "http://localhost:33418/cb"
+      })
+
+    assert json_response(conn, 400)["error"] == "invalid_grant"
+  end
+
+  test "rejects already-consumed session_id", %{conn: conn, session: session, verifier: verifier} do
+    params = %{
+      "grant_type" => "authorization_code",
+      "code" => session.session_id,
+      "code_verifier" => verifier,
+      "client_id" => "client_test",
+      "redirect_uri" => "http://localhost:33418/cb"
+    }
+
+    _ = post(conn, ~p"/oauth/token", params)
+    second = post(build_conn(), ~p"/oauth/token", params)
+
+    assert json_response(second, 400)["error"] == "invalid_grant"
   end
 
   test "rejects unsupported grant_type" do
@@ -1627,30 +2002,35 @@ end
 **Step 2: Implement**
 
 ```elixir
-def oauth_token(conn, %{"grant_type" => "authorization_code", "code" => code}) do
-  case Dust.MCP.Sessions.find_by_session_id(code) do
-    %Dust.MCP.Session{access_token_hash: nil} = session ->
-      case Dust.MCP.Sessions.set_access_token(session) do
-        {:ok, raw, updated} ->
-          expires_in = DateTime.diff(updated.expires_at, DateTime.utc_now(), :second) |> max(0)
+def oauth_token(conn, %{
+      "grant_type" => "authorization_code",
+      "code" => code,
+      "code_verifier" => verifier,
+      "client_id" => client_id,
+      "redirect_uri" => redirect_uri
+    }) do
+  case Dust.MCP.Sessions.exchange_code(code, %{
+         code_verifier: verifier,
+         client_id: client_id,
+         client_redirect_uri: redirect_uri
+       }) do
+    {:ok, raw, session} ->
+      expires_in = DateTime.diff(session.expires_at, DateTime.utc_now(), :second) |> max(0)
 
-          json(conn, %{
-            access_token: raw,
-            token_type: "Bearer",
-            expires_in: expires_in,
-            scope: "profile email"
-          })
+      json(conn, %{
+        access_token: raw,
+        token_type: "Bearer",
+        expires_in: expires_in,
+        scope: "profile email"
+      })
 
-        {:error, _} ->
-          json_error(conn, :internal_server_error, "server_error", "Failed to issue token")
-      end
-
-    %Dust.MCP.Session{} ->
-      json_error(conn, :bad_request, "invalid_grant", "Authorization code already used")
-
-    nil ->
-      json_error(conn, :bad_request, "invalid_grant", "Invalid authorization code")
+    {:error, reason} when reason in [:invalid_grant, :already_used, :pkce_mismatch, :client_mismatch] ->
+      json_error(conn, :bad_request, "invalid_grant", to_string(reason))
   end
+end
+
+def oauth_token(conn, %{"grant_type" => "authorization_code"}) do
+  json_error(conn, :bad_request, "invalid_request", "Missing required token parameters")
 end
 
 def oauth_token(conn, _params) do
@@ -1668,6 +2048,62 @@ post "/oauth/token", MCPAuthController, :oauth_token
 
 ```bash
 git commit -m "feat(mcp): add /oauth/token endpoint"
+```
+
+---
+
+### Task 3.7: Update the `/mcp` forward to copy `:mcp_principal`
+
+**Files:**
+- Modify: `server/lib/dust_web/router.ex`
+
+The current `forward "/", DustWeb.MCPTransport, …` block has `copy_assigns: [:store_token]`. GenMCP only copies the listed assigns into the channel; without this update, tools won't see the new principal.
+
+**Step 1: Read the current `forward` block** in `router.ex` and confirm the existing list shape.
+
+**Step 2: Update**
+
+```elixir
+forward "/", DustWeb.MCPTransport,
+  server: GenMCP.Suite,
+  server_name: "Dust",
+  server_version: "0.1.0",
+  copy_assigns: [:mcp_principal, :store_token],
+  tools: [
+    # … existing 14 tools
+    Dust.MCP.Tools.DustCreateStore,
+    Dust.MCP.Tools.DustExport,
+    Dust.MCP.Tools.DustDiff,
+    Dust.MCP.Tools.DustImport,
+    Dust.MCP.Tools.DustClone
+  ]
+```
+
+(Add the new tool modules now even though they'll fail to compile until Phase 4 — actually wait until Phase 4 to add the tool entries; for now only update `copy_assigns`.)
+
+**Step 3: Investigate `:accepts` requirement**
+
+Read `deps/gen_mcp/lib/gen_mcp/transport/streamable_http.ex` (or wherever the macro lives) to determine whether the Streamable HTTP transport requires `["json", "sse"]` accepts for SSE upgrades. If yes, update the `:mcp` pipeline:
+
+```elixir
+pipeline :mcp do
+  plug :accepts, ["json", "sse"]
+  plug DustWeb.Plugs.MCPAuth
+end
+```
+
+If `["json"]` is sufficient (it may already be — current production uses json-only), leave it. **Document the decision in the commit message either way.**
+
+**Step 4: Compile + run all tool tests**
+
+```bash
+cd server && mix compile --warnings-as-errors && mix test test/dust/mcp/
+```
+
+**Step 5: Commit**
+
+```bash
+git commit -m "feat(mcp): copy mcp_principal into GenMCP channel"
 ```
 
 ---
@@ -1986,17 +2422,9 @@ git commit -m "feat(mcp): add dust_import tool"
 
 ### Task 4.5: `Dust.MCP.Tools.DustClone`
 
-Inputs: `source_store` (`org/store`), `target_org`, `target_name`. Read on source, write/membership on target.
+**Same-organization only** for v1. `Dust.Sync.Clone.clone_store/3` takes `(source_store, organization, target_name)` and there is no cross-org variant. Adding one is out of scope; document the limitation in the tool description.
 
-**Important caveat:** the existing `Dust.Sync.Clone.clone_store/3` takes `(source_store, organization, target_name)` — same-org-only. For multi-org cloning we need either:
-
-1. **Option A:** verify the function signature actually handles cross-org (read its source).
-2. **Option B:** add a new arity `Sync.Clone.clone_store/4` that accepts a target org distinct from source org.
-3. **Option C:** scope the MCP tool to same-org clones only for v1 and document the limitation.
-
-**Read `server/lib/dust/sync/clone.ex` first** and decide. If Option C is the simplest path, the MCP tool only takes `source_store` and `target_name`, cloning under the same org. Note this in the tool description and add it to the open-items list at the bottom of the implementation plan.
-
-Assuming Option C for v1:
+Inputs: `source` (`"org/store"`), `target_name`. Authz: write permission on source (clone reads the entire store; we want write to discourage drive-by exfil).
 
 ```elixir
 defmodule Dust.MCP.Tools.DustClone do
@@ -2155,15 +2583,27 @@ defmodule DustWeb.MCPOAuthIntegrationTest do
     conn = build_conn() |> post(~p"/register", %{"client_name" => "test", "redirect_uris" => ["http://localhost/cb"]})
     assert json_response(conn, 200)["client_id"]
 
-    # 3. Skip the WorkOS round-trip — directly create a session as if /oauth/callback ran
-    {:ok, session} = Dust.MCP.Sessions.create_for_user(user, %{client_name: "test"})
+    # 3. Skip the WorkOS round-trip — directly create an authorization code as if /oauth/callback ran
+    verifier = :crypto.strong_rand_bytes(32) |> Base.url_encode64(padding: false)
+    challenge = :crypto.hash(:sha256, verifier) |> Base.url_encode64(padding: false)
+
+    {:ok, session} =
+      Dust.MCP.Sessions.create_authorization_code(user, %{
+        client_id: "client_test",
+        client_redirect_uri: "http://localhost/cb",
+        code_challenge: challenge,
+        code_challenge_method: "S256"
+      })
 
     # 4. Token exchange
     conn =
       build_conn()
       |> post(~p"/oauth/token", %{
         "grant_type" => "authorization_code",
-        "code" => session.session_id
+        "code" => session.session_id,
+        "code_verifier" => verifier,
+        "client_id" => "client_test",
+        "redirect_uri" => "http://localhost/cb"
       })
 
     assert %{"access_token" => raw_token} = json_response(conn, 200)
@@ -2191,20 +2631,22 @@ git commit -m "test(mcp): integration test for OAuth happy path"
 
 At this point you should have:
 
-1. `mcp_sessions` table + Session schema + Sessions context
+1. `mcp_sessions` table (with PKCE binding columns) + Session schema + Sessions context
 2. `Dust.MCP.Principal` + `Dust.MCP.Authz` (unified authz)
 3. `MCPAuth` plug accepting both token kinds with sliding expiry + WWW-Authenticate
-4. 13 existing tools migrated to the unified principal
+4. 12 existing tools mechanically migrated; `dust_stores` and `dust_status` rewritten for both principal kinds (14 total)
 5. 5 new tools wired up: DustCreateStore, DustExport, DustDiff, DustImport, DustClone
-6. OAuth controller + routes for discovery, DCR, authorize, callback, token
-7. Config keys for `MCP_BASE_URL`, `AUTHKIT_BASE_URL`, `WORKOS_MCP_CLIENT_ID`
-8. AGENTS.md docs
-9. Full precommit gauntlet passing
+6. OAuth controller + routes for discovery, DCR, authorize, callback, token (PKCE-validating)
+7. `/mcp` forward updated to `copy_assigns: [:mcp_principal, :store_token]`
+8. Config keys for `MCP_BASE_URL`, `AUTHKIT_BASE_URL`, `WORKOS_MCP_CLIENT_ID`
+9. AGENTS.md docs
+10. Full precommit gauntlet passing
 
 **Open items to surface to the user after implementation:**
 
 - WorkOS dashboard: create the second OAuth client and capture `WORKOS_MCP_CLIENT_ID`.
-- If DustClone landed as same-org-only (Option C above), decide whether to extend `Sync.Clone.clone_store/4` for cross-org cloning.
+- Cross-org clone is intentionally deferred. If/when needed, extend `Dust.Sync.Clone.clone_store/3` to accept a target org distinct from `source.organization`.
+- SSE accept on the `:mcp` pipeline: confirm whether GenMCP's Streamable HTTP transport requires `["json", "sse"]`. Decided in Task 3.7.
 - Manual smoke test from Claude Desktop: add the MCP server URL, complete the OAuth flow, call a tool.
 
 ---
