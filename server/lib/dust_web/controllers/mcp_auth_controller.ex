@@ -129,15 +129,17 @@ defmodule DustWeb.MCPAuthController do
         json_error(conn, :bad_request, "state_mismatch", "State does not match")
 
       true ->
-        do_callback(conn, code, oauth_params, client_redirect, stored_state)
+        do_callback(conn, code, code_verifier, oauth_params, client_redirect, stored_state)
     end
   end
 
-  defp do_callback(conn, code, oauth_params, client_redirect, stored_state) do
+  defp do_callback(conn, code, code_verifier, oauth_params, client_redirect, stored_state) do
     with {:ok, %{user: workos_user}} <-
-           WorkOSClient.authenticate_with_code(%{
+           WorkOSClient.exchange_and_get_user(%{
+             code: code,
+             code_verifier: code_verifier,
              client_id: Application.fetch_env!(:workos, :mcp_client_id),
-             code: code
+             redirect_uri: "#{base_url()}/oauth/callback"
            }),
          {:ok, user} <- Accounts.find_or_create_user_from_workos(workos_user),
          {:ok, session} <-

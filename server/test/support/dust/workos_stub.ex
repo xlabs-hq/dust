@@ -5,8 +5,14 @@ defmodule Dust.WorkOSStub do
     Process.put({__MODULE__, :response}, response)
   end
 
+  def get_last_call do
+    Process.get({__MODULE__, :last_call})
+  end
+
   @impl true
-  def authenticate_with_code(_params) do
+  def exchange_and_get_user(params) do
+    Process.put({__MODULE__, :last_call}, params)
+
     case Process.get({__MODULE__, :response}) do
       nil -> {:error, :no_stub_set}
       {:error, _} = err -> err

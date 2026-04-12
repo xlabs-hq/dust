@@ -143,6 +143,32 @@ defmodule DustWeb.MCPAuthControllerTest do
       assert session.client_id == "client_dev"
       assert session.client_redirect_uri == "http://localhost:33418/oauth/callback"
     end
+
+    test "invokes WorkOS client with MCP client_id, upstream code_verifier, and authorization code",
+         %{conn: conn} do
+      _ =
+        conn
+        |> init_test_session(%{
+          oauth_params: %{
+            client_id: "client_dev",
+            redirect_uri: "http://localhost:33418/oauth/callback",
+            state: "oauth_flow_state456",
+            code_challenge: "client_challenge",
+            code_challenge_method: "S256",
+            scope: ""
+          },
+          code_verifier: "upstream_verifier_abc"
+        })
+        |> get(~p"/oauth/callback?code=workos_code_xyz&state=oauth_flow_state456")
+
+      call = WorkOSStub.get_last_call()
+      assert call.code == "workos_code_xyz"
+      assert call.code_verifier == "upstream_verifier_abc"
+      assert call.client_id == Application.fetch_env!(:workos, :mcp_client_id)
+
+      assert call.redirect_uri ==
+               "#{Application.fetch_env!(:dust, :mcp_base_url)}/oauth/callback"
+    end
   end
 
   describe "POST /oauth/token" do
