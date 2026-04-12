@@ -2,6 +2,7 @@ defmodule Dust.MCP.ToolsTest do
   use Dust.DataCase
 
   alias Dust.IntegrationHelpers
+  alias Dust.MCP.Principal
   alias GenMCP.MCP
   alias GenMCP.Mux.Channel
 
@@ -11,11 +12,13 @@ defmodule Dust.MCP.ToolsTest do
     # Re-authenticate to get preloaded store + organization
     {:ok, authed_token} = Dust.Stores.authenticate_token(token.raw_token)
 
+    principal = %Principal{kind: :store_token, store_token: authed_token}
+
     channel = %Channel{
       client: self(),
       progress_token: nil,
       status: :request,
-      assigns: %{store_token: authed_token},
+      assigns: %{store_token: authed_token, mcp_principal: principal},
       log_level: :notice
     }
 
@@ -521,11 +524,13 @@ defmodule Dust.MCP.ToolsTest do
 
       {:ok, ro_token} = Dust.Stores.authenticate_token(ro_token.raw_token)
 
+      ro_principal = %Principal{kind: :store_token, store_token: ro_token}
+
       ro_channel = %GenMCP.Mux.Channel{
         client: self(),
         progress_token: nil,
         status: :request,
-        assigns: %{store_token: ro_token},
+        assigns: %{store_token: ro_token, mcp_principal: ro_principal},
         log_level: :notice
       }
 
@@ -683,11 +688,13 @@ defmodule Dust.MCP.ToolsTest do
       # Need to re-authenticate to get the preloaded token
       {:ok, ro_token} = Dust.Stores.authenticate_token(ro_token.raw_token)
 
+      ro_principal = %Principal{kind: :store_token, store_token: ro_token}
+
       ro_channel = %Channel{
         client: self(),
         progress_token: nil,
         status: :request,
-        assigns: %{store_token: ro_token},
+        assigns: %{store_token: ro_token, mcp_principal: ro_principal},
         log_level: :notice
       }
 
