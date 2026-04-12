@@ -60,7 +60,7 @@ jobs:
         run: crystal build src/dust.cr --release --no-debug -o dust
       - name: Verify binary
         working-directory: cli
-        run: file dust && ls -lh dust
+        run: ls -lh dust
 
   build-linux:
     name: Build (${{ matrix.target }})
@@ -73,18 +73,15 @@ jobs:
           - runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
     runs-on: ${{ matrix.runner }}
-    container:
-      image: crystallang/crystal:latest-alpine
     steps:
       - uses: actions/checkout@v4
-      - name: Install build deps
-        run: apk add --no-cache sqlite-static sqlite-dev
-      - name: Install shards
-        working-directory: cli
-        run: shards install --production
-      - name: Build static binary
-        working-directory: cli
-        run: crystal build src/dust.cr --release --no-debug --static -o dust
+      - name: Build static binary in Alpine container
+        run: |
+          docker run --rm -v "$PWD:/work" -w /work/cli crystallang/crystal:latest-alpine sh -ec '
+            apk add --no-cache sqlite-static sqlite-dev
+            shards install --production
+            crystal build src/dust.cr --release --no-debug --static -o dust
+          '
       - name: Verify binary
         working-directory: cli
-        run: file dust && ls -lh dust
+        run: ls -lh dust

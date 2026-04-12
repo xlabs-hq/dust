@@ -53,21 +53,18 @@ jobs:
           - runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
     runs-on: ${{ matrix.runner }}
-    container:
-      image: crystallang/crystal:latest-alpine
     steps:
       - uses: actions/checkout@v4
-      - name: Install build deps
-        run: apk add --no-cache sqlite-static sqlite-dev tar
       - name: Extract version
         id: version
         run: echo "version=${GITHUB_REF_NAME#cli-v}" >> "$GITHUB_OUTPUT"
-      - name: Install shards
-        working-directory: cli
-        run: shards install --production
-      - name: Build static binary
-        working-directory: cli
-        run: crystal build src/dust.cr --release --no-debug --static -o dust
+      - name: Build static binary in Alpine container
+        run: |
+          docker run --rm -v "$PWD:/work" -w /work/cli crystallang/crystal:latest-alpine sh -ec '
+            apk add --no-cache sqlite-static sqlite-dev
+            shards install --production
+            crystal build src/dust.cr --release --no-debug --static -o dust
+          '
       - name: Package archive
         env:
           VERSION: ${{ steps.version.outputs.version }}
