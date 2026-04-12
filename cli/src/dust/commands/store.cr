@@ -251,15 +251,15 @@ module Dust
           value = payload["value"]?
           return unless value
           type = case value.raw
-             when Int64   then "integer"
-             when Float64 then "float"
-             when String  then "string"
-             when Bool    then "boolean"
-             when Nil     then "null"
-             when Hash    then "map"
-             when Array   then "list"
-             else              "unknown"
-             end
+                 when Int64   then "integer"
+                 when Float64 then "float"
+                 when String  then "string"
+                 when Bool    then "boolean"
+                 when Nil     then "null"
+                 when Hash    then "map"
+                 when Array   then "list"
+                 else              "unknown"
+                 end
           cache.write(store_name, path, value, type, seq)
         end
       end

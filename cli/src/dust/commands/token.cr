@@ -9,9 +9,9 @@ module Dust
         rest = args.size > 1 ? args[1..] : [] of String
 
         case subcommand
-        when "create"     then create(config, rest)
-        when "list"       then list(config, rest)
-        when "revoke"     then revoke(config, rest)
+        when "create" then create(config, rest)
+        when "list"   then list(config, rest)
+        when "revoke" then revoke(config, rest)
         when "--help", "-h", nil
           puts "Usage: dust token <subcommand>"
           puts ""

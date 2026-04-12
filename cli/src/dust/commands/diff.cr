@@ -90,7 +90,7 @@ module Dust
       private def self.format_value(val : JSON::Any) : String
         case val.raw
         when String then val.as_s.inspect
-        else val.to_json
+        else             val.to_json
         end
       end
 

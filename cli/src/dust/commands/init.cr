@@ -58,19 +58,19 @@ module Dust
 
         # Derive store name
         store_name = if sa = store_arg
-          parts = sa.split("/")
-          if parts.size == 2
-            # org/store format — extract store name but use the token's org
-            if parts[0] != org_slug
-              puts "Warning: org '#{parts[0]}' does not match your token's org (#{org_slug}). Using #{org_slug}."
-            end
-            parts[1]
-          else
-            sa
-          end
-        else
-          detect_store_name
-        end
+                       parts = sa.split("/")
+                       if parts.size == 2
+                         # org/store format — extract store name but use the token's org
+                         if parts[0] != org_slug
+                           puts "Warning: org '#{parts[0]}' does not match your token's org (#{org_slug}). Using #{org_slug}."
+                         end
+                         parts[1]
+                       else
+                         sa
+                       end
+                     else
+                       detect_store_name
+                     end
 
         full_name = "#{org_slug}/#{store_name}"
 
