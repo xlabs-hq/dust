@@ -214,7 +214,7 @@ defmodule Dust.Accounts do
   def user_belongs_to_org?(%User{id: user_id}, org_id) when is_binary(org_id) do
     Repo.exists?(
       from m in OrganizationMembership,
-        where: m.user_id == ^user_id and m.organization_id == ^org_id
+        where: m.user_id == ^user_id and m.organization_id == ^org_id and is_nil(m.deleted_at)
     )
   end
 end

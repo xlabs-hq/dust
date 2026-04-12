@@ -1,7 +1,11 @@
 defmodule Dust.AccountsTest do
   use Dust.DataCase, async: true
 
+  import Ecto.Query
+
   alias Dust.Accounts
+  alias Dust.Accounts.OrganizationMembership
+  alias Dust.Repo
 
   describe "users" do
     test "create_user/1 with valid attrs" do
@@ -115,6 +119,28 @@ defmodule Dust.AccountsTest do
           name: "Other Org",
           slug: "otherorg"
         })
+
+      refute Accounts.user_belongs_to_org?(user, org.id)
+    end
+
+    test "returns false when membership has been soft-deleted" do
+      {:ok, user} = Accounts.create_user(%{email: "softdeleted@example.com"})
+
+      {:ok, org} =
+        Accounts.create_organization_with_owner(user, %{
+          name: "Soft Org",
+          slug: "softorg"
+        })
+
+      assert Accounts.user_belongs_to_org?(user, org.id)
+
+      {1, _} =
+        Repo.update_all(
+          from(m in OrganizationMembership,
+            where: m.user_id == ^user.id and m.organization_id == ^org.id
+          ),
+          set: [deleted_at: DateTime.utc_now()]
+        )
 
       refute Accounts.user_belongs_to_org?(user, org.id)
     end

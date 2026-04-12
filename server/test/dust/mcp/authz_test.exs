@@ -1,9 +1,13 @@
 defmodule Dust.MCP.AuthzTest do
   use Dust.DataCase, async: true
 
+  import Ecto.Query
+
+  alias Dust.Accounts.OrganizationMembership
   alias Dust.IntegrationHelpers
   alias Dust.MCP.Authz
   alias Dust.MCP.Principal
+  alias Dust.Repo
   alias Dust.Stores
 
   setup do
@@ -48,6 +52,22 @@ defmodule Dust.MCP.AuthzTest do
     test "errors when store not found", %{user: user} do
       principal = %Principal{kind: :user_session, user: user}
       assert {:error, _} = Authz.authorize_store(principal, "nope/missing", :read)
+    end
+
+    test "denies access when membership has been soft-deleted",
+         %{user: user, org: org, full_name: full_name} do
+      principal = %Principal{kind: :user_session, user: user}
+      assert {:ok, _} = Authz.authorize_store(principal, full_name, :read)
+
+      {1, _} =
+        Repo.update_all(
+          from(m in OrganizationMembership,
+            where: m.user_id == ^user.id and m.organization_id == ^org.id
+          ),
+          set: [deleted_at: DateTime.utc_now()]
+        )
+
+      assert {:error, _} = Authz.authorize_store(principal, full_name, :read)
     end
   end
 
