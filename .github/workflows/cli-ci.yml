@@ -16,7 +16,7 @@ jobs:
     name: Format check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: crystal-lang/install-crystal@v1
       - name: crystal tool format --check
         working-directory: cli
@@ -34,7 +34,7 @@ jobs:
             name: linux-x86_64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: crystal-lang/install-crystal@v1
       - name: Install sqlite3 (Linux)
         if: runner.os == 'Linux'
@@ -50,7 +50,7 @@ jobs:
     name: Build (macos-arm64)
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: crystal-lang/install-crystal@v1
       - name: Install shards
         working-directory: cli
@@ -74,7 +74,7 @@ jobs:
             target: aarch64-unknown-linux-musl
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Build static binary in Alpine container
         run: |
           docker run --rm -v "$PWD:/work" -w /work/cli crystallang/crystal:latest-alpine sh -ec '
