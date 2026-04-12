@@ -23,7 +23,7 @@ defmodule Dust.MCP.Tools.DustClone do
     %{"source" => source_full, "target_name" => target_name} = req.params.arguments
     principal = channel.assigns.mcp_principal
 
-    with {:ok, source} <- Authz.authorize_store(principal, source_full, :write),
+    with {:ok, source} <- Authz.authorize_store(principal, source_full, :read),
          source = Repo.preload(source, :organization),
          {:ok, target} <- Sync.Clone.clone_store(source, source.organization, target_name) do
       payload = %{store: "#{source.organization.slug}/#{target.name}", id: target.id}
