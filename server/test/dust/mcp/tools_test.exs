@@ -843,6 +843,44 @@ defmodule Dust.MCP.ToolsTest do
     end
   end
 
+  describe "dust_diff" do
+    test "returns diff between two seqs", ctx do
+      Dust.Sync.write(ctx.store.id, %{
+        op: :set,
+        path: "title",
+        value: "old",
+        device_id: "test",
+        client_op_id: Ecto.UUID.generate()
+      })
+
+      Dust.Sync.write(ctx.store.id, %{
+        op: :set,
+        path: "title",
+        value: "new",
+        device_id: "test",
+        client_op_id: Ecto.UUID.generate()
+      })
+
+      req = make_req(%{"store" => ctx.store_full_name, "from_seq" => 1})
+      {:result, result, _} = Dust.MCP.Tools.DustDiff.call(req, ctx.channel, [])
+
+      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
+      payload = Jason.decode!(text)
+      assert payload["from_seq"] == 1
+      assert is_list(payload["changes"])
+    end
+
+    test "denies access for unauthorized user" do
+      {:ok, user} = Accounts.create_user(%{email: "no-diff@example.com"})
+
+      req = make_req(%{"store" => "missing/store", "from_seq" => 0})
+      channel = user_session_channel(user)
+
+      {:error, reason, _} = Dust.MCP.Tools.DustDiff.call(req, channel, [])
+      assert reason =~ "not found"
+    end
+  end
+
   describe "permission checks" do
     test "read-only token cannot write", ctx do
       # Create a read-only token
