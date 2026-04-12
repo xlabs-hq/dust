@@ -47,6 +47,66 @@ defmodule DustWeb.MCPAuthController do
     json(conn, response)
   end
 
+  def oauth_authorize(
+        conn,
+        %{
+          "response_type" => _,
+          "client_id" => client_id,
+          "redirect_uri" => redirect_uri,
+          "state" => state,
+          "code_challenge" => challenge,
+          "code_challenge_method" => method
+        } = params
+      ) do
+    oauth_state =
+      if String.starts_with?(state, "oauth_flow_") do
+        state
+      else
+        "oauth_flow_" <> state
+      end
+
+    conn =
+      put_session(conn, :oauth_params, %{
+        client_id: client_id,
+        redirect_uri: redirect_uri,
+        state: oauth_state,
+        code_challenge: challenge,
+        code_challenge_method: method,
+        scope: Map.get(params, "scope", "")
+      })
+
+    # Mint our own PKCE for the upstream WorkOS exchange
+    upstream_verifier = :crypto.strong_rand_bytes(32) |> Base.url_encode64(padding: false)
+
+    upstream_challenge =
+      :crypto.hash(:sha256, upstream_verifier) |> Base.url_encode64(padding: false)
+
+    conn = put_session(conn, :code_verifier, upstream_verifier)
+
+    query =
+      URI.encode_query(%{
+        client_id: Application.fetch_env!(:workos, :mcp_client_id),
+        response_type: "code",
+        redirect_uri: "#{base_url()}/oauth/callback",
+        scope: "profile email",
+        state: oauth_state,
+        code_challenge: upstream_challenge,
+        code_challenge_method: "S256"
+      })
+
+    authkit = Application.fetch_env!(:dust, :authkit_base_url)
+    redirect(conn, external: "#{authkit}/oauth2/authorize?#{query}")
+  end
+
+  def oauth_authorize(conn, _params) do
+    conn
+    |> put_status(:bad_request)
+    |> json(%{
+      error: "invalid_request",
+      error_description: "Missing required OAuth parameters"
+    })
+  end
+
   defp base_url do
     Application.fetch_env!(:dust, :mcp_base_url)
   end
