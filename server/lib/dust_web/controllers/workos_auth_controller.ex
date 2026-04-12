@@ -194,10 +194,15 @@ defmodule DustWeb.WorkOSAuthController do
   end
 
   @doc """
-  Resend the email verification code.
+  Resend the email verification code. Takes an email and looks up the WorkOS
+  user, then asks WorkOS to send a fresh code. Always returns success to avoid
+  leaking which emails have accounts.
   """
-  def resend_verification(conn, %{"user_id" => user_id}) do
-    _ = WorkOS.UserManagement.send_verification_email(user_id)
+  def resend_verification(conn, %{"email" => email}) do
+    with {:ok, workos_user} <- find_workos_user_by_email(email) do
+      _ = WorkOS.UserManagement.send_verification_email(workos_user.id)
+    end
+
     json(conn, %{sent: true})
   end
 

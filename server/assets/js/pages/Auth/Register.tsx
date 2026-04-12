@@ -150,12 +150,7 @@ function Register() {
                   disabled={resendCooldown > 0}
                   onClick={async () => {
                     setResendCooldown(30);
-                    const { data: d } = await api.post<{
-                      pending_authentication_token?: string;
-                    }>("/auth/sign-up", { email, password });
-                    if (d.pending_authentication_token) {
-                      setPendingToken(d.pending_authentication_token);
-                    }
+                    await api.post("/auth/resend-verification", { email });
                     toast.success("Verification code resent");
                   }}
                   className={
