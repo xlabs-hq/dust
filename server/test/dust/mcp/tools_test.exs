@@ -970,7 +970,7 @@ defmodule Dust.MCP.ToolsTest do
       assert is_binary(decoded["id"])
     end
 
-    test "allows clone for read-only token (read on source is sufficient)", ctx do
+    test "denies clone for read-only token (write on source is required)", ctx do
       ctx.org
       |> Ecto.Changeset.change(plan: "pro")
       |> Dust.Repo.update!()
@@ -995,12 +995,8 @@ defmodule Dust.MCP.ToolsTest do
       }
 
       req = make_req(%{"source" => ctx.store_full_name, "target_name" => "blog-copy-ro"})
-      {:result, result, _} = Dust.MCP.Tools.DustClone.call(req, ro_channel, [])
-
-      assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
-      decoded = Jason.decode!(text)
-      assert decoded["store"] == "#{ctx.org.slug}/blog-copy-ro"
-      assert is_binary(decoded["id"])
+      assert {:error, reason, _} = Dust.MCP.Tools.DustClone.call(req, ro_channel, [])
+      assert reason =~ "permission"
     end
   end
 
