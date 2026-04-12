@@ -38,4 +38,94 @@ defmodule Dust.MCP.SessionsTest do
       assert Sessions.hash_token("hello") =~ ~r/^[0-9a-f]{64}$/
     end
   end
+
+  describe "exchange_code/2" do
+    setup do
+      {:ok, user} =
+        Accounts.create_user(%{
+          email: "test_#{System.unique_integer([:positive])}@example.com"
+        })
+
+      code_verifier = :crypto.strong_rand_bytes(32) |> Base.url_encode64(padding: false)
+      code_challenge = :crypto.hash(:sha256, code_verifier) |> Base.url_encode64(padding: false)
+
+      {:ok, session} =
+        Sessions.create_authorization_code(user, %{
+          client_id: "client_test",
+          client_redirect_uri: "http://localhost:33418/cb",
+          code_challenge: code_challenge,
+          code_challenge_method: "S256"
+        })
+
+      %{user: user, session: session, verifier: code_verifier}
+    end
+
+    test "issues opaque token on valid PKCE + client binding", %{
+      session: session,
+      verifier: verifier
+    } do
+      assert {:ok, raw_token, updated} =
+               Sessions.exchange_code(session.session_id, %{
+                 code_verifier: verifier,
+                 client_id: "client_test",
+                 client_redirect_uri: "http://localhost:33418/cb"
+               })
+
+      assert String.length(raw_token) >= 32
+      assert updated.access_token_hash == Sessions.hash_token(raw_token)
+      assert DateTime.diff(updated.expires_at, DateTime.utc_now(), :day) >= 29
+    end
+
+    test "rejects mismatched code_verifier", %{session: session} do
+      assert {:error, :pkce_mismatch} =
+               Sessions.exchange_code(session.session_id, %{
+                 code_verifier: "totally wrong verifier",
+                 client_id: "client_test",
+                 client_redirect_uri: "http://localhost:33418/cb"
+               })
+    end
+
+    test "rejects mismatched client_id", %{session: session, verifier: verifier} do
+      assert {:error, :client_mismatch} =
+               Sessions.exchange_code(session.session_id, %{
+                 code_verifier: verifier,
+                 client_id: "wrong_client",
+                 client_redirect_uri: "http://localhost:33418/cb"
+               })
+    end
+
+    test "rejects mismatched redirect_uri", %{session: session, verifier: verifier} do
+      assert {:error, :client_mismatch} =
+               Sessions.exchange_code(session.session_id, %{
+                 code_verifier: verifier,
+                 client_id: "client_test",
+                 client_redirect_uri: "http://attacker/cb"
+               })
+    end
+
+    test "rejects already-exchanged code", %{session: session, verifier: verifier} do
+      assert {:ok, _, _} =
+               Sessions.exchange_code(session.session_id, %{
+                 code_verifier: verifier,
+                 client_id: "client_test",
+                 client_redirect_uri: "http://localhost:33418/cb"
+               })
+
+      assert {:error, :already_used} =
+               Sessions.exchange_code(session.session_id, %{
+                 code_verifier: verifier,
+                 client_id: "client_test",
+                 client_redirect_uri: "http://localhost:33418/cb"
+               })
+    end
+
+    test "rejects unknown session_id" do
+      assert {:error, :invalid_grant} =
+               Sessions.exchange_code("mcp_does_not_exist", %{
+                 code_verifier: "x",
+                 client_id: "client_test",
+                 client_redirect_uri: "http://localhost:33418/cb"
+               })
+    end
+  end
 end
