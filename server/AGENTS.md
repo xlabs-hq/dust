@@ -576,6 +576,29 @@ This is a transient error. You simply need to reconnect to tidewave and it will 
 - one alias per line!
 - DO NOT try to stop, start or restart the server - this will cause errors. You can do everything you need from inside tidewave
 
+## MCP OAuth
+
+The MCP server at `/mcp` accepts two authentication methods:
+
+1. **Legacy bearer tokens** (`dust_tok_…`) for programmatic use — single-store scoped.
+2. **OAuth 2.1 + DCR** for MCP clients (Claude Desktop, Cursor, ChatGPT) —
+   user-scoped, multi-org, 30-day sliding expiry.
+
+Discovery endpoints:
+- `GET /.well-known/oauth-protected-resource`
+- `GET /.well-known/oauth-authorization-server`
+- `POST /register` (DCR)
+- `GET /oauth/authorize`
+- `GET /oauth/callback`
+- `POST /oauth/token`
+
+To wire Claude Desktop: add an MCP server with URL `https://<host>/mcp`. The
+client will discover the OAuth endpoints automatically.
+
+**Operator setup:** create a second WorkOS OAuth client dedicated to MCP
+(redirect URI `<MCP_BASE_URL>/oauth/callback`), set
+`WORKOS_MCP_CLIENT_ID` and `AUTHKIT_BASE_URL` env vars.
+
 ## FINAL NOTE
 
 ALWAYS confirm to the user that you have read this file - a simple "I've read the Agents doc" is sufficient
