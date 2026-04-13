@@ -54,4 +54,17 @@ defmodule DustTest do
 
     assert Dust.get_many("test/store", ["a", "b"]) == %{"a" => 1, "b" => 2}
   end
+
+  test "Dust.watch/4 is an alias for Dust.on/4" do
+    store = "test/store"
+    Dust.SyncEngine.seed_entry(store, "a", 1, "integer")
+
+    test_pid = self()
+    callback = fn event -> send(test_pid, {:event, event}) end
+
+    ref = Dust.watch(store, "**", callback, include_current: true)
+
+    assert is_reference(ref)
+    assert_receive {:event, %{type: :present, path: "a"}}, 200
+  end
 end
