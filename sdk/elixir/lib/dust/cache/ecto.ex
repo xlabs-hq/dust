@@ -23,6 +23,20 @@ if Code.ensure_loaded?(Ecto.Query) do
     end
 
     @impl Dust.Cache
+    def read_entry(repo, store, path) do
+      query =
+        from(c in CacheEntry,
+          where: c.store == ^store and c.path == ^path,
+          select: {c.value, c.type, c.seq}
+        )
+
+      case repo.one(query) do
+        nil -> :miss
+        {json, type, seq} -> {:ok, {Jason.decode!(json), type, seq}}
+      end
+    end
+
+    @impl Dust.Cache
     def read_all(repo, store, pattern) do
       compiled = Dust.Protocol.Glob.compile(pattern)
 
@@ -122,20 +136,24 @@ if Code.ensure_loaded?(Ecto.Query) do
       pattern = Keyword.get(opts, :pattern, "**")
       cursor = Keyword.get(opts, :cursor)
       limit = Keyword.get(opts, :limit, 50)
+      order = Keyword.get(opts, :order, :asc)
 
       compiled = Dust.Protocol.Glob.compile(pattern)
 
       query =
         from(c in CacheEntry,
           where: c.store == ^store and c.path != ^@seq_sentinel_path,
-          order_by: [asc: c.path],
+          order_by: [{^order, c.path}],
           limit: ^(limit + 1),
           select: {c.path, c.value, c.type, c.seq}
         )
 
       query =
         if cursor do
-          from(c in query, where: c.path > ^cursor)
+          case order do
+            :asc -> from(c in query, where: c.path > ^cursor)
+            :desc -> from(c in query, where: c.path < ^cursor)
+          end
         else
           query
         end

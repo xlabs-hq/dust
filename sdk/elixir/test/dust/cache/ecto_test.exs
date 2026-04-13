@@ -51,6 +51,26 @@ defmodule Dust.Cache.EctoTest do
     end
   end
 
+  describe "read_entry" do
+    test "returns full metadata for present keys" do
+      :ok = EctoCache.write(Dust.TestRepo, @store, "a.b", "hello", "string", 7)
+
+      assert EctoCache.read_entry(Dust.TestRepo, @store, "a.b") ==
+               {:ok, {"hello", "string", 7}}
+    end
+
+    test "decodes non-string json values" do
+      :ok = EctoCache.write(Dust.TestRepo, @store, "m", %{"k" => 1}, "map", 3)
+
+      assert EctoCache.read_entry(Dust.TestRepo, @store, "m") ==
+               {:ok, {%{"k" => 1}, "map", 3}}
+    end
+
+    test "returns :miss for absent keys" do
+      assert EctoCache.read_entry(Dust.TestRepo, @store, "nope") == :miss
+    end
+  end
+
   describe "delete" do
     test "removes an entry" do
       :ok = EctoCache.write(Dust.TestRepo, @store, "key", "val", "string", 1)
@@ -189,6 +209,33 @@ defmodule Dust.Cache.EctoTest do
 
     test "handles empty batch" do
       assert :ok = EctoCache.write_batch(Dust.TestRepo, @store, [])
+    end
+  end
+
+  describe "browse order" do
+    test "desc order returns entries in reverse lex order" do
+      :ok = EctoCache.write(Dust.TestRepo, @store, "a", "1", "string", 1)
+      :ok = EctoCache.write(Dust.TestRepo, @store, "b", "2", "string", 2)
+      :ok = EctoCache.write(Dust.TestRepo, @store, "c", "3", "string", 3)
+
+      {page, next_cursor} = EctoCache.browse(Dust.TestRepo, @store, order: :desc)
+
+      paths = Enum.map(page, fn {p, _, _, _} -> p end)
+      assert paths == ["c", "b", "a"]
+      assert next_cursor == nil
+    end
+
+    test "desc + cursor drops entries >= cursor" do
+      :ok = EctoCache.write(Dust.TestRepo, @store, "a", "1", "string", 1)
+      :ok = EctoCache.write(Dust.TestRepo, @store, "b", "2", "string", 2)
+      :ok = EctoCache.write(Dust.TestRepo, @store, "c", "3", "string", 3)
+      :ok = EctoCache.write(Dust.TestRepo, @store, "d", "4", "string", 4)
+
+      {page, _next_cursor} =
+        EctoCache.browse(Dust.TestRepo, @store, order: :desc, cursor: "c")
+
+      paths = Enum.map(page, fn {p, _, _, _} -> p end)
+      assert paths == ["b", "a"]
     end
   end
 end
