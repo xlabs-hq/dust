@@ -73,7 +73,8 @@ module Dust
         get <store> <path>            Read a value
         merge <store> <path> <json>   Merge keys
         delete <store> <path>         Delete a path
-        enum <store> <pattern>        List matching entries
+        enum <store> <pattern> [--limit N --after C --order asc|desc --select entries|keys|prefixes]
+                                      List matching entries (flagless: {path => value}; flagged: paginated)
         entry <store> <path>          Read entry with type and revision
 
         increment <store> <path> [n]  Increment counter

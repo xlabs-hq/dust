@@ -113,12 +113,14 @@ module Dust
         end
       end
 
-      # dust enum <store> <pattern>
+      # dust enum <store> <pattern> [--limit N] [--after C] [--order asc|desc] [--select entries|keys|prefixes]
       def self.enum(config : Config, args : Array(String))
         Output.require_auth!(config)
-        Output.require_args!(args, 2, "dust enum <store> <pattern>")
+        Output.require_args!(args, 2, "dust enum <store> <pattern> [--limit N] [--after C] [--order asc|desc] [--select entries|keys|prefixes]")
 
         store_name, pattern = args[0], args[1]
+        flag_args = args[2..]
+        flags = parse_flags(flag_args)
 
         conn = Connection.new(config)
         cache = Cache.new
@@ -135,16 +137,42 @@ module Dust
           # Wait for catch-up events to drain
           sleep 0.2.seconds
 
-          entries = cache.read_all(store_name)
+          if flags.empty?
+            # Flagless backwards-compat behavior: {path => value} map.
+            entries = cache.read_all(store_name)
+            matched = entries.select { |path, _| Glob.match?(pattern, path) }
 
-          matched = entries.select { |path, _| Glob.match?(pattern, path) }
+            result = JSON::Any.new(
+              matched.map { |path, value|
+                {path, value}
+              }.to_h
+            )
+            Output.json(result)
+          else
+            # Paginated browse path.
+            limit = (flags["limit"]? || "50").to_i
+            after = flags["after"]?
+            order = flags["order"]? || "asc"
+            select_flag = flags["select"]? || "entries"
 
-          result = JSON::Any.new(
-            matched.map { |path, value|
-              {path, value}
-            }.to_h
-          )
-          Output.json(result)
+            begin
+              items, next_cursor = cache.browse(
+                store_name,
+                pattern: pattern,
+                limit: limit,
+                after: after,
+                order: order,
+                select_as: select_flag,
+              )
+
+              Output.json({
+                "items"       => render_browse_items(items, select_flag),
+                "next_cursor" => next_cursor,
+              })
+            rescue ex : ArgumentError
+              Output.error(ex.message || "invalid argument")
+            end
+          end
         ensure
           conn.close
           cache.close
@@ -152,6 +180,42 @@ module Dust
       end
 
       # --- Helpers ---
+
+      # Walks args and extracts `--name value` pairs into a hash.
+      # Reused by enum/range/get-many flag parsing.
+      private def self.parse_flags(args : Array(String)) : Hash(String, String)
+        flags = {} of String => String
+        i = 0
+        while i < args.size
+          arg = args[i]
+          if arg.starts_with?("--")
+            name = arg[2..]
+            i += 1
+            Output.error("missing value for --#{name}") if i >= args.size
+            flags[name] = args[i]
+          end
+          i += 1
+        end
+        flags
+      end
+
+      # Renders browse results for JSON output. Entries become objects with
+      # path/value/type/revision; keys/prefixes pass through as string arrays.
+      private def self.render_browse_items(items : Array(Cache::BrowseEntry) | Array(String), select_flag : String)
+        case select_flag
+        when "keys", "prefixes"
+          items.as(Array(String))
+        else
+          items.as(Array(Cache::BrowseEntry)).map do |row|
+            {
+              "path"     => JSON::Any.new(row[:path]),
+              "value"    => row[:value],
+              "type"     => JSON::Any.new(row[:type]),
+              "revision" => JSON::Any.new(row[:seq]),
+            }
+          end
+        end
+      end
 
       private def self.write_op(config : Config, store : String, op : String, path : String, value : JSON::Any?) : JSON::Any
         conn = Connection.new(config)
