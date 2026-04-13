@@ -32,6 +32,7 @@ module Dust
         when "merge"      then Commands::Data.merge(config, rest)
         when "delete"     then Commands::Data.delete(config, rest)
         when "enum"       then Commands::Data.enum(config, rest)
+        when "entry"      then Commands::Data.entry(config, rest)
         when "watch"      then Commands::Watch.watch(config, rest)
         when "log"        then Commands::Log.log(config, rest)
         when "rollback"   then Commands::Log.rollback(config, rest)
@@ -73,6 +74,7 @@ module Dust
         merge <store> <path> <json>   Merge keys
         delete <store> <path>         Delete a path
         enum <store> <pattern>        List matching entries
+        entry <store> <path>          Read entry with type and revision
 
         increment <store> <path> [n]  Increment counter
         add <store> <path> <member>   Add to set

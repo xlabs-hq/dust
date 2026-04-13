@@ -73,6 +73,46 @@ module Dust
         end
       end
 
+      # dust entry <store> <path>
+      def self.entry(config : Config, args : Array(String))
+        Output.require_auth!(config)
+        Output.require_args!(args, 2, "dust entry <store> <path>")
+
+        store_name, path = args[0], args[1]
+
+        conn = Connection.new(config)
+        cache = Cache.new
+        last_seq = cache.last_seq(store_name)
+
+        conn.on_event do |topic, payload|
+          handle_event(cache, store_name, payload)
+        end
+
+        begin
+          conn.connect_sync
+          channel = conn.join(store_name, last_seq)
+
+          # Wait for catch-up events to drain into cache
+          sleep 0.2.seconds
+
+          result = cache.read_entry(store_name, path)
+          if result.nil?
+            STDERR.puts %({"error":"not_found"})
+            exit 1
+          else
+            Output.json({
+              "path"     => JSON::Any.new(path),
+              "value"    => result[:value],
+              "type"     => JSON::Any.new(result[:type]),
+              "revision" => JSON::Any.new(result[:seq]),
+            })
+          end
+        ensure
+          conn.close
+          cache.close
+        end
+      end
+
       # dust enum <store> <pattern>
       def self.enum(config : Config, args : Array(String))
         Output.require_auth!(config)
