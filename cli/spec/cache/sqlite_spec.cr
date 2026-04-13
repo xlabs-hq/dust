@@ -65,4 +65,38 @@ describe Dust::Cache do
       cache.read_entry("store", "missing").should be_nil
     end
   end
+
+  describe "#read_many" do
+    it "returns a hash of present entries" do
+      cache = Dust::Cache.new(":memory:")
+      cache.write("store", "a", JSON::Any.new(1_i64), "integer", 1_i64)
+      cache.write("store", "b", JSON::Any.new(2_i64), "integer", 2_i64)
+
+      result = cache.read_many("store", ["a", "b"])
+      result.size.should eq 2
+      result["a"][:value].should eq JSON::Any.new(1_i64)
+      result["b"][:value].should eq JSON::Any.new(2_i64)
+    end
+
+    it "omits missing paths" do
+      cache = Dust::Cache.new(":memory:")
+      cache.write("store", "a", JSON::Any.new(1_i64), "integer", 1_i64)
+
+      result = cache.read_many("store", ["a", "missing"])
+      result.keys.should eq ["a"]
+    end
+
+    it "returns empty hash for empty paths list" do
+      cache = Dust::Cache.new(":memory:")
+      cache.read_many("store", [] of String).should be_empty
+    end
+
+    it "deduplicates input paths" do
+      cache = Dust::Cache.new(":memory:")
+      cache.write("store", "a", JSON::Any.new(1_i64), "integer", 1_i64)
+
+      result = cache.read_many("store", ["a", "a", "a"])
+      result.size.should eq 1
+    end
+  end
 end

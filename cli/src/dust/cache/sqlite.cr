@@ -36,6 +36,28 @@ module Dust
       end
     end
 
+    def read_many(store : String, paths : Array(String)) : Hash(String, NamedTuple(value: JSON::Any, type: String, seq: Int64))
+      result = {} of String => NamedTuple(value: JSON::Any, type: String, seq: Int64)
+      unique = paths.uniq
+      return result if unique.empty?
+
+      placeholders = Array.new(unique.size, "?").join(", ")
+      sql = "SELECT path, value, type, seq FROM dust_cache WHERE store = ? AND path IN (#{placeholders})"
+      args = [store] of DB::Any
+      unique.each { |p| args << p }
+
+      @db.query(sql, args: args) do |rs|
+        rs.each do
+          path = rs.read(String)
+          value = JSON.parse(rs.read(String))
+          type_str = rs.read(String)
+          seq = rs.read(Int64)
+          result[path] = {value: value, type: type_str, seq: seq}
+        end
+      end
+      result
+    end
+
     def read_all(store : String) : Array(Tuple(String, JSON::Any))
       results = [] of Tuple(String, JSON::Any)
       @db.query(
