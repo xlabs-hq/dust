@@ -88,9 +88,14 @@ module Dust
         # To keep the ordering guarantee ("every matching event — bootstrapped or
         # live — is emitted exactly once, in a consistent shape, with bootstrap
         # before live"), we:
-        #   1. Register `conn.on_event` FIRST, with a mutex-protected buffer.
+        #   1. Register `conn.on_event` FIRST, with a buffer gated by
+        #      `bootstrap_done`. The mutex only protects the `pending` array's
+        #      internal consistency against concurrent append (from the WS
+        #      fiber) and drain (from this fiber).
         #   2. Join the channel.
-        #   3. Read + emit bootstrap entries under the mutex.
+        #   3. Read + emit bootstrap entries. Ordering against live events is
+        #      gated by `bootstrap_done` — while it is false, the on_event
+        #      handler appends to `pending` instead of emitting.
         #   4. Drain any events that arrived into the buffer while bootstrapping.
         #   5. Flip the flag so subsequent events print directly.
         bootstrap_mutex = Mutex.new
@@ -139,8 +144,12 @@ module Dust
 
           # Bootstrap emission: read matching entries from the local cache and
           # print them as {"op":"present", ...} lines BEFORE any live event is
-          # allowed through. Held under the mutex so live events that arrive on
-          # the WebSocket fiber during this window are queued, not interleaved.
+          # allowed through. Ordering against live events is gated by
+          # `bootstrap_done` (set below); the mutex only protects the `pending`
+          # array against concurrent append/drain between fibers. The emit
+          # loop itself is NOT wrapped in synchronize — live events that
+          # arrive on the WS fiber during this window append to `pending`
+          # under the mutex and are drained after this block.
           if include_current
             items, _ = cache.browse(
               store_name.not_nil!,

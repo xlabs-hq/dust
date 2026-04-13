@@ -65,6 +65,13 @@ describe Dust::Cache do
       cache = Dust::Cache.new(":memory:")
       cache.read_entry("store", "missing").should be_nil
     end
+
+    it "does not return the internal sentinel row" do
+      cache = Dust::Cache.new(":memory:")
+      cache.write("store", "regular", JSON::Any.new("value"), "string", 1_i64)
+      # writing bumps last_seq internally (see existing write behavior)
+      cache.read_entry("store", "_dust:last_seq").should be_nil
+    end
   end
 
   describe "#read_many" do
@@ -98,6 +105,13 @@ describe Dust::Cache do
 
       result = cache.read_many("store", ["a", "a", "a"])
       result.size.should eq 1
+    end
+
+    it "does not include the internal sentinel row" do
+      cache = Dust::Cache.new(":memory:")
+      cache.write("store", "regular", JSON::Any.new("value"), "string", 1_i64)
+      result = cache.read_many("store", ["_dust:last_seq", "regular"])
+      result.keys.should eq ["regular"]
     end
   end
 

@@ -29,8 +29,8 @@ module Dust
 
     def read_entry(store : String, path : String) : NamedTuple(value: JSON::Any, type: String, seq: Int64)?
       @db.query_one?(
-        "SELECT value, type, seq FROM dust_cache WHERE store = ? AND path = ?",
-        store, path
+        "SELECT value, type, seq FROM dust_cache WHERE store = ? AND path = ? AND path != ?",
+        store, path, "_dust:last_seq"
       ) do |rs|
         value = JSON.parse(rs.read(String))
         type_str = rs.read(String)
@@ -45,9 +45,10 @@ module Dust
       return result if unique.empty?
 
       placeholders = Array.new(unique.size, "?").join(", ")
-      sql = "SELECT path, value, type, seq FROM dust_cache WHERE store = ? AND path IN (#{placeholders})"
+      sql = "SELECT path, value, type, seq FROM dust_cache WHERE store = ? AND path IN (#{placeholders}) AND path != ?"
       args = [store] of DB::Any
       unique.each { |p| args << p }
+      args << "_dust:last_seq"
 
       @db.query(sql, args: args) do |rs|
         rs.each do
