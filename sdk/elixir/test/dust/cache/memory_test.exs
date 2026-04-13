@@ -68,4 +68,20 @@ defmodule Dust.Cache.MemoryTest do
     # desc + cursor "c" means next items are strictly less than "c"
     assert Enum.map(page, fn {p, _, _, _} -> p end) == ~w(b a)
   end
+
+  test "browse with select: :keys returns only path strings in order", %{cache: cache} do
+    for k <- ~w(a b c), do: :ok = Memory.write(cache, "s", k, k, "string", 1)
+
+    {items, _} = Memory.browse(cache, "s", select: :keys, limit: 10)
+    assert items == ~w(a b c)
+    assert Enum.all?(items, &is_binary/1)
+  end
+
+  test "browse with select: :entries (default) returns 4-tuples", %{cache: cache} do
+    :ok = Memory.write(cache, "s", "a", "va", "string", 1)
+    :ok = Memory.write(cache, "s", "b", "vb", "string", 2)
+
+    {items, _} = Memory.browse(cache, "s", limit: 10)
+    assert items == [{"a", "va", "string", 1}, {"b", "vb", "string", 2}]
+  end
 end

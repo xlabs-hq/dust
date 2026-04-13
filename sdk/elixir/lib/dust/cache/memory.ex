@@ -137,6 +137,7 @@ defmodule Dust.Cache.Memory do
     cursor = Keyword.get(opts, :cursor)
     limit = Keyword.get(opts, :limit, 50)
     order = Keyword.get(opts, :order, :asc)
+    select = Keyword.get(opts, :select, :entries)
 
     compiled = Dust.Protocol.Glob.compile(pattern)
 
@@ -161,8 +162,17 @@ defmodule Dust.Cache.Memory do
         last_path
       end
 
-    {:reply, {page, next_cursor}, state}
+    projected = project_page(page, select, pattern)
+
+    {:reply, {projected, next_cursor}, state}
   end
+
+  defp project_page(page, :entries, _pattern), do: page
+  defp project_page(page, :keys, _pattern), do: Enum.map(page, fn {p, _, _, _} -> p end)
+  defp project_page(page, :prefixes, pattern), do: prefixes_of(page, pattern)
+
+  # prefixes_of/2 is added in Task 10.
+  defp prefixes_of(_page, _pattern), do: raise("not implemented")
 
   defp sort_direction(:asc), do: :asc
   defp sort_direction(:desc), do: :desc
