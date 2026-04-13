@@ -218,7 +218,7 @@ defmodule Dust.Sync do
 
     matches =
       Enum.filter(rows, fn [path, _json, _type, _seq] ->
-        Dust.MCP.Tools.DustEnum.glob_match?(path, pattern)
+        Dust.Glob.match?(path, pattern)
       end)
 
     all = acc ++ matches

@@ -18,6 +18,7 @@ defmodule Dust.MCP.Tools.DustEnum do
     },
     annotations: %{readOnlyHint: true}
 
+  alias Dust.Glob
   alias Dust.MCP.Authz
   alias GenMCP.MCP
 
@@ -31,7 +32,7 @@ defmodule Dust.MCP.Tools.DustEnum do
 
       matched =
         entries
-        |> Enum.filter(fn entry -> glob_match?(entry.path, pattern) end)
+        |> Enum.filter(fn entry -> Glob.match?(entry.path, pattern) end)
         |> Enum.map(fn entry -> %{path: entry.path, value: entry.value, type: entry.type} end)
 
       {:result, MCP.call_tool_result(text: Jason.encode!(matched)), channel}
@@ -40,28 +41,4 @@ defmodule Dust.MCP.Tools.DustEnum do
         {:error, reason, channel}
     end
   end
-
-  @doc false
-  def glob_match?(_path, "**"), do: true
-
-  def glob_match?(path, pattern) do
-    path_segments = String.split(path, ".")
-    pattern_segments = String.split(pattern, ".")
-    do_glob_match?(path_segments, pattern_segments)
-  end
-
-  defp do_glob_match?([], []), do: true
-  defp do_glob_match?(_rest, ["**"]), do: true
-  defp do_glob_match?([], _), do: false
-  defp do_glob_match?(_path, []), do: false
-
-  defp do_glob_match?([_p | path_rest], ["*" | pattern_rest]) do
-    do_glob_match?(path_rest, pattern_rest)
-  end
-
-  defp do_glob_match?([seg | path_rest], [seg | pattern_rest]) do
-    do_glob_match?(path_rest, pattern_rest)
-  end
-
-  defp do_glob_match?(_, _), do: false
 end
