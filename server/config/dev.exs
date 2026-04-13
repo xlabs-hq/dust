@@ -106,3 +106,6 @@ config :swoosh, :api_client, false
 config :dust, :mcp_base_url, "http://localhost:7755"
 config :dust, :authkit_base_url, System.get_env("AUTHKIT_BASE_URL", "")
 config :workos, :mcp_client_id, System.get_env("WORKOS_MCP_CLIENT_ID", "client_dev_unconfigured")
+
+# Dev mode does not need remote redirect hosts — loopback is always allowed.
+config :dust, :mcp_redirect_uri_allowlist, []

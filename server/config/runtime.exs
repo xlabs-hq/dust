@@ -58,6 +58,11 @@ if config_env() == :prod do
 
   config :workos, :mcp_client_id, System.fetch_env!("WORKOS_MCP_CLIENT_ID")
 
+  config :dust,
+         :mcp_redirect_uri_allowlist,
+         (System.get_env("MCP_REDIRECT_URI_ALLOWLIST") || "")
+         |> String.split(",", trim: true)
+
   database_url =
     System.get_env("DATABASE_URL") ||
       raise """

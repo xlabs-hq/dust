@@ -6,6 +6,7 @@ defmodule DustWeb.MCPAuthController do
   alias Dust.Accounts
   alias Dust.MCP.Sessions
   alias Dust.WorkOSClient
+  alias DustWeb.OAuth.RedirectUriValidator
 
   def oauth_protected_resource(conn, _params) do
     base = base_url()
@@ -62,6 +63,28 @@ defmodule DustWeb.MCPAuthController do
           "code_challenge_method" => method
         } = params
       ) do
+    if RedirectUriValidator.valid?(redirect_uri) do
+      do_authorize(conn, client_id, redirect_uri, state, challenge, method, params)
+    else
+      conn
+      |> put_status(:bad_request)
+      |> json(%{
+        error: "invalid_request",
+        error_description: "redirect_uri is not on the allowlist"
+      })
+    end
+  end
+
+  def oauth_authorize(conn, _params) do
+    conn
+    |> put_status(:bad_request)
+    |> json(%{
+      error: "invalid_request",
+      error_description: "Missing required OAuth parameters"
+    })
+  end
+
+  defp do_authorize(conn, client_id, redirect_uri, state, challenge, method, params) do
     # Always prefix unconditionally. Idempotency ("only prefix if not already
     # prefixed") is wrong because a client may legitimately send a state that
     # starts with "oauth_flow_", and the callback strip would then return the
@@ -99,15 +122,6 @@ defmodule DustWeb.MCPAuthController do
 
     authkit = Application.fetch_env!(:dust, :authkit_base_url)
     redirect(conn, external: "#{authkit}/oauth2/authorize?#{query}")
-  end
-
-  def oauth_authorize(conn, _params) do
-    conn
-    |> put_status(:bad_request)
-    |> json(%{
-      error: "invalid_request",
-      error_description: "Missing required OAuth parameters"
-    })
   end
 
   def oauth_callback(conn, %{"code" => code} = params) do
