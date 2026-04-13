@@ -55,6 +55,58 @@ defmodule Dust.SyncEngineTest do
     assert length(results) == 2
   end
 
+  # enum/3 paged tests
+
+  test "enum/3 returns %Dust.Page{} with %Dust.Entry{} items by default" do
+    :ok = SyncEngine.put("test/store", "posts.a", "1")
+    :ok = SyncEngine.put("test/store", "posts.b", "2")
+
+    page = SyncEngine.enum("test/store", "posts.*", [])
+    assert %Dust.Page{} = page
+    assert length(page.items) == 2
+    assert Enum.all?(page.items, &match?(%Dust.Entry{}, &1))
+    paths = Enum.map(page.items, & &1.path) |> Enum.sort()
+    assert paths == ["posts.a", "posts.b"]
+  end
+
+  test "enum/3 with select: :keys returns a Page of path strings" do
+    :ok = SyncEngine.put("test/store", "posts.a", "1")
+    :ok = SyncEngine.put("test/store", "posts.b", "2")
+
+    page = SyncEngine.enum("test/store", "posts.*", select: :keys)
+    assert %Dust.Page{} = page
+    assert Enum.sort(page.items) == ["posts.a", "posts.b"]
+  end
+
+  test "enum/3 with select: :prefixes and valid pattern returns a Page of prefix strings" do
+    :ok = SyncEngine.put("test/store", "posts.a.title", "hi")
+    :ok = SyncEngine.put("test/store", "posts.b.title", "yo")
+
+    page = SyncEngine.enum("test/store", "posts.**", select: :prefixes)
+    assert %Dust.Page{} = page
+    assert Enum.all?(page.items, &is_binary/1)
+    assert "posts.a" in page.items
+    assert "posts.b" in page.items
+  end
+
+  test "enum/3 with select: :prefixes and invalid pattern returns tagged error tuple" do
+    :ok = SyncEngine.put("test/store", "a.x.b", "1")
+
+    assert SyncEngine.enum("test/store", "a.*.b", select: :prefixes) ==
+             {:error, :invalid_pattern_for_prefixes}
+  end
+
+  test "enum/3 honors :limit option" do
+    :ok = SyncEngine.put("test/store", "items.a", "1")
+    :ok = SyncEngine.put("test/store", "items.b", "2")
+    :ok = SyncEngine.put("test/store", "items.c", "3")
+
+    page = SyncEngine.enum("test/store", "items.*", limit: 2)
+    assert %Dust.Page{} = page
+    assert length(page.items) == 2
+    assert page.next_cursor != nil
+  end
+
   test "on fires callback for matching writes" do
     test_pid = self()
     SyncEngine.on("test/store", "posts.*", fn event -> send(test_pid, {:event, event}) end)

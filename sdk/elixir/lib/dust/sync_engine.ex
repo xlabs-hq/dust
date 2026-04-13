@@ -46,6 +46,10 @@ defmodule Dust.SyncEngine do
     GenServer.call(via(store), {:enum, pattern})
   end
 
+  def enum(store, pattern, opts) when is_list(opts) do
+    GenServer.call(via(store), {:enum_paged, pattern, opts})
+  end
+
   def entry(store, path) do
     GenServer.call(via(store), {:entry, path})
   end
@@ -348,6 +352,30 @@ defmodule Dust.SyncEngine do
   end
 
   @impl true
+  def handle_call({:enum_paged, pattern, opts}, _from, state) do
+    with :ok <- validate_enum_opts(pattern, opts) do
+      limit = opts |> Keyword.get(:limit, 50) |> min(1000)
+      order = Keyword.get(opts, :order, :asc)
+      select = Keyword.get(opts, :select, :entries)
+      cursor = Keyword.get(opts, :after)
+
+      browse_opts = [
+        pattern: pattern,
+        limit: limit,
+        order: order,
+        select: select,
+        cursor: cursor
+      ]
+
+      {items, next_cursor} = state.cache.browse(state.cache_target, state.store, browse_opts)
+      page = Dust.Page.new(items: wrap_items(items, select), next_cursor: next_cursor)
+      {:reply, page, state}
+    else
+      {:error, _} = err -> {:reply, err, state}
+    end
+  end
+
+  @impl true
   def handle_call({:entry, path}, _from, state) do
     reply =
       case state.cache.read_entry(state.cache_target, state.store, path) do
@@ -554,6 +582,28 @@ defmodule Dust.SyncEngine do
   defp generate_op_id do
     "op_" <> Base.url_encode64(:crypto.strong_rand_bytes(12), padding: false)
   end
+
+  defp validate_enum_opts(pattern, opts) do
+    case Keyword.get(opts, :select, :entries) do
+      :prefixes ->
+        if valid_prefix_pattern?(pattern), do: :ok, else: {:error, :invalid_pattern_for_prefixes}
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp valid_prefix_pattern?("**"), do: true
+  defp valid_prefix_pattern?(pattern), do: String.ends_with?(pattern, ".**")
+
+  defp wrap_items(items, :entries) do
+    Enum.map(items, fn {path, value, type, seq} ->
+      Dust.Entry.new(path: path, value: value, type: type, revision: seq)
+    end)
+  end
+
+  defp wrap_items(items, :keys), do: items
+  defp wrap_items(items, :prefixes), do: items
 
   defp detect_type(%Decimal{}), do: "decimal"
   defp detect_type(%DateTime{}), do: "datetime"
