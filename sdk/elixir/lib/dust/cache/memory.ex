@@ -14,6 +14,11 @@ defmodule Dust.Cache.Memory do
   end
 
   @impl Dust.Cache
+  def read_entry(pid, store, path) do
+    GenServer.call(pid, {:read_entry, store, path})
+  end
+
+  @impl Dust.Cache
   def read_all(pid, store, pattern) do
     GenServer.call(pid, {:read_all, store, pattern})
   end
@@ -61,6 +66,14 @@ defmodule Dust.Cache.Memory do
     case Map.get(state.entries, key) do
       nil -> {:reply, :miss, state}
       {value, _type, _seq} -> {:reply, {:ok, value}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:read_entry, store, path}, _from, state) do
+    case Map.get(state.entries, {store, path}) do
+      nil -> {:reply, :miss, state}
+      {value, type, seq} -> {:reply, {:ok, {value, type, seq}}, state}
     end
   end
 

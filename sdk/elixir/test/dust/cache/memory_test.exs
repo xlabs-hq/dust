@@ -44,4 +44,13 @@ defmodule Dust.Cache.MemoryTest do
     assert "posts.a" in paths
     assert "posts.b" in paths
   end
+
+  test "read_entry/3 returns {value, type, seq} for present keys", %{cache: cache} do
+    :ok = Memory.write(cache, "s1", "a.b", "hello", "string", 7)
+    assert Memory.read_entry(cache, "s1", "a.b") == {:ok, {"hello", "string", 7}}
+  end
+
+  test "read_entry/3 returns :miss for absent keys", %{cache: cache} do
+    assert Memory.read_entry(cache, "s1", "nope") == :miss
+  end
 end
