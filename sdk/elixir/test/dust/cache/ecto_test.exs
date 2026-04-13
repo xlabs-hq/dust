@@ -374,4 +374,58 @@ defmodule Dust.Cache.EctoTest do
       assert items == ["weird%.child"]
     end
   end
+
+  describe "browse with :from/:to range" do
+    test "returns entries within [from, to) lexicographically" do
+      for k <- ~w(a b c d e),
+          do: :ok = EctoCache.write(Dust.TestRepo, @store, k, k, "string", 1)
+
+      {page, _} = EctoCache.browse(Dust.TestRepo, @store, from: "b", to: "d", limit: 10)
+      paths = Enum.map(page, fn {p, _, _, _} -> p end)
+      assert paths == ~w(b c)
+    end
+
+    test "from is inclusive, to is exclusive" do
+      for k <- ~w(a b c),
+          do: :ok = EctoCache.write(Dust.TestRepo, @store, k, k, "string", 1)
+
+      {page, _} = EctoCache.browse(Dust.TestRepo, @store, from: "a", to: "c", limit: 10)
+      assert Enum.map(page, fn {p, _, _, _} -> p end) == ~w(a b)
+    end
+
+    test "from >= to returns an empty page" do
+      :ok = EctoCache.write(Dust.TestRepo, @store, "x", "x", "string", 1)
+      {page, _} = EctoCache.browse(Dust.TestRepo, @store, from: "z", to: "a", limit: 10)
+      assert page == []
+    end
+
+    test "range respects order: :desc" do
+      for k <- ~w(a b c d),
+          do: :ok = EctoCache.write(Dust.TestRepo, @store, k, k, "string", 1)
+
+      {page, _} =
+        EctoCache.browse(Dust.TestRepo, @store, from: "a", to: "d", limit: 10, order: :desc)
+
+      assert Enum.map(page, fn {p, _, _, _} -> p end) == ~w(c b a)
+    end
+
+    test "range + limit produces a next_cursor" do
+      for k <- ~w(a b c d e),
+          do: :ok = EctoCache.write(Dust.TestRepo, @store, k, k, "string", 1)
+
+      {page, cursor} = EctoCache.browse(Dust.TestRepo, @store, from: "a", to: "z", limit: 2)
+      assert Enum.map(page, fn {p, _, _, _} -> p end) == ~w(a b)
+      assert cursor == "b"
+    end
+
+    test "range + cursor resumes correctly" do
+      for k <- ~w(a b c d e),
+          do: :ok = EctoCache.write(Dust.TestRepo, @store, k, k, "string", 1)
+
+      {page, _} =
+        EctoCache.browse(Dust.TestRepo, @store, from: "a", to: "z", limit: 2, cursor: "b")
+
+      assert Enum.map(page, fn {p, _, _, _} -> p end) == ~w(c d)
+    end
+  end
 end

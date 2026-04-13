@@ -143,24 +143,32 @@ if Code.ensure_loaded?(Ecto.Query) do
       limit = Keyword.get(opts, :limit, 50)
       order = Keyword.get(opts, :order, :asc)
       select = Keyword.get(opts, :select, :entries)
+      from_key = Keyword.get(opts, :from)
+      to_key = Keyword.get(opts, :to)
 
-      compiled = Dust.Protocol.Glob.compile(pattern)
-      literal_like_prefix = literal_like_prefix_of(pattern)
-
-      # Keep fetching chunks of raw rows until we have at least limit+1
-      # matches (to detect next page) or the raw source is exhausted.
       matches =
-        collect_matches(
-          repo,
-          store,
-          pattern,
-          compiled,
-          literal_like_prefix,
-          cursor,
-          order,
-          limit,
-          []
-        )
+        if is_binary(from_key) and is_binary(to_key) do
+          # Range path: SQL bounds are exact, so a single query with limit+1
+          # is sufficient — no glob post-filter and no chunked walk.
+          range_query(repo, store, from_key, to_key, cursor, order, limit)
+        else
+          compiled = Dust.Protocol.Glob.compile(pattern)
+          literal_like_prefix = literal_like_prefix_of(pattern)
+
+          # Keep fetching chunks of raw rows until we have at least limit+1
+          # matches (to detect next page) or the raw source is exhausted.
+          collect_matches(
+            repo,
+            store,
+            pattern,
+            compiled,
+            literal_like_prefix,
+            cursor,
+            order,
+            limit,
+            []
+          )
+        end
 
       # Decode JSON values — skip decoding entirely when :keys (value is never returned)
       decoded =
@@ -236,6 +244,33 @@ if Code.ensure_loaded?(Ecto.Query) do
             all
           )
       end
+    end
+
+    # Range query: a single SELECT bounded by [from, to) with limit+1 for
+    # cursor detection. No LIKE clause, no glob post-filter, no chunked walk —
+    # SQL bounds are exact, so every raw row is a valid match.
+    defp range_query(repo, store, from_key, to_key, cursor, order, limit) do
+      query =
+        from(c in CacheEntry,
+          where:
+            c.store == ^store and c.path != ^@seq_sentinel_path and
+              c.path >= ^from_key and c.path < ^to_key,
+          order_by: [{^order, c.path}],
+          limit: ^(limit + 1),
+          select: {c.path, c.value, c.type, c.seq}
+        )
+
+      query =
+        if cursor do
+          case order do
+            :asc -> from(c in query, where: c.path > ^cursor)
+            :desc -> from(c in query, where: c.path < ^cursor)
+          end
+        else
+          query
+        end
+
+      repo.all(query)
     end
 
     defp fetch_chunk(repo, store, literal_like_prefix, cursor, order, chunk_size) do
