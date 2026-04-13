@@ -107,7 +107,7 @@ module Dust
       order : String = "asc",
       select_as : String = "entries",
       from : String? = nil,
-      to : String? = nil
+      to : String? = nil,
     ) : BrowseResult
       if from && to
         if select_as == "prefixes"
@@ -172,7 +172,7 @@ module Dust
       literal_prefix : String?,
       after : String?,
       order : String,
-      limit : Int32
+      limit : Int32,
     ) : Array(BrowseEntry)
       where_clauses = ["store = ?"]
       args = [store] of DB::Any
@@ -212,7 +212,7 @@ module Dust
       to : String,
       after : String?,
       order : String,
-      limit : Int32
+      limit : Int32,
     ) : Array(BrowseEntry)
       where_clauses = ["store = ?", "path >= ?", "path < ?"]
       args = [store, from, to] of DB::Any
@@ -265,7 +265,7 @@ module Dust
     private def project_page(
       page : Array(BrowseEntry),
       select_as : String,
-      pattern : String
+      pattern : String,
     ) : Array(BrowseEntry) | Array(String)
       case select_as
       when "entries"
