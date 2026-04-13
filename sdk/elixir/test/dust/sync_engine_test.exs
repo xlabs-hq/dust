@@ -433,4 +433,43 @@ defmodule Dust.SyncEngineTest do
   after
     File.rm(Path.join(System.tmp_dir!(), "dust_test_cb_*.txt"))
   end
+
+  describe "on/4 with include_current: true" do
+    test "emits current matching entries as :present events before the call returns" do
+      store = "test/store"
+      Dust.SyncEngine.seed_entry(store, "users.alice.name", "Alice", "string")
+      Dust.SyncEngine.seed_entry(store, "users.bob.name", "Bob", "string")
+
+      test_pid = self()
+      callback = fn event -> send(test_pid, {:event, event}) end
+
+      _ref = Dust.SyncEngine.on(store, "users.**", callback, include_current: true)
+
+      assert_receive {:event, %{type: :present, path: "users.alice.name", value: "Alice"}}, 500
+      assert_receive {:event, %{type: :present, path: "users.bob.name", value: "Bob"}}, 500
+    end
+
+    test "include_current: true with no matching entries emits nothing and returns a ref" do
+      store = "test/store"
+      test_pid = self()
+      callback = fn event -> send(test_pid, {:event, event}) end
+
+      ref = Dust.SyncEngine.on(store, "no_match.**", callback, include_current: true)
+
+      assert is_reference(ref)
+      refute_receive {:event, _}, 100
+    end
+
+    test "include_current: false (default) does not emit current entries" do
+      store = "test/store"
+      Dust.SyncEngine.seed_entry(store, "users.alice", 1, "integer")
+
+      test_pid = self()
+      callback = fn event -> send(test_pid, {:event, event}) end
+
+      _ref = Dust.SyncEngine.on(store, "users.**", callback)
+
+      refute_receive {:event, _}, 100
+    end
+  end
 end

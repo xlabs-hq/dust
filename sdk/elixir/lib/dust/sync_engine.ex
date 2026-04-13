@@ -460,6 +460,15 @@ defmodule Dust.SyncEngine do
   @impl true
   def handle_call({:on, pattern, callback, opts}, _from, state) do
     ref = Dust.CallbackRegistry.register(state.callbacks, state.store, pattern, callback, opts)
+
+    # Bootstrap current matching entries if requested. Runs INSIDE handle_call
+    # so no live events can fire between snapshot and return — the single-threaded
+    # GenServer guarantees bootstrap items hit the worker mailbox before any
+    # subsequent live event dispatched to the same worker.
+    if Keyword.get(opts, :include_current, false) do
+      emit_bootstrap_events(state, pattern, ref, opts)
+    end
+
     {:reply, ref, state}
   end
 
@@ -599,21 +608,80 @@ defmodule Dust.SyncEngine do
 
   defp dispatch_callbacks(state, path, event) do
     subscriptions = Dust.CallbackRegistry.match(state.callbacks, state.store, path)
+    Enum.each(subscriptions, &dispatch_to_subscription(state, &1, event))
+  end
 
-    Enum.each(subscriptions, fn {worker_pid, ref, max_queue_size, on_resync} ->
-      queue_len = Dust.CallbackWorker.queue_len(worker_pid)
+  # Single canonical dispatch path: check backpressure, drop subscription +
+  # fire on_resync on overflow, otherwise enqueue via CallbackWorker.dispatch.
+  # Used by both live dispatch (dispatch_callbacks/3) and bootstrap
+  # (emit_bootstrap_events/4) so the semantics are identical.
+  defp dispatch_to_subscription(state, {worker_pid, ref, max_queue_size, on_resync}, event) do
+    queue_len = Dust.CallbackWorker.queue_len(worker_pid)
 
-      if queue_len >= max_queue_size do
-        # Subscription has fallen behind — drop it and notify
-        Dust.CallbackRegistry.unregister(state.callbacks, ref)
+    if queue_len >= max_queue_size do
+      # Subscription has fallen behind — drop it and notify
+      Dust.CallbackRegistry.unregister(state.callbacks, ref)
 
-        if is_function(on_resync, 1) do
-          on_resync.(%{error: :resync_required, ref: ref})
-        end
-      else
-        Dust.CallbackWorker.dispatch(worker_pid, event)
+      if is_function(on_resync, 1) do
+        on_resync.(%{error: :resync_required, ref: ref})
       end
-    end)
+    else
+      Dust.CallbackWorker.dispatch(worker_pid, event)
+    end
+  end
+
+  defp emit_bootstrap_events(state, pattern, ref, opts) do
+    limit = opts |> Keyword.get(:limit, 50) |> min(1000)
+    order = Keyword.get(opts, :order, :asc)
+
+    browse_opts = [
+      pattern: pattern,
+      limit: limit,
+      order: order,
+      select: :entries
+    ]
+
+    {items, _next_cursor} = state.cache.browse(state.cache_target, state.store, browse_opts)
+
+    case lookup_subscription(state, ref) do
+      nil ->
+        :ok
+
+      subscription ->
+        Enum.reduce_while(items, subscription, fn {path, value, type, seq}, sub ->
+          event = %{
+            type: :present,
+            path: path,
+            value: value,
+            entry_type: type,
+            seq: seq
+          }
+
+          dispatch_to_subscription(state, sub, event)
+
+          # If backpressure dropped the subscription during bootstrap, stop.
+          if lookup_subscription(state, ref) == nil do
+            {:halt, sub}
+          else
+            {:cont, sub}
+          end
+        end)
+
+        :ok
+    end
+  end
+
+  # Find the subscription tuple we just registered so bootstrap can dispatch
+  # directly to its worker. Uses the same ETS layout
+  # CallbackRegistry.register/unregister use.
+  defp lookup_subscription(state, ref) do
+    case :ets.match_object(state.callbacks, {:_, :_, :_, :_, ref, :_, :_}) do
+      [{_store, _compiled, _pattern, worker_pid, ^ref, max_queue_size, on_resync}] ->
+        {worker_pid, ref, max_queue_size, on_resync}
+
+      _ ->
+        nil
+    end
   end
 
   defp send_to_connection(store, op_attrs) do
