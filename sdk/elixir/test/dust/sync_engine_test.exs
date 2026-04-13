@@ -517,6 +517,42 @@ defmodule Dust.SyncEngineTest do
       events = drain_events(200)
       assert length(events) == 5
     end
+
+    test "bootstrap events arrive before any live events dispatched after registration" do
+      store = "test/store"
+      Dust.SyncEngine.seed_entry(store, "items.1", 1, "integer")
+      Dust.SyncEngine.seed_entry(store, "items.2", 2, "integer")
+
+      test_pid = self()
+      callback = fn event -> send(test_pid, {:event, event}) end
+
+      _ref = Dust.SyncEngine.on(store, "items.**", callback, include_current: true)
+
+      # After registration, dispatch a fake server event via the same path live
+      # writes use. This simulates a live write landing right after the
+      # subscription was registered. The cast uses string keys to match the
+      # shape produced by the real server sync protocol (see handle_cast
+      # {:server_event, ...}).
+      Dust.SyncEngine.handle_server_event(store, %{
+        "op" => "set",
+        "path" => "items.3",
+        "value" => 3,
+        "store_seq" => 100,
+        "device_id" => "d",
+        "client_op_id" => "live-op-1"
+      })
+
+      events = drain_events(200)
+      paths = Enum.map(events, & &1.path)
+
+      # The two bootstrap items MUST appear before the live item,
+      # regardless of absolute timing.
+      assert Enum.find_index(paths, &(&1 == "items.1")) <
+               Enum.find_index(paths, &(&1 == "items.3"))
+
+      assert Enum.find_index(paths, &(&1 == "items.2")) <
+               Enum.find_index(paths, &(&1 == "items.3"))
+    end
   end
 
   defp drain_events(timeout_ms) do
