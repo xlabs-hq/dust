@@ -47,4 +47,22 @@ describe Dust::Cache do
     results = cache.read_all("store")
     results.size.should eq 2
   end
+
+  describe "#read_entry" do
+    it "returns {value, type, seq} for present entries" do
+      cache = Dust::Cache.new(":memory:")
+      cache.write("store", "a.b", JSON::Any.new("hello"), "string", 7_i64)
+
+      result = cache.read_entry("store", "a.b")
+      result.should_not be_nil
+      result.not_nil![:value].should eq JSON::Any.new("hello")
+      result.not_nil![:type].should eq "string"
+      result.not_nil![:seq].should eq 7_i64
+    end
+
+    it "returns nil for missing entries" do
+      cache = Dust::Cache.new(":memory:")
+      cache.read_entry("store", "missing").should be_nil
+    end
+  end
 end

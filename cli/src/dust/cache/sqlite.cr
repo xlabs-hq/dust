@@ -24,6 +24,18 @@ module Dust
       end
     end
 
+    def read_entry(store : String, path : String) : NamedTuple(value: JSON::Any, type: String, seq: Int64)?
+      @db.query_one?(
+        "SELECT value, type, seq FROM dust_cache WHERE store = ? AND path = ?",
+        store, path
+      ) do |rs|
+        value = JSON.parse(rs.read(String))
+        type_str = rs.read(String)
+        seq = rs.read(Int64)
+        {value: value, type: type_str, seq: seq}
+      end
+    end
+
     def read_all(store : String) : Array(Tuple(String, JSON::Any))
       results = [] of Tuple(String, JSON::Any)
       @db.query(
