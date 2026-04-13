@@ -137,6 +137,7 @@ if Code.ensure_loaded?(Ecto.Query) do
       cursor = Keyword.get(opts, :cursor)
       limit = Keyword.get(opts, :limit, 50)
       order = Keyword.get(opts, :order, :asc)
+      select = Keyword.get(opts, :select, :entries)
 
       compiled = Dust.Protocol.Glob.compile(pattern)
 
@@ -170,11 +171,17 @@ if Code.ensure_loaded?(Ecto.Query) do
           end)
         end
 
-      # Decode JSON values
+      # Decode JSON values — skip decoding entirely when :keys (value is never returned)
       decoded =
-        Enum.map(filtered, fn {path, json, type, seq} ->
-          {path, Jason.decode!(json), type, seq}
-        end)
+        case select do
+          :keys ->
+            Enum.map(filtered, fn {path, _json, _type, _seq} -> {path, nil, nil, nil} end)
+
+          _ ->
+            Enum.map(filtered, fn {path, json, type, seq} ->
+              {path, Jason.decode!(json), type, seq}
+            end)
+        end
 
       # Determine pagination
       page = Enum.take(decoded, limit)
@@ -187,7 +194,56 @@ if Code.ensure_loaded?(Ecto.Query) do
           nil
         end
 
-      {page, next_cursor}
+      projected = project_page(page, select, pattern)
+
+      {projected, next_cursor}
+    end
+
+    # --- projection helpers (copied verbatim from Dust.Cache.Memory — deliberate
+    # duplication per Phase 1 plan; keeps adapters self-contained) ---
+
+    defp project_page(page, :entries, _pattern), do: page
+    defp project_page(page, :keys, _pattern), do: Enum.map(page, fn {p, _, _, _} -> p end)
+    defp project_page(page, :prefixes, pattern), do: prefixes_of(page, pattern)
+
+    defp prefixes_of(page, pattern) do
+      literal_prefix = literal_prefix_of(pattern)
+
+      page
+      |> Enum.map(fn {p, _, _, _} -> extract_prefix(p, literal_prefix) end)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+      |> Enum.sort()
+    end
+
+    defp literal_prefix_of("**"), do: ""
+
+    defp literal_prefix_of(pattern) do
+      case String.split(pattern, ".**", parts: 2) do
+        [prefix, ""] ->
+          prefix
+
+        _ ->
+          raise ArgumentError,
+                "select: :prefixes requires pattern ending in .** or ** (got #{inspect(pattern)})"
+      end
+    end
+
+    defp extract_prefix(path, "") do
+      case String.split(path, ".", parts: 2) do
+        [seg | _] -> seg
+        [] -> nil
+      end
+    end
+
+    defp extract_prefix(path, literal) do
+      prefix_with_dot = literal <> "."
+
+      if String.starts_with?(path, prefix_with_dot) do
+        rest = String.replace_prefix(path, prefix_with_dot, "")
+        [next_seg | _] = String.split(rest, ".", parts: 2)
+        literal <> "." <> next_seg
+      end
     end
 
     defp update_seq_sentinel(repo, store, seq) do

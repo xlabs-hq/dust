@@ -238,4 +238,65 @@ defmodule Dust.Cache.EctoTest do
       assert paths == ["b", "a"]
     end
   end
+
+  describe "browse select" do
+    test "select: :entries (default) returns decoded 4-tuples" do
+      :ok = EctoCache.write(Dust.TestRepo, @store, "users.1.name", "Alice", "string", 1)
+      :ok = EctoCache.write(Dust.TestRepo, @store, "users.2.name", "Bob", "string", 2)
+
+      {page, _next_cursor} = EctoCache.browse(Dust.TestRepo, @store, [])
+
+      assert [
+               {"users.1.name", "Alice", "string", 1},
+               {"users.2.name", "Bob", "string", 2}
+             ] = page
+    end
+
+    test "select: :keys returns a list of path strings in order" do
+      :ok = EctoCache.write(Dust.TestRepo, @store, "b", "2", "string", 2)
+      :ok = EctoCache.write(Dust.TestRepo, @store, "a", "1", "string", 1)
+      :ok = EctoCache.write(Dust.TestRepo, @store, "c", "3", "string", 3)
+
+      {page, next_cursor} = EctoCache.browse(Dust.TestRepo, @store, select: :keys)
+
+      assert page == ["a", "b", "c"]
+      assert next_cursor == nil
+    end
+
+    test "select: :keys respects limit and order" do
+      :ok = EctoCache.write(Dust.TestRepo, @store, "a", "1", "string", 1)
+      :ok = EctoCache.write(Dust.TestRepo, @store, "b", "2", "string", 2)
+      :ok = EctoCache.write(Dust.TestRepo, @store, "c", "3", "string", 3)
+
+      {page, next_cursor} =
+        EctoCache.browse(Dust.TestRepo, @store, select: :keys, order: :desc, limit: 2)
+
+      assert page == ["c", "b"]
+      assert next_cursor == "b"
+    end
+
+    test "select: :prefixes with pattern ** returns unique top-level segments" do
+      for p <- ~w(users.alice.name users.bob.name posts.hi),
+          do: :ok = EctoCache.write(Dust.TestRepo, @store, p, 1, "integer", 1)
+
+      {items, _} =
+        EctoCache.browse(Dust.TestRepo, @store, pattern: "**", select: :prefixes, limit: 10)
+
+      assert items == ~w(posts users)
+    end
+
+    test "select: :prefixes with pattern 'users.**' returns unique next-segment prefixes" do
+      for p <- ~w(users.alice.name users.alice.email users.bob.name),
+          do: :ok = EctoCache.write(Dust.TestRepo, @store, p, 1, "integer", 1)
+
+      {items, _} =
+        EctoCache.browse(Dust.TestRepo, @store,
+          pattern: "users.**",
+          select: :prefixes,
+          limit: 10
+        )
+
+      assert items == ~w(users.alice users.bob)
+    end
+  end
 end
