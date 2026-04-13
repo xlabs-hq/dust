@@ -179,6 +179,59 @@ module Dust
         end
       end
 
+      # dust range <store> <from> <to> [--limit N] [--after C] [--order asc|desc] [--select entries|keys]
+      def self.range(config : Config, args : Array(String))
+        Output.require_auth!(config)
+        Output.require_args!(args, 3, "dust range <store> <from> <to> [--limit N] [--after C] [--order asc|desc] [--select entries|keys]")
+
+        store_name, from, to = args[0], args[1], args[2]
+        flag_args = args[3..]
+        flags = parse_flags(flag_args)
+
+        limit = (flags["limit"]? || "50").to_i
+        after = flags["after"]?
+        order = flags["order"]? || "asc"
+        select_flag = flags["select"]? || "entries"
+
+        conn = Connection.new(config)
+        cache = Cache.new
+        last_seq = cache.last_seq(store_name)
+
+        conn.on_event do |topic, payload|
+          handle_event(cache, store_name, payload)
+        end
+
+        begin
+          conn.connect_sync
+          channel = conn.join(store_name, last_seq)
+
+          # Wait for catch-up events to drain
+          sleep 0.2.seconds
+
+          begin
+            items, next_cursor = cache.browse(
+              store_name,
+              from: from,
+              to: to,
+              limit: limit,
+              after: after,
+              order: order,
+              select_as: select_flag,
+            )
+
+            Output.json({
+              "items"       => render_browse_items(items, select_flag),
+              "next_cursor" => next_cursor,
+            })
+          rescue ex : ArgumentError
+            Output.error(ex.message || "invalid argument")
+          end
+        ensure
+          conn.close
+          cache.close
+        end
+      end
+
       # --- Helpers ---
 
       # Walks args and extracts `--name value` pairs into a hash.

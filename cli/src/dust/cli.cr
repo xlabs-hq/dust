@@ -32,6 +32,7 @@ module Dust
         when "merge"      then Commands::Data.merge(config, rest)
         when "delete"     then Commands::Data.delete(config, rest)
         when "enum"       then Commands::Data.enum(config, rest)
+        when "range"      then Commands::Data.range(config, rest)
         when "entry"      then Commands::Data.entry(config, rest)
         when "watch"      then Commands::Watch.watch(config, rest)
         when "log"        then Commands::Log.log(config, rest)
@@ -75,6 +76,8 @@ module Dust
         delete <store> <path>         Delete a path
         enum <store> <pattern> [--limit N --after C --order asc|desc --select entries|keys|prefixes]
                                       List matching entries (flagless: {path => value}; flagged: paginated)
+        range <store> <from> <to> [--limit N --after C --order asc|desc --select entries|keys]
+                                      Read a lexicographic range [from, to)
         entry <store> <path>          Read entry with type and revision
 
         increment <store> <path> [n]  Increment counter
