@@ -34,6 +34,25 @@ defmodule Dust.CallbackRegistryTest do
     assert CallbackRegistry.match(table, "james/blog", "config.x") == []
   end
 
+  test "lookup returns {worker_pid, max_queue_size, on_resync} for a registered subscription",
+       %{table: table} do
+    on_resync = fn _ -> :ok end
+
+    ref =
+      CallbackRegistry.register(table, "james/blog", "posts.*", fn _ -> :ok end,
+        max_queue_size: 42,
+        on_resync: on_resync
+      )
+
+    assert {worker_pid, 42, ^on_resync} = CallbackRegistry.lookup(table, ref)
+    assert is_pid(worker_pid)
+    assert Process.alive?(worker_pid)
+  end
+
+  test "lookup returns nil for an unknown ref", %{table: table} do
+    assert CallbackRegistry.lookup(table, make_ref()) == nil
+  end
+
   test "unregister removes callback and stops worker", %{table: table} do
     ref = CallbackRegistry.register(table, "james/blog", "posts.*", fn _ -> :ok end)
 

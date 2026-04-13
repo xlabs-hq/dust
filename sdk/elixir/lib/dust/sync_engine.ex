@@ -643,11 +643,13 @@ defmodule Dust.SyncEngine do
 
     {items, _next_cursor} = state.cache.browse(state.cache_target, state.store, browse_opts)
 
-    case lookup_subscription(state, ref) do
+    case Dust.CallbackRegistry.lookup(state.callbacks, ref) do
       nil ->
         :ok
 
-      subscription ->
+      {worker_pid, max_queue_size, on_resync} ->
+        subscription = {worker_pid, ref, max_queue_size, on_resync}
+
         Enum.reduce_while(items, subscription, fn {path, value, type, seq}, sub ->
           event = %{
             type: :present,
@@ -660,7 +662,7 @@ defmodule Dust.SyncEngine do
           dispatch_to_subscription(state, sub, event)
 
           # If backpressure dropped the subscription during bootstrap, stop.
-          if lookup_subscription(state, ref) == nil do
+          if Dust.CallbackRegistry.lookup(state.callbacks, ref) == nil do
             {:halt, sub}
           else
             {:cont, sub}
@@ -668,19 +670,6 @@ defmodule Dust.SyncEngine do
         end)
 
         :ok
-    end
-  end
-
-  # Find the subscription tuple we just registered so bootstrap can dispatch
-  # directly to its worker. Uses the same ETS layout
-  # CallbackRegistry.register/unregister use.
-  defp lookup_subscription(state, ref) do
-    case :ets.match_object(state.callbacks, {:_, :_, :_, :_, ref, :_, :_}) do
-      [{_store, _compiled, _pattern, worker_pid, ^ref, max_queue_size, on_resync}] ->
-        {worker_pid, ref, max_queue_size, on_resync}
-
-      _ ->
-        nil
     end
   end
 

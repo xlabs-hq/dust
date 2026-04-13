@@ -50,6 +50,21 @@ defmodule Dust.CallbackRegistry do
   end
 
   @doc """
+  Look up a registered subscription by ref. Returns
+  `{worker_pid, max_queue_size, on_resync}` or `nil` if no subscription with
+  that ref exists.
+  """
+  def lookup(table, ref) do
+    case :ets.match_object(table, {:_, :_, :_, :_, ref, :_, :_}) do
+      [{_store, _compiled, _pattern, worker_pid, ^ref, max_queue_size, on_resync}] ->
+        {worker_pid, max_queue_size, on_resync}
+
+      [] ->
+        nil
+    end
+  end
+
+  @doc """
   Find all matching subscriptions for a store/path. Returns a list of
   `{worker_pid, ref, max_queue_size, on_resync}` tuples.
   """
