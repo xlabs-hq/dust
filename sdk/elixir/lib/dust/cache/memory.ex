@@ -24,6 +24,11 @@ defmodule Dust.Cache.Memory do
   end
 
   @impl Dust.Cache
+  def read_many(pid, store, paths) do
+    GenServer.call(pid, {:read_many, store, paths})
+  end
+
+  @impl Dust.Cache
   def write(pid, store, path, value, type, seq) do
     GenServer.call(pid, {:write, store, path, value, type, seq})
   end
@@ -89,6 +94,21 @@ defmodule Dust.Cache.Memory do
       |> Enum.map(fn {{_s, path}, {value, _type, _seq}} -> {path, value} end)
 
     {:reply, results, state}
+  end
+
+  @impl true
+  def handle_call({:read_many, store, paths}, _from, state) do
+    result =
+      paths
+      |> Enum.uniq()
+      |> Enum.reduce(%{}, fn path, acc ->
+        case Map.get(state.entries, {store, path}) do
+          nil -> acc
+          tuple -> Map.put(acc, path, tuple)
+        end
+      end)
+
+    {:reply, result, state}
   end
 
   @impl true

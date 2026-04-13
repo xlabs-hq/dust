@@ -142,4 +142,29 @@ defmodule Dust.Cache.MemoryTest do
       assert Enum.map(page, fn {p, _, _, _} -> p end) == ~w(c d)
     end
   end
+
+  describe "read_many/3" do
+    test "returns a map of present entries", %{cache: pid} do
+      :ok = Dust.Cache.Memory.write(pid, "s", "a", 1, "integer", 1)
+      :ok = Dust.Cache.Memory.write(pid, "s", "b", 2, "integer", 2)
+      result = Dust.Cache.Memory.read_many(pid, "s", ["a", "b"])
+      assert result == %{"a" => {1, "integer", 1}, "b" => {2, "integer", 2}}
+    end
+
+    test "omits missing paths", %{cache: pid} do
+      :ok = Dust.Cache.Memory.write(pid, "s", "a", 1, "integer", 1)
+      result = Dust.Cache.Memory.read_many(pid, "s", ["a", "missing"])
+      assert Map.keys(result) == ["a"]
+    end
+
+    test "empty list returns empty map", %{cache: pid} do
+      assert Dust.Cache.Memory.read_many(pid, "s", []) == %{}
+    end
+
+    test "duplicate paths collapse in the result", %{cache: pid} do
+      :ok = Dust.Cache.Memory.write(pid, "s", "a", 1, "integer", 1)
+      result = Dust.Cache.Memory.read_many(pid, "s", ["a", "a", "a"])
+      assert result == %{"a" => {1, "integer", 1}}
+    end
+  end
 end
