@@ -91,6 +91,7 @@ if Code.ensure_loaded?(Ecto.Query) do
             on_conflict: [set: [value: row.value, type: row.type, seq: row.seq]],
             conflict_target: [:store, :path]
           )
+
           max(acc, row.seq)
         end)
 
@@ -131,6 +132,10 @@ if Code.ensure_loaded?(Ecto.Query) do
       repo.one(query)
     end
 
+    # Chunk size used to walk raw rows when the glob is narrower than the
+    # LIKE prefix. Not configurable for Phase 1.
+    @browse_chunk_size 500
+
     @impl Dust.Cache
     def browse(repo, store, opts) do
       pattern = Keyword.get(opts, :pattern, "**")
@@ -140,45 +145,31 @@ if Code.ensure_loaded?(Ecto.Query) do
       select = Keyword.get(opts, :select, :entries)
 
       compiled = Dust.Protocol.Glob.compile(pattern)
+      literal_like_prefix = literal_like_prefix_of(pattern)
 
-      query =
-        from(c in CacheEntry,
-          where: c.store == ^store and c.path != ^@seq_sentinel_path,
-          order_by: [{^order, c.path}],
-          limit: ^(limit + 1),
-          select: {c.path, c.value, c.type, c.seq}
+      # Keep fetching chunks of raw rows until we have at least limit+1
+      # matches (to detect next page) or the raw source is exhausted.
+      matches =
+        collect_matches(
+          repo,
+          store,
+          pattern,
+          compiled,
+          literal_like_prefix,
+          cursor,
+          order,
+          limit,
+          []
         )
-
-      query =
-        if cursor do
-          case order do
-            :asc -> from(c in query, where: c.path > ^cursor)
-            :desc -> from(c in query, where: c.path < ^cursor)
-          end
-        else
-          query
-        end
-
-      rows = repo.all(query)
-
-      # Post-filter by glob pattern (only when pattern is not "**")
-      filtered =
-        if pattern == "**" do
-          rows
-        else
-          Enum.filter(rows, fn {path, _, _, _} ->
-            Dust.Protocol.Glob.match?(compiled, String.split(path, "."))
-          end)
-        end
 
       # Decode JSON values — skip decoding entirely when :keys (value is never returned)
       decoded =
         case select do
           :keys ->
-            Enum.map(filtered, fn {path, _json, _type, _seq} -> {path, nil, nil, nil} end)
+            Enum.map(matches, fn {path, _json, _type, _seq} -> {path, nil, nil, nil} end)
 
           _ ->
-            Enum.map(filtered, fn {path, json, type, seq} ->
+            Enum.map(matches, fn {path, json, type, seq} ->
               {path, Jason.decode!(json), type, seq}
             end)
         end
@@ -197,6 +188,111 @@ if Code.ensure_loaded?(Ecto.Query) do
       projected = project_page(page, select, pattern)
 
       {projected, next_cursor}
+    end
+
+    defp collect_matches(
+           repo,
+           store,
+           pattern,
+           compiled,
+           literal_like_prefix,
+           cursor,
+           order,
+           limit,
+           acc
+         ) do
+      rows = fetch_chunk(repo, store, literal_like_prefix, cursor, order, @browse_chunk_size)
+
+      filtered =
+        if pattern == "**" do
+          rows
+        else
+          Enum.filter(rows, fn {path, _, _, _} ->
+            Dust.Protocol.Glob.match?(compiled, String.split(path, "."))
+          end)
+        end
+
+      all = acc ++ filtered
+
+      cond do
+        length(all) > limit ->
+          Enum.take(all, limit + 1)
+
+        length(rows) < @browse_chunk_size ->
+          all
+
+        true ->
+          {last_raw_path, _, _, _} = List.last(rows)
+
+          collect_matches(
+            repo,
+            store,
+            pattern,
+            compiled,
+            literal_like_prefix,
+            last_raw_path,
+            order,
+            limit,
+            all
+          )
+      end
+    end
+
+    defp fetch_chunk(repo, store, literal_like_prefix, cursor, order, chunk_size) do
+      query =
+        from(c in CacheEntry,
+          where: c.store == ^store and c.path != ^@seq_sentinel_path,
+          order_by: [{^order, c.path}],
+          limit: ^chunk_size,
+          select: {c.path, c.value, c.type, c.seq}
+        )
+
+      query =
+        if cursor do
+          case order do
+            :asc -> from(c in query, where: c.path > ^cursor)
+            :desc -> from(c in query, where: c.path < ^cursor)
+          end
+        else
+          query
+        end
+
+      query =
+        case literal_like_prefix do
+          "" ->
+            query
+
+          prefix ->
+            like_pattern = prefix <> "%"
+            from(c in query, where: fragment("? LIKE ? ESCAPE '\\'", c.path, ^like_pattern))
+        end
+
+      repo.all(query)
+    end
+
+    # Return the literal prefix of a glob pattern — everything before the first
+    # segment containing `*` or `**` — with SQL LIKE metacharacters escaped
+    # and a trailing dot appended (if non-empty). Returns "" when the pattern
+    # starts with a wildcard.
+    defp literal_like_prefix_of(pattern) do
+      segments = String.split(pattern, ".")
+
+      literal =
+        Enum.take_while(segments, fn seg ->
+          seg != "*" and seg != "**" and not String.contains?(seg, "*")
+        end)
+
+      case literal do
+        [] -> ""
+        segs -> (Enum.join(segs, ".") <> ".") |> escape_like()
+      end
+    end
+
+    defp escape_like(literal) do
+      literal
+      |> String.replace("\\", "\\\\")
+      |> String.replace("%", "\\%")
+      |> String.replace("_", "\\_")
     end
 
     # --- projection helpers (copied verbatim from Dust.Cache.Memory — deliberate

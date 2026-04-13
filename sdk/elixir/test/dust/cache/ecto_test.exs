@@ -299,4 +299,79 @@ defmodule Dust.Cache.EctoTest do
       assert items == ~w(users.alice users.bob)
     end
   end
+
+  describe "browse pagination with narrow glob" do
+    test "paginates narrow glob over wide raw prefix without dropping matches" do
+      # Seed 60 decoy entries that sort BEFORE the matches so a naive limit+1
+      # raw fetch captures 51 decoys and zero matches.
+      for i <- 1..60 do
+        suffix = String.pad_leading(to_string(i), 3, "0")
+
+        :ok =
+          EctoCache.write(
+            Dust.TestRepo,
+            @store,
+            "logs.server.alpha.#{suffix}",
+            "alpha-#{suffix}",
+            "string",
+            i
+          )
+      end
+
+      # Seed 3 entries that actually match the narrow glob
+      for i <- 1..3 do
+        :ok =
+          EctoCache.write(
+            Dust.TestRepo,
+            @store,
+            "logs.server.error.#{i}",
+            "error-#{i}",
+            "string",
+            100 + i
+          )
+      end
+
+      # Walk pages following next_cursor until exhausted.
+      walk = fn cursor, acc, pages, walk ->
+        {page, next_cursor} =
+          EctoCache.browse(Dust.TestRepo, @store,
+            pattern: "logs.*.error.**",
+            select: :keys,
+            limit: 50,
+            cursor: cursor
+          )
+
+        new_acc = acc ++ page
+
+        case next_cursor do
+          nil -> {new_acc, pages + 1}
+          c -> walk.(c, new_acc, pages + 1, walk)
+        end
+      end
+
+      {all_items, page_count} = walk.(nil, [], 0, walk)
+
+      assert Enum.sort(all_items) == [
+               "logs.server.error.1",
+               "logs.server.error.2",
+               "logs.server.error.3"
+             ]
+
+      assert page_count <= 2
+    end
+
+    test "I1 regression: literal '%' in pattern prefix returns only exact matches" do
+      :ok = EctoCache.write(Dust.TestRepo, @store, "weird%.child", "match", "string", 1)
+      :ok = EctoCache.write(Dust.TestRepo, @store, "weirdX.child", "decoy", "string", 2)
+
+      {items, _} =
+        EctoCache.browse(Dust.TestRepo, @store,
+          pattern: "weird%.**",
+          select: :keys,
+          limit: 10
+        )
+
+      assert items == ["weird%.child"]
+    end
+  end
 end

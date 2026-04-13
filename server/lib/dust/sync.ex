@@ -190,17 +190,49 @@ defmodule Dust.Sync do
     cursor = Keyword.get(opts, :after)
 
     with :ok <- validate_select_pattern(select, pattern) do
-      rows = fetch_entries_for_enum(store_id, pattern, order, cursor, limit)
-
-      matched =
-        Enum.filter(rows, fn [path, _json, _type, _seq] ->
-          Dust.MCP.Tools.DustEnum.glob_match?(path, pattern)
-        end)
+      matched = collect_matches(store_id, pattern, order, cursor, limit)
 
       {page_rows, next_cursor} = take_with_cursor(matched, limit)
       items = project_rows(page_rows, select, pattern, order)
 
       {:ok, %{items: items, next_cursor: next_cursor}}
+    end
+  end
+
+  # Chunk size used to walk raw rows when the glob is narrower than the
+  # LIKE prefix. Not configurable for Phase 1.
+  @enum_chunk_size 500
+
+  # Fetch raw rows in chunks and filter through the glob matcher until we
+  # have at least `limit + 1` matches (to detect the next page cursor) or
+  # the raw source is exhausted. Cursor advances through raw rows so that
+  # unmatched rows between matches are naturally skipped on subsequent
+  # chunks, but the cursor *returned to the caller* upstream is the path
+  # of the last returned match (not the last raw row).
+  defp collect_matches(store_id, pattern, order, cursor, limit) do
+    do_collect_matches(store_id, pattern, order, cursor, limit, [])
+  end
+
+  defp do_collect_matches(store_id, pattern, order, cursor, limit, acc) do
+    rows = fetch_entries_chunk(store_id, pattern, order, cursor, @enum_chunk_size)
+
+    matches =
+      Enum.filter(rows, fn [path, _json, _type, _seq] ->
+        Dust.MCP.Tools.DustEnum.glob_match?(path, pattern)
+      end)
+
+    all = acc ++ matches
+
+    cond do
+      length(all) > limit ->
+        Enum.take(all, limit + 1)
+
+      length(rows) < @enum_chunk_size ->
+        all
+
+      true ->
+        [last_raw_path | _] = List.last(rows)
+        do_collect_matches(store_id, pattern, order, last_raw_path, limit, all)
     end
   end
 
@@ -219,11 +251,12 @@ defmodule Dust.Sync do
 
   defp validate_select_pattern(_select, _pattern), do: :ok
 
-  # Fetch `limit + 1` raw rows from store_entries using a keyset query
-  # filtered by the pattern's literal prefix (if any).
-  defp fetch_entries_for_enum(store_id, pattern, order, cursor, limit) do
+  # Fetch a chunk of raw rows from store_entries using a keyset query
+  # filtered by the pattern's literal prefix (if any). The LIKE clause
+  # escapes `\`, `%`, and `_` in the literal prefix so that paths
+  # containing SQL LIKE wildcards are not misinterpreted.
+  defp fetch_entries_chunk(store_id, pattern, order, cursor, fetch_limit) do
     literal = literal_prefix_of_pattern(pattern)
-    fetch_limit = limit + 1
 
     {where_parts, params} = {[], []}
 
@@ -239,8 +272,12 @@ defmodule Dust.Sync do
 
     {where_parts, params} =
       case literal do
-        "" -> {where_parts, params}
-        prefix -> {["path LIKE ?" | where_parts], ["#{prefix}%" | params]}
+        "" ->
+          {where_parts, params}
+
+        prefix ->
+          escaped = escape_like(prefix)
+          {[~s|path LIKE ? ESCAPE '\\'| | where_parts], ["#{escaped}%" | params]}
       end
 
     # where_parts and params were both prepended (reverse chronological order).
@@ -265,6 +302,13 @@ defmodule Dust.Sync do
     with_read_conn(store_id, fn conn ->
       query_all(conn, sql, params)
     end) || []
+  end
+
+  defp escape_like(literal) do
+    literal
+    |> String.replace("\\", "\\\\")
+    |> String.replace("%", "\\%")
+    |> String.replace("_", "\\_")
   end
 
   # Return the literal prefix of a glob pattern — everything before the first

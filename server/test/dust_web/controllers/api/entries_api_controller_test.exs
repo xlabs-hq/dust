@@ -134,6 +134,78 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
 
       assert resp.status == 401
     end
+
+    test "paginates narrow glob over wide raw prefix without dropping matches", %{
+      conn: conn,
+      token: token,
+      store: store
+    } do
+      # Seed 60 decoy entries under logs.server.alpha.NNN. These sort LEXICALLY
+      # BEFORE "logs.server.error.*" so a naive limit+1 raw fetch captures 51
+      # alpha rows, zero matches, and returns {[], nil} with the bug.
+      for i <- 1..60 do
+        suffix = String.pad_leading(to_string(i), 3, "0")
+        seed_entry(store, "logs.server.alpha.#{suffix}", "alpha-#{suffix}")
+      end
+
+      # Seed 3 entries that actually match the narrow glob
+      for i <- 1..3 do
+        seed_entry(store, "logs.server.error.#{i}", "error-#{i}")
+      end
+
+      # Walk pages following next_cursor until exhausted.
+      # With the bug, the raw LIKE window "logs.%" hits 51 rows before we ever
+      # see an error row if the ordering happens to surface info.* first; on
+      # :desc order the error rows come first but we must still walk without
+      # getting a spurious early nil next_cursor.
+      pattern = "logs.*.error.**"
+
+      walk = fn conn, token, walk ->
+        fn after_cursor, acc, pages ->
+          url =
+            "/api/stores/entriesorg/mystore/entries?pattern=#{pattern}&select=keys&limit=50" <>
+              if after_cursor, do: "&after=#{URI.encode(after_cursor)}", else: ""
+
+          resp = conn |> api_conn(token) |> get(url)
+          body = json_response(resp, 200)
+          new_acc = acc ++ body["items"]
+
+          case body["next_cursor"] do
+            nil -> {new_acc, pages + 1}
+            cursor -> walk.(conn, token, walk).(cursor, new_acc, pages + 1)
+          end
+        end
+      end
+
+      {all_items, page_count} = walk.(conn, token, walk).(nil, [], 0)
+
+      assert Enum.sort(all_items) == [
+               "logs.server.error.1",
+               "logs.server.error.2",
+               "logs.server.error.3"
+             ]
+
+      assert page_count <= 2
+    end
+
+    test "I1 regression: literal '%' in pattern prefix returns only exact matches", %{
+      conn: conn,
+      token: token,
+      store: store
+    } do
+      # Seed an entry whose literal prefix contains '%'
+      seed_entry(store, "weird%.child", "match-me")
+      # Decoy that an unescaped LIKE 'weird%.%' would also capture
+      seed_entry(store, "weirdX.child", "decoy")
+
+      resp =
+        conn
+        |> api_conn(token)
+        |> get("/api/stores/entriesorg/mystore/entries?pattern=weird%25.**&select=keys")
+
+      body = json_response(resp, 200)
+      assert body["items"] == ["weird%.child"]
+    end
   end
 
   describe "GET /api/stores/:org/:store/entries/*path" do
