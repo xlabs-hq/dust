@@ -17,4 +17,14 @@ defmodule Dust.PageTest do
     assert Enum.to_list(page) == [1, 2, 3]
     assert Enum.count(page) == 3
   end
+
+  test "supports Enum.slice/2" do
+    page = Dust.Page.new(items: [1, 2, 3, 4, 5])
+    assert Enum.slice(page, 1, 3) == [2, 3, 4]
+  end
+
+  test "supports Enum.slice/2 with range" do
+    page = Dust.Page.new(items: [1, 2, 3, 4, 5])
+    assert Enum.slice(page, 1..3) == [2, 3, 4]
+  end
 end

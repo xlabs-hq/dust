@@ -11,5 +11,5 @@ defmodule Dust.Cache do
   @callback browse(target :: term(), store :: String.t(), opts :: keyword()) ::
               {[{String.t(), term(), String.t(), integer()}], term() | nil}
 
-  @optional_callbacks [count: 2, browse: 3, read_entry: 3]
+  @optional_callbacks [count: 2, browse: 3]
 end
