@@ -471,5 +471,59 @@ defmodule Dust.SyncEngineTest do
 
       refute_receive {:event, _}, 100
     end
+
+    test "include_current honors :limit" do
+      store = "test/store"
+      for i <- 1..10, do: Dust.SyncEngine.seed_entry(store, "k.#{i}", i, "integer")
+
+      test_pid = self()
+      callback = fn event -> send(test_pid, {:event, event}) end
+
+      _ref = Dust.SyncEngine.on(store, "k.**", callback, include_current: true, limit: 3)
+
+      events = drain_events(200)
+      assert length(events) == 3
+    end
+
+    test "include_current honors :order :desc" do
+      store = "test/store"
+      for k <- ~w(a b c), do: Dust.SyncEngine.seed_entry(store, k, k, "string")
+
+      test_pid = self()
+      callback = fn event -> send(test_pid, {:event, event}) end
+
+      _ref =
+        Dust.SyncEngine.on(store, "**", callback,
+          include_current: true,
+          order: :desc,
+          limit: 10
+        )
+
+      events = drain_events(200)
+      paths = Enum.map(events, & &1.path)
+      assert paths == ["c", "b", "a"]
+    end
+
+    test "include_current clamps :limit above 1000" do
+      store = "test/store"
+      for k <- ~w(a b c d e), do: Dust.SyncEngine.seed_entry(store, k, k, "string")
+
+      test_pid = self()
+      callback = fn event -> send(test_pid, {:event, event}) end
+
+      _ref =
+        Dust.SyncEngine.on(store, "**", callback, include_current: true, limit: 9999)
+
+      events = drain_events(200)
+      assert length(events) == 5
+    end
+  end
+
+  defp drain_events(timeout_ms) do
+    receive do
+      {:event, event} -> [event | drain_events(timeout_ms)]
+    after
+      timeout_ms -> []
+    end
   end
 end
