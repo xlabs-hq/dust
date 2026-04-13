@@ -208,6 +208,127 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
     end
   end
 
+  describe "GET /api/stores/:org/:store/entries range mode" do
+    setup %{store: store} do
+      # Seed a..f as top-level entries for range tests.
+      for letter <- ~w(a b c d e f) do
+        seed_entry(store, letter, "val-#{letter}")
+      end
+
+      :ok
+    end
+
+    test "GET /entries?from=b&to=e returns items in lexicographic range with revision",
+         %{conn: conn, token: token} do
+      resp =
+        conn
+        |> api_conn(token)
+        |> get("/api/stores/entriesorg/mystore/entries?from=b&to=e")
+
+      body = json_response(resp, 200)
+      assert Enum.map(body["items"], & &1["path"]) == ~w(b c d)
+
+      first = hd(body["items"])
+      assert is_integer(first["revision"])
+      assert Map.has_key?(first, "value")
+      assert Map.has_key?(first, "type")
+      assert body["next_cursor"] == nil
+    end
+
+    test "GET /entries?from=b&to=e&select=keys returns path strings only",
+         %{conn: conn, token: token} do
+      resp =
+        conn
+        |> api_conn(token)
+        |> get("/api/stores/entriesorg/mystore/entries?from=b&to=e&select=keys")
+
+      body = json_response(resp, 200)
+      assert body["items"] == ~w(b c d)
+    end
+
+    test "GET /entries?from=b&to=e&select=prefixes returns 400 unsupported_select",
+         %{conn: conn, token: token} do
+      resp =
+        conn
+        |> api_conn(token)
+        |> get("/api/stores/entriesorg/mystore/entries?from=b&to=e&select=prefixes")
+
+      body = json_response(resp, 400)
+      assert body["error"] == "unsupported_select"
+      assert body["detail"] == "select=prefixes not supported for range"
+    end
+
+    test "GET /entries with both pattern and from returns 400 conflicting_params",
+         %{conn: conn, token: token} do
+      resp =
+        conn
+        |> api_conn(token)
+        |> get("/api/stores/entriesorg/mystore/entries?pattern=users.**&from=a&to=z")
+
+      body = json_response(resp, 400)
+      assert body["error"] == "conflicting_params"
+      assert body["detail"] == "use either pattern or from/to, not both"
+    end
+
+    test "GET /entries?from=a (no to) returns 400 invalid_params",
+         %{conn: conn, token: token} do
+      resp =
+        conn
+        |> api_conn(token)
+        |> get("/api/stores/entriesorg/mystore/entries?from=a")
+
+      body = json_response(resp, 400)
+      assert body["error"] == "invalid_params"
+      assert body["detail"] == "from requires to"
+    end
+
+    test "GET /entries?to=z (no from) returns 400 invalid_params",
+         %{conn: conn, token: token} do
+      resp =
+        conn
+        |> api_conn(token)
+        |> get("/api/stores/entriesorg/mystore/entries?to=z")
+
+      body = json_response(resp, 400)
+      assert body["error"] == "invalid_params"
+      assert body["detail"] == "to requires from"
+    end
+
+    test "range pagination via next_cursor works across two pages",
+         %{conn: conn, token: token} do
+      resp1 =
+        conn
+        |> api_conn(token)
+        |> get("/api/stores/entriesorg/mystore/entries?from=a&to=g&select=keys&limit=2")
+
+      body1 = json_response(resp1, 200)
+      assert body1["items"] == ~w(a b)
+      assert body1["next_cursor"] != nil
+
+      resp2 =
+        conn
+        |> api_conn(token)
+        |> get(
+          "/api/stores/entriesorg/mystore/entries?from=a&to=g&select=keys&limit=2&after=#{URI.encode(body1["next_cursor"])}"
+        )
+
+      body2 = json_response(resp2, 200)
+      assert body2["items"] == ~w(c d)
+      assert body2["next_cursor"] != nil
+    end
+
+    test "range with order=desc returns reversed items",
+         %{conn: conn, token: token} do
+      resp =
+        conn
+        |> api_conn(token)
+        |> get("/api/stores/entriesorg/mystore/entries?from=b&to=e&select=keys&order=desc")
+
+      body = json_response(resp, 200)
+      assert body["items"] == ~w(d c b)
+    end
+  end
+
   describe "GET /api/stores/:org/:store/entries/*path" do
     test "returns 200 with path, value, type, and integer revision for a leaf entry", %{
       conn: conn,

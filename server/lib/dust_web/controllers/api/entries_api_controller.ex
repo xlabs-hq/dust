@@ -42,13 +42,15 @@ defmodule DustWeb.Api.EntriesApiController do
     organization = conn.assigns.organization
     store_token = conn.assigns.store_token
 
-    with :ok <- verify_org(organization, org_slug),
+    with :ok <- validate_mutually_exclusive(params),
+         :ok <- verify_org(organization, org_slug),
          {:ok, store} <- find_store(organization, store_name),
          :ok <- verify_token_scope(store_token, store),
-         :ok <- verify_read_permission(store_token),
-         {:ok, pattern, opts} <- parse_opts(params),
-         {:ok, page} <- Sync.enum_entries(store.id, pattern, opts) do
-      json(conn, render_page(page))
+         :ok <- verify_read_permission(store_token) do
+      case dispatch_mode(params) do
+        :range -> do_range(conn, store, params)
+        :enum -> do_enum(conn, store, params)
+      end
     else
       {:error, :org_mismatch} ->
         conn |> put_status(404) |> json(%{"error" => "not_found"})
@@ -59,6 +61,40 @@ defmodule DustWeb.Api.EntriesApiController do
       {:error, :forbidden} ->
         conn |> put_status(403) |> json(%{"error" => "forbidden"})
 
+      {:error, {:conflicting_params, detail}} ->
+        conn |> put_status(400) |> json(%{"error" => "conflicting_params", "detail" => detail})
+
+      {:error, {:invalid_params, detail}} ->
+        conn |> put_status(400) |> json(%{"error" => "invalid_params", "detail" => detail})
+    end
+  end
+
+  defp validate_mutually_exclusive(params) do
+    cond do
+      Map.has_key?(params, "pattern") and
+          (Map.has_key?(params, "from") or Map.has_key?(params, "to")) ->
+        {:error, {:conflicting_params, "use either pattern or from/to, not both"}}
+
+      Map.has_key?(params, "from") and not Map.has_key?(params, "to") ->
+        {:error, {:invalid_params, "from requires to"}}
+
+      Map.has_key?(params, "to") and not Map.has_key?(params, "from") ->
+        {:error, {:invalid_params, "to requires from"}}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp dispatch_mode(params) do
+    if Map.has_key?(params, "from"), do: :range, else: :enum
+  end
+
+  defp do_enum(conn, store, params) do
+    with {:ok, pattern, opts} <- parse_opts(params),
+         {:ok, page} <- Sync.enum_entries(store.id, pattern, opts) do
+      json(conn, render_page(page))
+    else
       {:error, :invalid_pattern_for_prefixes} ->
         conn |> put_status(400) |> json(%{"error" => "invalid_pattern_for_prefixes"})
 
@@ -66,6 +102,45 @@ defmodule DustWeb.Api.EntriesApiController do
         conn |> put_status(400) |> json(%{"error" => "invalid_params", "detail" => detail})
     end
   end
+
+  defp do_range(conn, store, params) do
+    with {:ok, from, to, opts} <- parse_range_opts(params),
+         {:ok, page} <- Sync.range_entries(store.id, from, to, opts) do
+      json(conn, render_page(page))
+    else
+      {:error, :unsupported_select} ->
+        conn
+        |> put_status(400)
+        |> json(%{
+          "error" => "unsupported_select",
+          "detail" => "select=prefixes not supported for range"
+        })
+
+      {:error, {:invalid_params, detail}} ->
+        conn |> put_status(400) |> json(%{"error" => "invalid_params", "detail" => detail})
+    end
+  end
+
+  defp parse_range_opts(params) do
+    with {:ok, from} <- parse_from(params),
+         {:ok, to} <- parse_to(params),
+         {:ok, limit} <- parse_limit(params),
+         {:ok, order} <- parse_order(params),
+         {:ok, select} <- parse_select(params),
+         {:ok, after_cursor} <- parse_after(params) do
+      opts =
+        [limit: limit, order: order, select: select]
+        |> maybe_put(:after, after_cursor)
+
+      {:ok, from, to, opts}
+    end
+  end
+
+  defp parse_from(%{"from" => f}) when is_binary(f) and f != "", do: {:ok, f}
+  defp parse_from(_), do: {:error, {:invalid_params, "from must be a non-empty string"}}
+
+  defp parse_to(%{"to" => t}) when is_binary(t) and t != "", do: {:ok, t}
+  defp parse_to(_), do: {:error, {:invalid_params, "to must be a non-empty string"}}
 
   defp verify_org(organization, org_slug) do
     if organization.slug == org_slug, do: :ok, else: {:error, :org_mismatch}
