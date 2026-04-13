@@ -63,15 +63,25 @@ defmodule DustWeb.MCPAuthController do
           "code_challenge_method" => method
         } = params
       ) do
-    if RedirectUriValidator.valid?(redirect_uri) do
-      do_authorize(conn, client_id, redirect_uri, state, challenge, method, params)
-    else
-      conn
-      |> put_status(:bad_request)
-      |> json(%{
-        error: "invalid_request",
-        error_description: "redirect_uri is not on the allowlist"
-      })
+    cond do
+      not RedirectUriValidator.valid?(redirect_uri) ->
+        conn
+        |> put_status(:bad_request)
+        |> json(%{
+          error: "invalid_request",
+          error_description: "redirect_uri is not on the allowlist"
+        })
+
+      method != "S256" ->
+        conn
+        |> put_status(:bad_request)
+        |> json(%{
+          error: "invalid_request",
+          error_description: "only S256 is supported for code_challenge_method"
+        })
+
+      true ->
+        do_authorize(conn, client_id, redirect_uri, state, challenge, method, params)
     end
   end
 

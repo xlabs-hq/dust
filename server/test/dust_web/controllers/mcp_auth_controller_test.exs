@@ -169,6 +169,22 @@ defmodule DustWeb.MCPAuthControllerTest do
       conn = get(conn, ~p"/oauth/authorize", params)
       assert json_response(conn, 400)["error"] == "invalid_request"
     end
+
+    test "rejects non-S256 code_challenge_method", %{conn: conn} do
+      params = %{
+        "response_type" => "code",
+        "client_id" => Application.fetch_env!(:workos, :mcp_client_id),
+        "redirect_uri" => "http://localhost:33418/cb",
+        "state" => "s",
+        "code_challenge" => "abc",
+        "code_challenge_method" => "plain"
+      }
+
+      conn = get(conn, ~p"/oauth/authorize", params)
+      body = json_response(conn, 400)
+      assert body["error"] == "invalid_request"
+      assert body["error_description"] =~ "S256"
+    end
   end
 
   describe "GET /oauth/callback" do
