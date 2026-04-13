@@ -138,13 +138,15 @@ defmodule Dust.Cache.Memory do
     limit = Keyword.get(opts, :limit, 50)
     order = Keyword.get(opts, :order, :asc)
     select = Keyword.get(opts, :select, :entries)
+    from = Keyword.get(opts, :from)
+    to = Keyword.get(opts, :to)
 
     compiled = Dust.Protocol.Glob.compile(pattern)
 
     entries =
       state.entries
       |> Enum.filter(fn {{s, path}, _} ->
-        s == store and Dust.Protocol.Glob.match?(compiled, String.split(path, "."))
+        s == store and matches_filter?(path, pattern, compiled, from, to)
       end)
       |> Enum.map(fn {{_s, path}, {value, type, seq}} -> {path, value, type, seq} end)
       |> Enum.sort_by(fn {path, _, _, _} -> path end, sort_direction(order))
@@ -209,6 +211,14 @@ defmodule Dust.Cache.Memory do
       [next_seg | _] = String.split(rest, ".", parts: 2)
       literal <> "." <> next_seg
     end
+  end
+
+  defp matches_filter?(path, _pattern, _compiled, from, to) when is_binary(from) and is_binary(to) do
+    path >= from and path < to
+  end
+
+  defp matches_filter?(path, _pattern, compiled, _from, _to) do
+    Dust.Protocol.Glob.match?(compiled, String.split(path, "."))
   end
 
   defp sort_direction(:asc), do: :asc

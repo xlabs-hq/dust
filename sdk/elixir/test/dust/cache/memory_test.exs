@@ -101,4 +101,45 @@ defmodule Dust.Cache.MemoryTest do
     {items, _} = Memory.browse(cache, "s", pattern: "users.**", select: :prefixes, limit: 10)
     assert items == ~w(users.alice users.bob)
   end
+
+  describe "browse with :from/:to range" do
+    test "returns entries within [from, to) lexicographically", %{cache: pid} do
+      for k <- ~w(a b c d e), do: :ok = Dust.Cache.Memory.write(pid, "s", k, k, "string", 1)
+
+      {page, _} = Dust.Cache.Memory.browse(pid, "s", from: "b", to: "d", limit: 10)
+      paths = Enum.map(page, fn {p, _, _, _} -> p end)
+      assert paths == ~w(b c)
+    end
+
+    test "from is inclusive, to is exclusive", %{cache: pid} do
+      for k <- ~w(a b c), do: :ok = Dust.Cache.Memory.write(pid, "s", k, k, "string", 1)
+      {page, _} = Dust.Cache.Memory.browse(pid, "s", from: "a", to: "c", limit: 10)
+      assert Enum.map(page, fn {p, _, _, _} -> p end) == ~w(a b)
+    end
+
+    test "from >= to returns an empty page", %{cache: pid} do
+      :ok = Dust.Cache.Memory.write(pid, "s", "x", "x", "string", 1)
+      {page, _} = Dust.Cache.Memory.browse(pid, "s", from: "z", to: "a", limit: 10)
+      assert page == []
+    end
+
+    test "range respects order: :desc", %{cache: pid} do
+      for k <- ~w(a b c d), do: :ok = Dust.Cache.Memory.write(pid, "s", k, k, "string", 1)
+      {page, _} = Dust.Cache.Memory.browse(pid, "s", from: "a", to: "d", limit: 10, order: :desc)
+      assert Enum.map(page, fn {p, _, _, _} -> p end) == ~w(c b a)
+    end
+
+    test "range + limit produces a next_cursor", %{cache: pid} do
+      for k <- ~w(a b c d e), do: :ok = Dust.Cache.Memory.write(pid, "s", k, k, "string", 1)
+      {page, cursor} = Dust.Cache.Memory.browse(pid, "s", from: "a", to: "z", limit: 2)
+      assert Enum.map(page, fn {p, _, _, _} -> p end) == ~w(a b)
+      assert cursor == "b"
+    end
+
+    test "range + cursor resumes correctly", %{cache: pid} do
+      for k <- ~w(a b c d e), do: :ok = Dust.Cache.Memory.write(pid, "s", k, k, "string", 1)
+      {page, _} = Dust.Cache.Memory.browse(pid, "s", from: "a", to: "z", limit: 2, cursor: "b")
+      assert Enum.map(page, fn {p, _, _, _} -> p end) == ~w(c d)
+    end
+  end
 end
