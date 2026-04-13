@@ -236,6 +236,73 @@ defmodule Dust.Sync do
     end
   end
 
+  @doc """
+  Lexicographic range read over a store's entries in `[from, to)`.
+
+  Returns `{:ok, %{items: items, next_cursor: cursor | nil}}` or
+  `{:error, :unsupported_select}` when called with `select: :prefixes`
+  (prefix projection is not meaningful for raw ranges).
+
+  Options:
+    * `:limit`  — clamped to 1..1000 (default 50)
+    * `:order`  — `:asc` (default) or `:desc`
+    * `:select` — `:entries` (default) or `:keys` (`:prefixes` is rejected)
+    * `:after`  — opaque cursor (path string); continues strictly past it
+  """
+  @spec range_entries(binary(), String.t(), String.t(), keyword()) ::
+          {:ok, %{items: list(), next_cursor: String.t() | nil}}
+          | {:error, :unsupported_select}
+  def range_entries(store_id, from, to, opts \\ [])
+      when is_binary(from) and is_binary(to) do
+    case Keyword.get(opts, :select, :entries) do
+      :prefixes ->
+        {:error, :unsupported_select}
+
+      select when select in [:entries, :keys] ->
+        limit = opts |> Keyword.get(:limit, @enum_default_limit) |> clamp_limit()
+        order = Keyword.get(opts, :order, :asc)
+        cursor = Keyword.get(opts, :after)
+
+        result =
+          with_read_conn(store_id, fn conn ->
+            rows = fetch_range_rows(conn, from, to, cursor, order, limit + 1)
+            {page_rows, next_cursor} = take_with_cursor(rows, limit)
+            items = project_rows(page_rows, select, nil, order)
+            %{items: items, next_cursor: next_cursor}
+          end) || %{items: [], next_cursor: nil}
+
+        {:ok, result}
+    end
+  end
+
+  # Build a single-shot SQL range query over `[from, to)` with optional
+  # keyset cursor. No post-filtering is needed — every row in the range
+  # is a match — so `LIMIT limit+1` is sufficient for cursor detection.
+  defp fetch_range_rows(conn, from, to, cursor, order, fetch_limit) do
+    {cursor_clause, cursor_params} =
+      case cursor do
+        nil ->
+          {"", []}
+
+        c when is_binary(c) ->
+          op = if order == :asc, do: ">", else: "<"
+          {" AND path #{op} ?", [c]}
+      end
+
+    order_sql = if order == :asc, do: "ASC", else: "DESC"
+
+    sql =
+      "SELECT path, value, type, seq FROM store_entries " <>
+        "WHERE path >= ? AND path < ?" <>
+        cursor_clause <>
+        " ORDER BY path " <>
+        order_sql <>
+        " LIMIT ?"
+
+    params = [from, to] ++ cursor_params ++ [fetch_limit]
+    query_all(conn, sql, params)
+  end
+
   defp clamp_limit(n) when is_integer(n) and n < 1, do: 1
   defp clamp_limit(n) when is_integer(n) and n > @enum_max_limit, do: @enum_max_limit
   defp clamp_limit(n) when is_integer(n), do: n
