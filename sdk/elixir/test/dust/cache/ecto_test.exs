@@ -428,4 +428,29 @@ defmodule Dust.Cache.EctoTest do
       assert Enum.map(page, fn {p, _, _, _} -> p end) == ~w(c d)
     end
   end
+
+  describe "read_many/3" do
+    test "returns a map of present entries" do
+      :ok = EctoCache.write(Dust.TestRepo, @store, "a", 1, "integer", 1)
+      :ok = EctoCache.write(Dust.TestRepo, @store, "b", 2, "integer", 2)
+      result = EctoCache.read_many(Dust.TestRepo, @store, ["a", "b"])
+      assert result == %{"a" => {1, "integer", 1}, "b" => {2, "integer", 2}}
+    end
+
+    test "omits missing paths" do
+      :ok = EctoCache.write(Dust.TestRepo, @store, "a", 1, "integer", 1)
+      result = EctoCache.read_many(Dust.TestRepo, @store, ["a", "missing"])
+      assert Map.keys(result) == ["a"]
+    end
+
+    test "empty list returns empty map" do
+      assert EctoCache.read_many(Dust.TestRepo, @store, []) == %{}
+    end
+
+    test "duplicate paths collapse in the result" do
+      :ok = EctoCache.write(Dust.TestRepo, @store, "a", 1, "integer", 1)
+      result = EctoCache.read_many(Dust.TestRepo, @store, ["a", "a", "a"])
+      assert result == %{"a" => {1, "integer", 1}}
+    end
+  end
 end

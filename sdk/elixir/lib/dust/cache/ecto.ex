@@ -37,6 +37,26 @@ if Code.ensure_loaded?(Ecto.Query) do
     end
 
     @impl Dust.Cache
+    def read_many(repo, store, paths) do
+      unique_paths = Enum.uniq(paths)
+
+      if unique_paths == [] do
+        %{}
+      else
+        query =
+          from(c in CacheEntry,
+            where: c.store == ^store and c.path in ^unique_paths,
+            select: {c.path, c.value, c.type, c.seq}
+          )
+
+        repo.all(query)
+        |> Enum.reduce(%{}, fn {path, json, type, seq}, acc ->
+          Map.put(acc, path, {Jason.decode!(json), type, seq})
+        end)
+      end
+    end
+
+    @impl Dust.Cache
     def read_all(repo, store, pattern) do
       compiled = Dust.Protocol.Glob.compile(pattern)
 
