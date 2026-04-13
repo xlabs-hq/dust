@@ -18,4 +18,26 @@ defmodule DustTest do
     :ok = Dust.SyncEngine.seed_entry("test/store", "a", 1, "integer")
     assert {:ok, %Dust.Entry{path: "a", value: 1, revision: _}} = Dust.entry("test/store", "a")
   end
+
+  test "Dust.enum/3 returns a %Dust.Page{} with %Dust.Entry{} items" do
+    :ok = Dust.SyncEngine.put("test/store", "posts.a", "1")
+    :ok = Dust.SyncEngine.put("test/store", "posts.b", "2")
+
+    page = Dust.enum("test/store", "posts.*", [])
+    assert %Dust.Page{} = page
+    assert length(page.items) == 2
+    assert Enum.all?(page.items, &match?(%Dust.Entry{}, &1))
+    paths = Enum.map(page.items, & &1.path) |> Enum.sort()
+    assert paths == ["posts.a", "posts.b"]
+  end
+
+  test "Dust.enum/2 still returns the flat [{path, value}, ...] list" do
+    :ok = Dust.SyncEngine.put("test/store", "posts.a", "1")
+    :ok = Dust.SyncEngine.put("test/store", "posts.b", "2")
+
+    results = Dust.enum("test/store", "posts.*")
+    assert is_list(results)
+    assert length(results) == 2
+    assert Enum.all?(results, &match?({_path, _value}, &1))
+  end
 end
