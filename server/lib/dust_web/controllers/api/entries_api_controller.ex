@@ -4,6 +4,40 @@ defmodule DustWeb.Api.EntriesApiController do
   alias Dust.Stores
   alias Dust.Sync
 
+  def show(conn, %{"org" => org_slug, "store" => store_name, "path" => path_segments}) do
+    organization = conn.assigns.organization
+    store_token = conn.assigns.store_token
+    path = Enum.join(List.wrap(path_segments), ".")
+
+    with :ok <- verify_org(organization, org_slug),
+         {:ok, store} <- find_store(organization, store_name),
+         :ok <- verify_token_scope(store_token, store),
+         :ok <- verify_read_permission(store_token),
+         {:ok, entry} <- fetch_entry(store.id, path) do
+      json(conn, render_entry(entry))
+    else
+      {:error, :org_mismatch} ->
+        conn |> put_status(404) |> json(%{"error" => "not_found"})
+
+      {:error, :not_found} ->
+        conn |> put_status(404) |> json(%{"error" => "not_found"})
+
+      {:error, :forbidden} ->
+        conn |> put_status(403) |> json(%{"error" => "forbidden"})
+    end
+  end
+
+  defp fetch_entry(store_id, path) do
+    case Sync.get_entry(store_id, path) do
+      nil -> {:error, :not_found}
+      entry -> {:ok, entry}
+    end
+  end
+
+  defp render_entry(%{path: p, value: v, type: t, seq: s}) do
+    %{"path" => p, "value" => v, "type" => t, "revision" => s}
+  end
+
   def index(conn, %{"org" => org_slug, "store" => store_name} = params) do
     organization = conn.assigns.organization
     store_token = conn.assigns.store_token

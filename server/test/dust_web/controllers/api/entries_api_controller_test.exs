@@ -135,4 +135,62 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       assert resp.status == 401
     end
   end
+
+  describe "GET /api/stores/:org/:store/entries/*path" do
+    test "returns 200 with path, value, type, and integer revision for a leaf entry", %{
+      conn: conn,
+      token: token
+    } do
+      resp =
+        conn
+        |> api_conn(token)
+        |> get("/api/stores/entriesorg/mystore/entries/users.alice.name")
+
+      body = json_response(resp, 200)
+      assert body["path"] == "users.alice.name"
+      assert body["value"] == "Alice"
+      assert is_binary(body["type"])
+      assert is_integer(body["revision"])
+    end
+
+    test "returns 404 for a path that does not exist", %{conn: conn, token: token} do
+      resp =
+        conn
+        |> api_conn(token)
+        |> get("/api/stores/entriesorg/mystore/entries/no.such.path")
+
+      assert json_response(resp, 404) == %{"error" => "not_found"}
+    end
+
+    # Parent-path behavior: `Dust.Sync.get_entry/2` returns an assembled subtree
+    # map when the requested path has no leaf but has descendants (see
+    # `assemble_subtree/2` in `lib/dust/sync.ex`). The plan allows either a 200
+    # with a subtree or a 404; the server natively returns the subtree so the
+    # HTTP endpoint exposes it. This test asserts the 200-subtree behavior.
+    test "returns 200 with an assembled subtree for a parent path", %{conn: conn, token: token} do
+      resp =
+        conn
+        |> api_conn(token)
+        |> get("/api/stores/entriesorg/mystore/entries/users")
+
+      body = json_response(resp, 200)
+      assert body["path"] == "users"
+      assert body["type"] == "map"
+      assert is_integer(body["revision"])
+
+      assert body["value"] == %{
+               "alice" => %{"email" => "alice@example.com", "name" => "Alice"},
+               "bob" => %{"name" => "Bob"}
+             }
+    end
+
+    test "returns 401 without Bearer token", %{conn: conn} do
+      resp =
+        conn
+        |> put_req_header("accept", "application/json")
+        |> get("/api/stores/entriesorg/mystore/entries/users.alice.name")
+
+      assert resp.status == 401
+    end
+  end
 end
