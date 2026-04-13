@@ -105,4 +105,66 @@ defmodule Dust.SyncTest do
                Sync.range_entries(store.id, "b", "e", select: :prefixes)
     end
   end
+
+  describe "get_many_entries/2" do
+    test "returns entries for present paths and missing for absent ones", %{store: store} do
+      seed(store, "a", 1)
+      seed(store, "b", 2)
+
+      assert %{entries: entries, missing: missing} =
+               Sync.get_many_entries(store.id, ["a", "b", "c"])
+
+      assert %{value: 1, type: "integer", seq: seq_a} = entries["a"]
+      assert is_integer(seq_a)
+      assert %{value: 2, type: "integer", seq: seq_b} = entries["b"]
+      assert is_integer(seq_b)
+      assert missing == ["c"]
+    end
+
+    test "empty list returns empty result", %{store: store} do
+      seed(store, "a", 1)
+
+      assert %{entries: %{}, missing: []} = Sync.get_many_entries(store.id, [])
+    end
+
+    test "all-missing returns empty entries and full missing list", %{store: store} do
+      seed(store, "a", 1)
+
+      assert %{entries: entries, missing: missing} =
+               Sync.get_many_entries(store.id, ["x", "y", "z"])
+
+      assert entries == %{}
+      assert Enum.sort(missing) == ["x", "y", "z"]
+    end
+
+    test "deduplicates input paths when missing", %{store: store} do
+      seed(store, "a", 1)
+
+      assert %{entries: %{}, missing: missing} =
+               Sync.get_many_entries(store.id, ["m", "m", "m"])
+
+      assert missing == ["m"]
+    end
+
+    test "deduplicates input paths when present", %{store: store} do
+      seed(store, "a", 1)
+
+      assert %{entries: entries, missing: []} =
+               Sync.get_many_entries(store.id, ["a", "a", "a"])
+
+      assert map_size(entries) == 1
+      assert %{value: 1, type: "integer"} = entries["a"]
+    end
+
+    test "unwraps scalar values via ValueCodec", %{store: store} do
+      seed(store, "name", "dust")
+      seed(store, "count", 42)
+
+      assert %{entries: entries, missing: []} =
+               Sync.get_many_entries(store.id, ["name", "count"])
+
+      assert %{value: "dust", type: "string"} = entries["name"]
+      assert %{value: 42, type: "integer"} = entries["count"]
+    end
+  end
 end

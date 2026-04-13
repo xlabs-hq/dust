@@ -111,6 +111,34 @@ defmodule Dust.Sync do
     Map.put(map, key, put_nested(child, rest, value))
   end
 
+  @spec get_many_entries(binary(), [String.t()]) :: %{entries: map(), missing: [String.t()]}
+  def get_many_entries(store_id, paths) when is_list(paths) do
+    unique_paths = Enum.uniq(paths)
+
+    if unique_paths == [] do
+      %{entries: %{}, missing: []}
+    else
+      result =
+        with_read_conn(store_id, fn conn ->
+          placeholders = Enum.map_join(unique_paths, ", ", fn _ -> "?" end)
+          sql = "SELECT path, value, type, seq FROM store_entries WHERE path IN (#{placeholders})"
+          rows = query_all(conn, sql, unique_paths)
+
+          entries =
+            Enum.reduce(rows, %{}, fn [path, json, type, seq], acc ->
+              value = json |> Jason.decode!() |> ValueCodec.unwrap()
+              Map.put(acc, path, %{value: value, type: type, seq: seq})
+            end)
+
+          found = Map.keys(entries)
+          missing = unique_paths -- found
+          %{entries: entries, missing: missing}
+        end)
+
+      result || %{entries: %{}, missing: unique_paths}
+    end
+  end
+
   def get_all_entries(store_id) do
     with_read_conn(store_id, fn conn ->
       query_all(conn, "SELECT path, value, type, seq FROM store_entries ORDER BY path", [])
