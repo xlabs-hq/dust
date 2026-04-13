@@ -102,6 +102,7 @@ defmodule DustWeb.Router do
     get "/stores/:org/:store/log", AuditApiController, :index
 
     get "/stores/:org/:store/entries", EntriesApiController, :index
+    post "/stores/:org/:store/entries/batch", EntriesApiController, :batch
     get "/stores/:org/:store/entries/*path", EntriesApiController, :show
 
     get "/stores/:org/:store/webhooks", WebhookController, :index

@@ -329,6 +329,132 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
     end
   end
 
+  describe "POST /api/stores/:org/:store/entries/batch" do
+    test "returns rich envelope with entries and missing for mixed paths", %{
+      conn: conn,
+      token: token
+    } do
+      resp =
+        conn
+        |> api_conn(token)
+        |> put_req_header("content-type", "application/json")
+        |> post(
+          "/api/stores/entriesorg/mystore/entries/batch",
+          Jason.encode!(%{
+            "paths" => [
+              "users.alice.email",
+              "users.alice.name",
+              "users.nope",
+              "totally.absent"
+            ]
+          })
+        )
+
+      body = json_response(resp, 200)
+
+      assert Map.keys(body["entries"]) |> Enum.sort() == [
+               "users.alice.email",
+               "users.alice.name"
+             ]
+
+      alice_email = body["entries"]["users.alice.email"]
+      assert alice_email["value"] == "alice@example.com"
+      assert is_binary(alice_email["type"])
+      assert is_integer(alice_email["revision"])
+
+      assert Enum.sort(body["missing"]) == ["totally.absent", "users.nope"]
+    end
+
+    test "empty paths list returns empty envelope", %{conn: conn, token: token} do
+      resp =
+        conn
+        |> api_conn(token)
+        |> put_req_header("content-type", "application/json")
+        |> post(
+          "/api/stores/entriesorg/mystore/entries/batch",
+          Jason.encode!(%{"paths" => []})
+        )
+
+      body = json_response(resp, 200)
+      assert body == %{"entries" => %{}, "missing" => []}
+    end
+
+    test "missing paths key returns 400 invalid_params", %{conn: conn, token: token} do
+      resp =
+        conn
+        |> api_conn(token)
+        |> put_req_header("content-type", "application/json")
+        |> post(
+          "/api/stores/entriesorg/mystore/entries/batch",
+          Jason.encode!(%{})
+        )
+
+      body = json_response(resp, 400)
+      assert body["error"] == "invalid_params"
+      assert body["detail"] == "paths required"
+    end
+
+    test "more than 1000 paths returns 400 invalid_params", %{conn: conn, token: token} do
+      paths = for i <- 1..1001, do: "p#{i}"
+
+      resp =
+        conn
+        |> api_conn(token)
+        |> put_req_header("content-type", "application/json")
+        |> post(
+          "/api/stores/entriesorg/mystore/entries/batch",
+          Jason.encode!(%{"paths" => paths})
+        )
+
+      body = json_response(resp, 400)
+      assert body["error"] == "invalid_params"
+      assert body["detail"] == "maximum 1000 paths per batch"
+    end
+
+    test "non-string element in paths returns 400 invalid_params", %{conn: conn, token: token} do
+      resp =
+        conn
+        |> api_conn(token)
+        |> put_req_header("content-type", "application/json")
+        |> post(
+          "/api/stores/entriesorg/mystore/entries/batch",
+          Jason.encode!(%{"paths" => ["users.alice.name", 42]})
+        )
+
+      body = json_response(resp, 400)
+      assert body["error"] == "invalid_params"
+      assert body["detail"] == "paths must be strings"
+    end
+
+    test "returns 401 without Bearer token", %{conn: conn} do
+      resp =
+        conn
+        |> put_req_header("accept", "application/json")
+        |> put_req_header("content-type", "application/json")
+        |> post(
+          "/api/stores/entriesorg/mystore/entries/batch",
+          Jason.encode!(%{"paths" => ["users.alice.name"]})
+        )
+
+      assert resp.status == 401
+    end
+
+    test "GET /entries/batch (wrong method) still hits wildcard show route", %{
+      conn: conn,
+      token: token
+    } do
+      # Regression: confirm POST /entries/batch route does not break the
+      # wildcard GET /entries/*path. A GET to /entries/batch should fall
+      # through to :show, where "batch" is a non-existent path => 404.
+      resp =
+        conn
+        |> api_conn(token)
+        |> get("/api/stores/entriesorg/mystore/entries/batch")
+
+      assert json_response(resp, 404) == %{"error" => "not_found"}
+    end
+  end
+
   describe "GET /api/stores/:org/:store/entries/*path" do
     test "returns 200 with path, value, type, and integer revision for a leaf entry", %{
       conn: conn,

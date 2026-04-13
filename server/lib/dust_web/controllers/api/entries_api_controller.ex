@@ -69,6 +69,57 @@ defmodule DustWeb.Api.EntriesApiController do
     end
   end
 
+  def batch(conn, %{"org" => org_slug, "store" => store_name} = params) do
+    organization = conn.assigns.organization
+    store_token = conn.assigns.store_token
+
+    with {:ok, paths} <- parse_batch_paths(params),
+         :ok <- verify_org(organization, org_slug),
+         {:ok, store} <- find_store(organization, store_name),
+         :ok <- verify_token_scope(store_token, store),
+         :ok <- verify_read_permission(store_token) do
+      %{entries: entries, missing: missing} = Sync.get_many_entries(store.id, paths)
+
+      json(conn, %{
+        "entries" => render_batch_entries(entries),
+        "missing" => missing
+      })
+    else
+      {:error, :org_mismatch} ->
+        conn |> put_status(404) |> json(%{"error" => "not_found"})
+
+      {:error, :not_found} ->
+        conn |> put_status(404) |> json(%{"error" => "not_found"})
+
+      {:error, :forbidden} ->
+        conn |> put_status(403) |> json(%{"error" => "forbidden"})
+
+      {:error, {:invalid_params, detail}} ->
+        conn |> put_status(400) |> json(%{"error" => "invalid_params", "detail" => detail})
+    end
+  end
+
+  defp parse_batch_paths(%{"paths" => paths}) when is_list(paths) do
+    cond do
+      length(paths) > 1000 ->
+        {:error, {:invalid_params, "maximum 1000 paths per batch"}}
+
+      not Enum.all?(paths, &is_binary/1) ->
+        {:error, {:invalid_params, "paths must be strings"}}
+
+      true ->
+        {:ok, paths}
+    end
+  end
+
+  defp parse_batch_paths(_), do: {:error, {:invalid_params, "paths required"}}
+
+  defp render_batch_entries(entries) do
+    Map.new(entries, fn {path, %{value: v, type: t, seq: s}} ->
+      {path, %{"value" => v, "type" => t, "revision" => s}}
+    end)
+  end
+
   defp validate_mutually_exclusive(params) do
     cond do
       Map.has_key?(params, "pattern") and
