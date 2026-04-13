@@ -164,6 +164,56 @@ defmodule Dust.MCP.SessionsTest do
                  client_redirect_uri: "http://localhost:33418/cb"
                })
     end
+
+    test "does not revive invalidated session through CAS UPDATE", %{
+      session: session,
+      verifier: verifier
+    } do
+      {:ok, invalidated} = Sessions.invalidate(session)
+      assert invalidated.invalidated_at
+
+      assert {:error, :invalid_grant} =
+               Sessions.exchange_code(session.session_id, %{
+                 code_verifier: verifier,
+                 client_id: "client_test",
+                 client_redirect_uri: "http://localhost:33418/cb"
+               })
+
+      # The row must still be dead: no token minted, invalidation intact.
+      reloaded = Dust.Repo.get!(Dust.MCP.Session, session.id)
+      assert is_nil(reloaded.access_token_hash)
+      assert reloaded.invalidated_at
+    end
+
+    test "CAS UPDATE rejects session that expired between SELECT and UPDATE", %{
+      session: session,
+      verifier: verifier
+    } do
+      # Mutate the in-memory session so exchange_code's SELECT passes
+      # (it uses the session_id, not the struct) but force expiry on the row
+      # so the CAS UPDATE's `expires_at > now` guard catches it. We simulate
+      # this by updating the DB row to an expired time after create but the
+      # exchange_code SELECT will also see it — so to exercise the CAS guard
+      # specifically we patch just before the UPDATE would run. Since we can't
+      # easily inject between SELECT and UPDATE from here, we assert end-state:
+      # expired rows are rejected with invalid_grant regardless of path.
+      past = DateTime.add(DateTime.utc_now(), -1, :second)
+
+      {:ok, _} =
+        session
+        |> Ecto.Changeset.change(expires_at: past)
+        |> Dust.Repo.update()
+
+      assert {:error, :invalid_grant} =
+               Sessions.exchange_code(session.session_id, %{
+                 code_verifier: verifier,
+                 client_id: "client_test",
+                 client_redirect_uri: "http://localhost:33418/cb"
+               })
+
+      reloaded = Dust.Repo.get!(Dust.MCP.Session, session.id)
+      assert is_nil(reloaded.access_token_hash)
+    end
   end
 
   describe "find_by_session_id/1" do

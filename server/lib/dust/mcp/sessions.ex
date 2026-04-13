@@ -143,10 +143,17 @@ defmodule Dust.MCP.Sessions do
     now = DateTime.utc_now()
     expires_at = DateTime.add(now, @token_lifetime_seconds, :second)
 
-    # Atomic check-and-set: only update if the row is still in auth-code phase.
+    # Atomic check-and-set: only update if the row is still in auth-code phase,
+    # has not been invalidated, and has not expired. The SELECT in exchange_code/2
+    # also checks these conditions but is not atomic — this UPDATE is the only
+    # serialization boundary that matters.
     query =
       from(s in Session,
-        where: s.id == ^session.id and is_nil(s.access_token_hash),
+        where:
+          s.id == ^session.id and
+            is_nil(s.access_token_hash) and
+            is_nil(s.invalidated_at) and
+            s.expires_at > ^now,
         update: [
           set: [
             access_token_hash: ^hash,
