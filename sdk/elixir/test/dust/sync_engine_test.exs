@@ -553,6 +553,32 @@ defmodule Dust.SyncEngineTest do
       assert Enum.find_index(paths, &(&1 == "items.2")) <
                Enum.find_index(paths, &(&1 == "items.3"))
     end
+
+    test "bootstrap that exceeds max_queue_size unregisters and fires on_resync" do
+      store = "test/store"
+      for i <- 1..50, do: Dust.SyncEngine.seed_entry(store, "k.#{i}", i, "integer")
+
+      test_pid = self()
+      # Callback blocks forever so the worker can't drain its mailbox
+      callback = fn _event ->
+        receive do
+          :continue -> :ok
+        end
+      end
+
+      on_resync = fn reason -> send(test_pid, {:resync, reason}) end
+
+      ref =
+        Dust.SyncEngine.on(store, "k.**", callback,
+          include_current: true,
+          limit: 50,
+          max_queue_size: 5,
+          on_resync: on_resync
+        )
+
+      # Expect the subscription to drop and resync to fire during bootstrap
+      assert_receive {:resync, %{error: :resync_required, ref: ^ref}}, 1_000
+    end
   end
 
   defp drain_events(timeout_ms) do
