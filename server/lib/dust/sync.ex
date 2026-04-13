@@ -168,6 +168,186 @@ defmodule Dust.Sync do
     end) || []
   end
 
+  @enum_default_limit 50
+  @enum_max_limit 1000
+
+  @doc """
+  Paginated enum over a store's entries. Mirrors `Dust.enum/3` in the SDK
+  but reads from the authoritative server storage.
+
+  Returns `{:ok, %{items: items, next_cursor: cursor | nil}}`.
+
+  Options:
+    * `:limit`  — clamped to 1..1000 (default 50)
+    * `:order`  — `:asc` (default) or `:desc`
+    * `:select` — `:entries` (default), `:keys`, or `:prefixes`
+    * `:after`  — opaque cursor (path string)
+  """
+  def enum_entries(store_id, pattern, opts \\ []) when is_binary(pattern) do
+    limit = opts |> Keyword.get(:limit, @enum_default_limit) |> clamp_limit()
+    order = Keyword.get(opts, :order, :asc)
+    select = Keyword.get(opts, :select, :entries)
+    cursor = Keyword.get(opts, :after)
+
+    with :ok <- validate_select_pattern(select, pattern) do
+      rows = fetch_entries_for_enum(store_id, pattern, order, cursor, limit)
+
+      matched =
+        Enum.filter(rows, fn [path, _json, _type, _seq] ->
+          Dust.MCP.Tools.DustEnum.glob_match?(path, pattern)
+        end)
+
+      {page_rows, next_cursor} = take_with_cursor(matched, limit)
+      items = project_rows(page_rows, select, pattern, order)
+
+      {:ok, %{items: items, next_cursor: next_cursor}}
+    end
+  end
+
+  defp clamp_limit(n) when is_integer(n) and n < 1, do: 1
+  defp clamp_limit(n) when is_integer(n) and n > @enum_max_limit, do: @enum_max_limit
+  defp clamp_limit(n) when is_integer(n), do: n
+  defp clamp_limit(_), do: @enum_default_limit
+
+  defp validate_select_pattern(:prefixes, "**"), do: :ok
+
+  defp validate_select_pattern(:prefixes, pattern) when is_binary(pattern) do
+    if String.ends_with?(pattern, ".**"),
+      do: :ok,
+      else: {:error, :invalid_pattern_for_prefixes}
+  end
+
+  defp validate_select_pattern(_select, _pattern), do: :ok
+
+  # Fetch `limit + 1` raw rows from store_entries using a keyset query
+  # filtered by the pattern's literal prefix (if any).
+  defp fetch_entries_for_enum(store_id, pattern, order, cursor, limit) do
+    literal = literal_prefix_of_pattern(pattern)
+    fetch_limit = limit + 1
+
+    {where_parts, params} = {[], []}
+
+    {where_parts, params} =
+      case cursor do
+        nil ->
+          {where_parts, params}
+
+        c when is_binary(c) ->
+          op = if order == :asc, do: ">", else: "<"
+          {["path #{op} ?" | where_parts], [c | params]}
+      end
+
+    {where_parts, params} =
+      case literal do
+        "" -> {where_parts, params}
+        prefix -> {["path LIKE ?" | where_parts], ["#{prefix}%" | params]}
+      end
+
+    # where_parts and params were both prepended (reverse chronological order).
+    # Reverse both so the i-th clause binds to the i-th param.
+    ordered_where = Enum.reverse(where_parts)
+    ordered_params = Enum.reverse(params)
+
+    where_sql =
+      case ordered_where do
+        [] -> ""
+        parts -> "WHERE " <> Enum.join(parts, " AND ")
+      end
+
+    order_sql = if order == :asc, do: "ASC", else: "DESC"
+
+    sql =
+      "SELECT path, value, type, seq FROM store_entries #{where_sql} " <>
+        "ORDER BY path #{order_sql} LIMIT ?"
+
+    params = ordered_params ++ [fetch_limit]
+
+    with_read_conn(store_id, fn conn ->
+      query_all(conn, sql, params)
+    end) || []
+  end
+
+  # Return the literal prefix of a glob pattern — everything before the first
+  # segment containing `*` or `**`. Includes the trailing dot if non-empty.
+  defp literal_prefix_of_pattern(pattern) do
+    segments = String.split(pattern, ".")
+
+    literal =
+      Enum.take_while(segments, fn seg ->
+        seg != "*" and seg != "**" and not String.contains?(seg, "*")
+      end)
+
+    case literal do
+      [] -> ""
+      segs -> Enum.join(segs, ".") <> "."
+    end
+  end
+
+  defp take_with_cursor(rows, limit) do
+    case Enum.split(rows, limit) do
+      {page, []} ->
+        {page, nil}
+
+      {page, [_next | _]} ->
+        [_path, _json, _type, _seq] = last_row = List.last(page)
+        cursor = hd(last_row)
+        {page, cursor}
+    end
+  end
+
+  defp project_rows(rows, :entries, _pattern, _order) do
+    Enum.map(rows, fn [path, json, type, seq] ->
+      value = json |> Jason.decode!() |> ValueCodec.unwrap()
+      %{path: path, value: value, type: type, revision: seq}
+    end)
+  end
+
+  defp project_rows(rows, :keys, _pattern, _order) do
+    Enum.map(rows, fn [path, _json, _type, _seq] -> path end)
+  end
+
+  defp project_rows(rows, :prefixes, pattern, order) do
+    literal = prefixes_literal(pattern)
+
+    rows
+    |> Enum.map(fn [path, _json, _type, _seq] -> extract_prefix(path, literal) end)
+    |> Enum.reject(&is_nil/1)
+    |> dedupe_and_sort(order)
+  end
+
+  defp prefixes_literal("**"), do: ""
+
+  defp prefixes_literal(pattern) do
+    # Pattern ends in ".**"; strip it, keep the literal segment + trailing dot.
+    String.replace_suffix(pattern, "**", "")
+  end
+
+  # literal is either "" or ends with "."
+  defp extract_prefix(path, "") do
+    case String.split(path, ".", parts: 2) do
+      [head | _] -> head
+      _ -> nil
+    end
+  end
+
+  defp extract_prefix(path, literal) do
+    if String.starts_with?(path, literal) do
+      rest = binary_part(path, byte_size(literal), byte_size(path) - byte_size(literal))
+
+      case String.split(rest, ".", parts: 2) do
+        [head | _] when head != "" -> literal <> head
+        _ -> nil
+      end
+    else
+      nil
+    end
+  end
+
+  defp dedupe_and_sort(list, order) do
+    sorted = list |> Enum.uniq() |> Enum.sort()
+    if order == :desc, do: Enum.reverse(sorted), else: sorted
+  end
+
   def get_ops_page(store_id, opts \\ []) do
     limit = Keyword.get(opts, :limit, 50)
     offset = Keyword.get(opts, :offset, 0)
