@@ -50,6 +50,10 @@ defmodule Dust.SyncEngine do
     GenServer.call(via(store), {:enum_paged, pattern, opts})
   end
 
+  def range(store, from, to, opts \\ []) when is_binary(from) and is_binary(to) do
+    GenServer.call(via(store), {:range, from, to, opts})
+  end
+
   def entry(store, path) do
     GenServer.call(via(store), {:entry, path})
   end
@@ -372,6 +376,32 @@ defmodule Dust.SyncEngine do
       {:reply, page, state}
     else
       {:error, _} = err -> {:reply, err, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:range, from, to, opts}, _from, state) do
+    case Keyword.get(opts, :select, :entries) do
+      :prefixes ->
+        {:reply, {:error, :unsupported_select}, state}
+
+      select when select in [:entries, :keys] ->
+        limit = opts |> Keyword.get(:limit, 50) |> min(1000)
+        order = Keyword.get(opts, :order, :asc)
+        cursor = Keyword.get(opts, :after)
+
+        browse_opts = [
+          from: from,
+          to: to,
+          limit: limit,
+          order: order,
+          select: select,
+          cursor: cursor
+        ]
+
+        {items, next_cursor} = state.cache.browse(state.cache_target, state.store, browse_opts)
+        page = Dust.Page.new(items: wrap_items(items, select), next_cursor: next_cursor)
+        {:reply, page, state}
     end
   end
 

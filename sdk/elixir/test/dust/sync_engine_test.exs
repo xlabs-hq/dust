@@ -96,6 +96,37 @@ defmodule Dust.SyncEngineTest do
              {:error, :invalid_pattern_for_prefixes}
   end
 
+  # range/4 tests
+
+  test "range/4 returns a Page with entries in [from, to)" do
+    for k <- ~w(a b c d e), do: SyncEngine.seed_entry("test/store", k, k, "string")
+
+    assert %Dust.Page{items: items, next_cursor: nil} =
+             SyncEngine.range("test/store", "a", "d", limit: 10)
+
+    paths = Enum.map(items, & &1.path)
+    assert paths == ~w(a b c)
+  end
+
+  test "range/4 with select: :keys returns path strings" do
+    for k <- ~w(a b c), do: SyncEngine.seed_entry("test/store", k, k, "string")
+
+    assert %Dust.Page{items: ~w(a b c)} =
+             SyncEngine.range("test/store", "a", "z", select: :keys)
+  end
+
+  test "range/4 rejects select: :prefixes" do
+    assert SyncEngine.range("test/store", "a", "z", select: :prefixes) ==
+             {:error, :unsupported_select}
+  end
+
+  test "range/4 with from >= to returns an empty page" do
+    :ok = SyncEngine.seed_entry("test/store", "x", "x", "string")
+
+    assert %Dust.Page{items: [], next_cursor: nil} =
+             SyncEngine.range("test/store", "z", "a")
+  end
+
   test "enum/3 honors :limit option" do
     :ok = SyncEngine.put("test/store", "items.a", "1")
     :ok = SyncEngine.put("test/store", "items.b", "2")

@@ -40,4 +40,11 @@ defmodule DustTest do
     assert length(results) == 2
     assert Enum.all?(results, &match?({_path, _value}, &1))
   end
+
+  test "Dust.range/4 delegates to SyncEngine" do
+    :ok = Dust.SyncEngine.seed_entry("test/store", "a", 1, "integer")
+
+    assert %Dust.Page{items: [%Dust.Entry{path: "a"}]} =
+             Dust.range("test/store", "a", "z", limit: 10)
+  end
 end

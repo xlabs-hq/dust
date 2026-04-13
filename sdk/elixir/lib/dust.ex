@@ -28,5 +28,6 @@ defmodule Dust do
   defdelegate on(store, pattern, callback, opts \\ []), to: Dust.SyncEngine
   defdelegate enum(store, pattern), to: Dust.SyncEngine
   defdelegate enum(store, pattern, opts), to: Dust.SyncEngine
+  defdelegate range(store, from, to, opts \\ []), to: Dust.SyncEngine
   defdelegate status(store), to: Dust.SyncEngine
 end
