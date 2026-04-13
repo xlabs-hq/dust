@@ -179,6 +179,56 @@ module Dust
         end
       end
 
+      # dust get-many <store> <path>...
+      def self.get_many(config : Config, args : Array(String))
+        Output.require_auth!(config)
+        Output.require_args!(args, 1, "dust get-many <store> <path> [<path>...]")
+
+        store_name = args[0]
+        paths = args[1..]
+
+        if paths.empty?
+          Output.json({
+            "entries" => {} of String => JSON::Any,
+            "missing" => [] of String,
+          })
+          return
+        end
+
+        if paths.size > 1000
+          Output.error("maximum 1000 paths per call")
+          return
+        end
+
+        conn = Connection.new(config)
+        cache = Cache.new
+        last_seq = cache.last_seq(store_name)
+
+        conn.on_event do |topic, payload|
+          handle_event(cache, store_name, payload)
+        end
+
+        begin
+          conn.connect_sync
+          channel = conn.join(store_name, last_seq)
+
+          # Wait for catch-up events to drain into cache
+          sleep 0.2.seconds
+
+          result = cache.read_many(store_name, paths)
+          found = result.transform_values { |v| v[:value] }
+          missing = paths.uniq - found.keys
+
+          Output.json({
+            "entries" => found,
+            "missing" => missing,
+          })
+        ensure
+          conn.close
+          cache.close
+        end
+      end
+
       # dust range <store> <from> <to> [--limit N] [--after C] [--order asc|desc] [--select entries|keys]
       def self.range(config : Config, args : Array(String))
         Output.require_auth!(config)

@@ -29,6 +29,7 @@ module Dust
         when "status"     then Commands::Store.status(config, rest)
         when "put"        then Commands::Data.put(config, rest)
         when "get"        then Commands::Data.get(config, rest)
+        when "get-many"   then Commands::Data.get_many(config, rest)
         when "merge"      then Commands::Data.merge(config, rest)
         when "delete"     then Commands::Data.delete(config, rest)
         when "enum"       then Commands::Data.enum(config, rest)
@@ -72,6 +73,7 @@ module Dust
 
         put <store> <path> <json>     Set a value
         get <store> <path>            Read a value
+        get-many <store> <path>...    Batch-read paths ({entries, missing} envelope)
         merge <store> <path> <json>   Merge keys
         delete <store> <path>         Delete a path
         enum <store> <pattern> [--limit N --after C --order asc|desc --select entries|keys|prefixes]
