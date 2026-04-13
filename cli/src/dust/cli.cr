@@ -89,7 +89,9 @@ module Dust
         put-file <store> <path> <file> Upload file
         fetch-file <store> <path> <dest> Download file
 
-        watch <store> <pattern>       Stream changes
+        watch <store> <pattern> [--op T] [--include-current] [--limit N] [--order asc|desc]
+                                  Stream changes; --include-current emits cached
+                                  entries as {"op":"present",...} before live events
         log <store> [options]         Audit log
         rollback <store> [options]    Rollback
 
