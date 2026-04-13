@@ -182,4 +182,66 @@ describe Dust::Cache do
       end
     end
   end
+
+  describe "#browse with from/to range" do
+    it "returns entries in [from, to)" do
+      cache = Dust::Cache.new(":memory:")
+      %w(a b c d e).each_with_index do |p, i|
+        cache.write("store", p, JSON::Any.new(p), "string", (i + 1).to_i64)
+      end
+
+      items, _ = cache.browse("store", from: "b", to: "d", limit: 10)
+      items.map { |r| r.as(NamedTuple(path: String, value: JSON::Any, type: String, seq: Int64))[:path] }.should eq ["b", "c"]
+    end
+
+    it "from is inclusive, to is exclusive" do
+      cache = Dust::Cache.new(":memory:")
+      %w(a b c).each_with_index do |p, i|
+        cache.write("store", p, JSON::Any.new(p), "string", (i + 1).to_i64)
+      end
+
+      items, _ = cache.browse("store", from: "a", to: "c", limit: 10)
+      items.map { |r| r.as(NamedTuple(path: String, value: JSON::Any, type: String, seq: Int64))[:path] }.should eq ["a", "b"]
+    end
+
+    it "from >= to returns empty" do
+      cache = Dust::Cache.new(":memory:")
+      cache.write("store", "x", JSON::Any.new("x"), "string", 1_i64)
+      items, cursor = cache.browse("store", from: "z", to: "a", limit: 10)
+      items.should be_empty
+      cursor.should be_nil
+    end
+
+    it "range with limit + cursor paginates" do
+      cache = Dust::Cache.new(":memory:")
+      %w(a b c d e).each_with_index do |p, i|
+        cache.write("store", p, JSON::Any.new(p), "string", (i + 1).to_i64)
+      end
+
+      items, cursor = cache.browse("store", from: "a", to: "z", limit: 2)
+      items.map { |r| r.as(NamedTuple(path: String, value: JSON::Any, type: String, seq: Int64))[:path] }.should eq ["a", "b"]
+      cursor.should eq "b"
+
+      items2, cursor2 = cache.browse("store", from: "a", to: "z", limit: 2, after: cursor)
+      items2.map { |r| r.as(NamedTuple(path: String, value: JSON::Any, type: String, seq: Int64))[:path] }.should eq ["c", "d"]
+      cursor2.should eq "d"
+    end
+
+    it "range with order :desc" do
+      cache = Dust::Cache.new(":memory:")
+      %w(a b c d).each_with_index do |p, i|
+        cache.write("store", p, JSON::Any.new(p), "string", (i + 1).to_i64)
+      end
+
+      items, _ = cache.browse("store", from: "a", to: "d", limit: 10, order: "desc")
+      items.map { |r| r.as(NamedTuple(path: String, value: JSON::Any, type: String, seq: Int64))[:path] }.should eq ["c", "b", "a"]
+    end
+
+    it "range rejects select_as: prefixes" do
+      cache = Dust::Cache.new(":memory:")
+      expect_raises(ArgumentError) do
+        cache.browse("store", from: "a", to: "z", select_as: "prefixes")
+      end
+    end
+  end
 end

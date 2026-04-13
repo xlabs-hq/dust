@@ -104,8 +104,28 @@ module Dust
       limit : Int32 = 50,
       after : String? = nil,
       order : String = "asc",
-      select_as : String = "entries"
+      select_as : String = "entries",
+      from : String? = nil,
+      to : String? = nil
     ) : BrowseResult
+      if from && to
+        if select_as == "prefixes"
+          raise ArgumentError.new("select_as: prefixes not supported for from/to range queries")
+        end
+
+        rows = fetch_range_rows(store, from, to, after, order, limit + 1)
+        page = rows.first(limit)
+        next_cursor =
+          if rows.size > limit && !page.empty?
+            page.last[:path]
+          else
+            nil
+          end
+
+        projected = project_page(page, select_as, pattern)
+        return {projected, next_cursor}
+      end
+
       validate_select_pattern!(select_as, pattern)
 
       literal_prefix = literal_prefix_of(pattern)
@@ -163,6 +183,41 @@ module Dust
 
       if after
         where_clauses << (order == "asc" ? "path > ?" : "path < ?")
+        args << after
+      end
+
+      where_clauses << "path != '_dust:last_seq'"
+
+      direction = order == "desc" ? "DESC" : "ASC"
+      sql = "SELECT path, value, type, seq FROM dust_cache WHERE #{where_clauses.join(" AND ")} ORDER BY path #{direction} LIMIT ?"
+      args << limit
+
+      rows = [] of BrowseEntry
+      @db.query(sql, args: args) do |rs|
+        rs.each do
+          path = rs.read(String)
+          value = JSON.parse(rs.read(String))
+          type_str = rs.read(String)
+          seq = rs.read(Int64)
+          rows << {path: path, value: value, type: type_str, seq: seq}
+        end
+      end
+      rows
+    end
+
+    private def fetch_range_rows(
+      store : String,
+      from : String,
+      to : String,
+      after : String?,
+      order : String,
+      limit : Int32
+    ) : Array(BrowseEntry)
+      where_clauses = ["store = ?", "path >= ?", "path < ?"]
+      args = [store, from, to] of DB::Any
+
+      if after
+        where_clauses << (order == "desc" ? "path < ?" : "path > ?")
         args << after
       end
 
