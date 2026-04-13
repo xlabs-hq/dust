@@ -1,5 +1,6 @@
 require "../spec_helper"
 require "../../src/dust/cache/sqlite"
+require "../../src/dust/glob"
 
 describe Dust::Cache do
   it "round-trips a string value" do
@@ -97,6 +98,88 @@ describe Dust::Cache do
 
       result = cache.read_many("store", ["a", "a", "a"])
       result.size.should eq 1
+    end
+  end
+
+  describe "#browse" do
+    it "returns entries matching pattern with default order asc and limit 50" do
+      cache = Dust::Cache.new(":memory:")
+      %w(a.1 a.2 a.3 b.1).each_with_index do |p, i|
+        cache.write("store", p, JSON::Any.new(p), "string", (i + 1).to_i64)
+      end
+
+      items, cursor = cache.browse("store", pattern: "a.*", limit: 50)
+      items.size.should eq 3
+      items.map { |row| row.as(NamedTuple(path: String, value: JSON::Any, type: String, seq: Int64))[:path] }.should eq ["a.1", "a.2", "a.3"]
+      cursor.should be_nil
+    end
+
+    it "honors limit and returns next_cursor" do
+      cache = Dust::Cache.new(":memory:")
+      %w(a b c d e).each_with_index do |p, i|
+        cache.write("store", p, JSON::Any.new(p), "string", (i + 1).to_i64)
+      end
+
+      items, cursor = cache.browse("store", pattern: "**", limit: 2)
+      items.map { |r| r.as(NamedTuple(path: String, value: JSON::Any, type: String, seq: Int64))[:path] }.should eq ["a", "b"]
+      cursor.should eq "b"
+    end
+
+    it "resumes from cursor" do
+      cache = Dust::Cache.new(":memory:")
+      %w(a b c d e).each_with_index do |p, i|
+        cache.write("store", p, JSON::Any.new(p), "string", (i + 1).to_i64)
+      end
+
+      items, _ = cache.browse("store", pattern: "**", limit: 2, after: "b")
+      items.map { |r| r.as(NamedTuple(path: String, value: JSON::Any, type: String, seq: Int64))[:path] }.should eq ["c", "d"]
+    end
+
+    it "supports order: desc" do
+      cache = Dust::Cache.new(":memory:")
+      %w(a b c).each_with_index do |p, i|
+        cache.write("store", p, JSON::Any.new(p), "string", (i + 1).to_i64)
+      end
+
+      items, _ = cache.browse("store", pattern: "**", limit: 10, order: "desc")
+      items.map { |r| r.as(NamedTuple(path: String, value: JSON::Any, type: String, seq: Int64))[:path] }.should eq ["c", "b", "a"]
+    end
+
+    it "supports select: keys" do
+      cache = Dust::Cache.new(":memory:")
+      cache.write("store", "a", JSON::Any.new("x"), "string", 1_i64)
+      cache.write("store", "b", JSON::Any.new("y"), "string", 2_i64)
+
+      items, _ = cache.browse("store", pattern: "**", limit: 10, select_as: "keys")
+      items.should eq ["a", "b"]
+    end
+
+    it "supports select: prefixes for ** pattern" do
+      cache = Dust::Cache.new(":memory:")
+      %w(users.alice.name users.bob.name posts.hi).each_with_index do |p, i|
+        cache.write("store", p, JSON::Any.new(p), "string", (i + 1).to_i64)
+      end
+
+      items, _ = cache.browse("store", pattern: "**", limit: 10, select_as: "prefixes")
+      items.should eq ["posts", "users"]
+    end
+
+    it "supports select: prefixes for users.** pattern" do
+      cache = Dust::Cache.new(":memory:")
+      %w(users.alice.name users.alice.email users.bob.name).each_with_index do |p, i|
+        cache.write("store", p, JSON::Any.new(p), "string", (i + 1).to_i64)
+      end
+
+      items, _ = cache.browse("store", pattern: "users.**", limit: 10, select_as: "prefixes")
+      items.should eq ["users.alice", "users.bob"]
+    end
+
+    it "rejects select: prefixes with invalid pattern" do
+      cache = Dust::Cache.new(":memory:")
+
+      expect_raises(ArgumentError, /prefixes/) do
+        cache.browse("store", pattern: "a.*.b", limit: 10, select_as: "prefixes")
+      end
     end
   end
 end
