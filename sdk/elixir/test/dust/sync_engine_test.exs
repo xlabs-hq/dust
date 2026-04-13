@@ -33,6 +33,19 @@ defmodule Dust.SyncEngineTest do
     assert {:ok, "en"} = SyncEngine.get("test/store", "settings.locale")
   end
 
+  test "entry/2 returns {:ok, %Dust.Entry{}} for present leaf" do
+    :ok = SyncEngine.seed_entry("test/store", "a.b", "hello", "string")
+
+    assert {:ok, %Dust.Entry{path: "a.b", value: "hello", type: "string", revision: rev}} =
+             SyncEngine.entry("test/store", "a.b")
+
+    assert is_integer(rev)
+  end
+
+  test "entry/2 returns {:error, :not_found} for missing path" do
+    assert SyncEngine.entry("test/store", "nope") == {:error, :not_found}
+  end
+
   test "enum returns matching entries" do
     SyncEngine.put("test/store", "posts.a", "1")
     SyncEngine.put("test/store", "posts.b", "2")

@@ -46,6 +46,10 @@ defmodule Dust.SyncEngine do
     GenServer.call(via(store), {:enum, pattern})
   end
 
+  def entry(store, path) do
+    GenServer.call(via(store), {:entry, path})
+  end
+
   def status(store) do
     GenServer.call(via(store), :status)
   end
@@ -341,6 +345,20 @@ defmodule Dust.SyncEngine do
   def handle_call({:enum, pattern}, _from, state) do
     results = state.cache.read_all(state.cache_target, state.store, pattern)
     {:reply, results, state}
+  end
+
+  @impl true
+  def handle_call({:entry, path}, _from, state) do
+    reply =
+      case state.cache.read_entry(state.cache_target, state.store, path) do
+        {:ok, {value, type, seq}} ->
+          {:ok, Dust.Entry.new(path: path, value: value, type: type, revision: seq)}
+
+        :miss ->
+          {:error, :not_found}
+      end
+
+    {:reply, reply, state}
   end
 
   @impl true
