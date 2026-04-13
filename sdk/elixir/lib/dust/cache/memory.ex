@@ -171,8 +171,45 @@ defmodule Dust.Cache.Memory do
   defp project_page(page, :keys, _pattern), do: Enum.map(page, fn {p, _, _, _} -> p end)
   defp project_page(page, :prefixes, pattern), do: prefixes_of(page, pattern)
 
-  # prefixes_of/2 is added in Task 10.
-  defp prefixes_of(_page, _pattern), do: raise("not implemented")
+  defp prefixes_of(page, pattern) do
+    literal_prefix = literal_prefix_of(pattern)
+
+    page
+    |> Enum.map(fn {p, _, _, _} -> extract_prefix(p, literal_prefix) end)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
+  defp literal_prefix_of("**"), do: ""
+
+  defp literal_prefix_of(pattern) do
+    case String.split(pattern, ".**", parts: 2) do
+      [prefix, ""] ->
+        prefix
+
+      _ ->
+        raise ArgumentError,
+              "select: :prefixes requires pattern ending in .** or ** (got #{inspect(pattern)})"
+    end
+  end
+
+  defp extract_prefix(path, "") do
+    case String.split(path, ".", parts: 2) do
+      [seg | _] -> seg
+      [] -> nil
+    end
+  end
+
+  defp extract_prefix(path, literal) do
+    prefix_with_dot = literal <> "."
+
+    if String.starts_with?(path, prefix_with_dot) do
+      rest = String.replace_prefix(path, prefix_with_dot, "")
+      [next_seg | _] = String.split(rest, ".", parts: 2)
+      literal <> "." <> next_seg
+    end
+  end
 
   defp sort_direction(:asc), do: :asc
   defp sort_direction(:desc), do: :desc

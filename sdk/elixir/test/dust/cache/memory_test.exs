@@ -84,4 +84,21 @@ defmodule Dust.Cache.MemoryTest do
     {items, _} = Memory.browse(cache, "s", limit: 10)
     assert items == [{"a", "va", "string", 1}, {"b", "vb", "string", 2}]
   end
+
+  test "browse with select: :prefixes and pattern ** returns top-level segments", %{cache: cache} do
+    for p <- ~w(users.alice.name users.bob.name posts.hi),
+        do: :ok = Memory.write(cache, "s", p, 1, "integer", 1)
+
+    {items, _} = Memory.browse(cache, "s", pattern: "**", select: :prefixes, limit: 10)
+    assert items == ~w(posts users)
+  end
+
+  test "browse with select: :prefixes and pattern 'users.**' returns next-segment prefixes",
+       %{cache: cache} do
+    for p <- ~w(users.alice.name users.alice.email users.bob.name),
+        do: :ok = Memory.write(cache, "s", p, 1, "integer", 1)
+
+    {items, _} = Memory.browse(cache, "s", pattern: "users.**", select: :prefixes, limit: 10)
+    assert items == ~w(users.alice users.bob)
+  end
 end
