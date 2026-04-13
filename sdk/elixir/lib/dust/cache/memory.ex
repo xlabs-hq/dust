@@ -136,6 +136,7 @@ defmodule Dust.Cache.Memory do
     pattern = Keyword.get(opts, :pattern, "**")
     cursor = Keyword.get(opts, :cursor)
     limit = Keyword.get(opts, :limit, 50)
+    order = Keyword.get(opts, :order, :asc)
 
     compiled = Dust.Protocol.Glob.compile(pattern)
 
@@ -145,15 +146,9 @@ defmodule Dust.Cache.Memory do
         s == store and Dust.Protocol.Glob.match?(compiled, String.split(path, "."))
       end)
       |> Enum.map(fn {{_s, path}, {value, type, seq}} -> {path, value, type, seq} end)
-      |> Enum.sort_by(fn {path, _, _, _} -> path end)
+      |> Enum.sort_by(fn {path, _, _, _} -> path end, sort_direction(order))
 
-    # Apply cursor (keyset: path > cursor)
-    entries =
-      if cursor do
-        Enum.drop_while(entries, fn {path, _, _, _} -> path <= cursor end)
-      else
-        entries
-      end
+    entries = apply_cursor(entries, cursor, order)
 
     # Apply limit
     page = Enum.take(entries, limit)
@@ -168,4 +163,15 @@ defmodule Dust.Cache.Memory do
 
     {:reply, {page, next_cursor}, state}
   end
+
+  defp sort_direction(:asc), do: :asc
+  defp sort_direction(:desc), do: :desc
+
+  defp apply_cursor(entries, nil, _order), do: entries
+
+  defp apply_cursor(entries, cursor, :asc),
+    do: Enum.drop_while(entries, fn {p, _, _, _} -> p <= cursor end)
+
+  defp apply_cursor(entries, cursor, :desc),
+    do: Enum.drop_while(entries, fn {p, _, _, _} -> p >= cursor end)
 end

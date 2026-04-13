@@ -53,4 +53,19 @@ defmodule Dust.Cache.MemoryTest do
   test "read_entry/3 returns :miss for absent keys", %{cache: cache} do
     assert Memory.read_entry(cache, "s1", "nope") == :miss
   end
+
+  test "browse with order: :desc returns entries in reverse lex order", %{cache: cache} do
+    for k <- ~w(a b c d), do: :ok = Memory.write(cache, "s", k, k, "string", 1)
+
+    {page, _} = Memory.browse(cache, "s", limit: 10, order: :desc)
+    assert Enum.map(page, fn {p, _, _, _} -> p end) == ~w(d c b a)
+  end
+
+  test "browse with order: :desc and cursor drops entries >= cursor", %{cache: cache} do
+    for k <- ~w(a b c d), do: :ok = Memory.write(cache, "s", k, k, "string", 1)
+
+    {page, _} = Memory.browse(cache, "s", limit: 10, order: :desc, cursor: "c")
+    # desc + cursor "c" means next items are strictly less than "c"
+    assert Enum.map(page, fn {p, _, _, _} -> p end) == ~w(b a)
+  end
 end
