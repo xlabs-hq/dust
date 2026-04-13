@@ -47,4 +47,11 @@ defmodule DustTest do
     assert %Dust.Page{items: [%Dust.Entry{path: "a"}]} =
              Dust.range("test/store", "a", "z", limit: 10)
   end
+
+  test "Dust.get_many/2 delegates to SyncEngine" do
+    :ok = Dust.SyncEngine.put("test/store", "a", 1)
+    :ok = Dust.SyncEngine.put("test/store", "b", 2)
+
+    assert Dust.get_many("test/store", ["a", "b"]) == %{"a" => 1, "b" => 2}
+  end
 end

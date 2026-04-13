@@ -120,6 +120,25 @@ defmodule Dust.SyncEngineTest do
              {:error, :unsupported_select}
   end
 
+  # get_many/2 tests
+
+  test "get_many/2 returns a map of present values" do
+    :ok = SyncEngine.put("test/store", "a", 1)
+    :ok = SyncEngine.put("test/store", "b", 2)
+
+    assert SyncEngine.get_many("test/store", ["a", "b"]) == %{"a" => 1, "b" => 2}
+  end
+
+  test "get_many/2 omits missing paths" do
+    :ok = SyncEngine.put("test/store", "a", 1)
+
+    assert SyncEngine.get_many("test/store", ["a", "missing"]) == %{"a" => 1}
+  end
+
+  test "get_many/2 with empty list returns empty map" do
+    assert SyncEngine.get_many("test/store", []) == %{}
+  end
+
   test "range/4 with from >= to returns an empty page" do
     :ok = SyncEngine.seed_entry("test/store", "x", "x", "string")
 

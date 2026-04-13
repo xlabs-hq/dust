@@ -14,6 +14,10 @@ defmodule Dust.SyncEngine do
     GenServer.call(via(store), {:get, path})
   end
 
+  def get_many(store, paths) when is_list(paths) do
+    GenServer.call(via(store), {:get_many, paths})
+  end
+
   def put(store, path, value) do
     GenServer.call(via(store), {:put, path, value})
   end
@@ -137,13 +141,23 @@ defmodule Dust.SyncEngine do
 
   @impl true
   def handle_call({:get, path}, _from, state) do
-    result = state.cache.read(state.cache_target, state.store, path)
-
     result =
-      case result do
-        {:ok, %{"_type" => "file"} = map} -> {:ok, Dust.FileRef.from_map(map)}
+      case state.cache.read(state.cache_target, state.store, path) do
+        {:ok, value} -> {:ok, unwrap_value(value)}
         other -> other
       end
+
+    {:reply, result, state}
+  end
+
+  @impl true
+  def handle_call({:get_many, paths}, _from, state) do
+    raw = state.cache.read_many(state.cache_target, state.store, paths)
+
+    result =
+      Enum.reduce(raw, %{}, fn {path, {value, _type, _seq}}, acc ->
+        Map.put(acc, path, unwrap_value(value))
+      end)
 
     {:reply, result, state}
   end
@@ -634,6 +648,9 @@ defmodule Dust.SyncEngine do
 
   defp wrap_items(items, :keys), do: items
   defp wrap_items(items, :prefixes), do: items
+
+  defp unwrap_value(%{"_type" => "file"} = map), do: Dust.FileRef.from_map(map)
+  defp unwrap_value(other), do: other
 
   defp detect_type(%Decimal{}), do: "decimal"
   defp detect_type(%DateTime{}), do: "datetime"
