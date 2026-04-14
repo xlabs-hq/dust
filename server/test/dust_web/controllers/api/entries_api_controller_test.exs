@@ -512,4 +512,78 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       assert resp.status == 401
     end
   end
+
+  describe "PUT /api/stores/:org/:store/entries/*path" do
+    test "writes a leaf value without If-Match (LWW)", %{conn: conn, token: token, store: store} do
+      resp =
+        conn
+        |> api_conn(token)
+        |> put_req_header("content-type", "application/json")
+        |> put(
+          "/api/stores/entriesorg/mystore/entries/users.alice.name",
+          ~s("Alice Updated")
+        )
+
+      body = json_response(resp, 200)
+      assert is_integer(body["revision"])
+      assert body["revision"] == body["store_seq"]
+
+      # Verify the value was actually written.
+      assert %{value: "Alice Updated"} = Sync.get_entry(store.id, "users.alice.name")
+    end
+
+    test "writes a leaf value with matching If-Match succeeds", %{
+      conn: conn,
+      token: token,
+      store: store
+    } do
+      seed_entry(store, "cas.counter", 1)
+      %{seq: seq} = Sync.get_entry(store.id, "cas.counter")
+
+      resp =
+        conn
+        |> api_conn(token)
+        |> put_req_header("content-type", "application/json")
+        |> put_req_header("if-match", Integer.to_string(seq))
+        |> put("/api/stores/entriesorg/mystore/entries/cas.counter", "2")
+
+      body = json_response(resp, 200)
+      assert body["revision"] > seq
+
+      assert %{value: 2} = Sync.get_entry(store.id, "cas.counter")
+    end
+
+    test "stale If-Match returns 412 with current_revision", %{
+      conn: conn,
+      token: token,
+      store: store
+    } do
+      seed_entry(store, "cas.counter", 1)
+      %{seq: seq} = Sync.get_entry(store.id, "cas.counter")
+
+      resp =
+        conn
+        |> api_conn(token)
+        |> put_req_header("content-type", "application/json")
+        |> put_req_header("if-match", "999999")
+        |> put("/api/stores/entriesorg/mystore/entries/cas.counter", "2")
+
+      body = json_response(resp, 412)
+      assert body["error"] == "conflict"
+      assert body["current_revision"] == seq
+
+      # Entry is unchanged.
+      assert %{value: 1} = Sync.get_entry(store.id, "cas.counter")
+    end
+
+    test "returns 401 without Bearer token", %{conn: conn} do
+      resp =
+        conn
+        |> put_req_header("accept", "application/json")
+        |> put_req_header("content-type", "application/json")
+        |> put("/api/stores/entriesorg/mystore/entries/cas.counter", "1")
+
+      assert resp.status == 401
+    end
+  end
 end

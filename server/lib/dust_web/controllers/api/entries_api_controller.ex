@@ -69,6 +69,107 @@ defmodule DustWeb.Api.EntriesApiController do
     end
   end
 
+  def put(conn, %{"org" => org_slug, "store" => store_name, "path" => path_segments}) do
+    organization = conn.assigns.organization
+    store_token = conn.assigns.store_token
+    path = Enum.join(List.wrap(path_segments), ".")
+
+    with {:ok, value} <- extract_put_value(conn),
+         :ok <- verify_org(organization, org_slug),
+         {:ok, store} <- find_store(organization, store_name),
+         :ok <- verify_token_scope(store_token, store),
+         :ok <- verify_write_permission(store_token),
+         {:ok, attrs} <- build_put_attrs(conn, path, value, store_token) do
+      case Sync.write(store.id, attrs) do
+        {:ok, op} ->
+          json(conn, %{"revision" => op.store_seq, "store_seq" => op.store_seq})
+
+        {:error, :conflict} ->
+          conn
+          |> put_status(412)
+          |> json(%{
+            "error" => "conflict",
+            "current_revision" => current_revision_for(store, path)
+          })
+
+        {:error, reason} ->
+          conn
+          |> put_status(400)
+          |> json(%{"error" => "invalid_params", "detail" => inspect(reason)})
+      end
+    else
+      {:error, :org_mismatch} ->
+        conn |> put_status(404) |> json(%{"error" => "not_found"})
+
+      {:error, :not_found} ->
+        conn |> put_status(404) |> json(%{"error" => "not_found"})
+
+      {:error, :forbidden} ->
+        conn |> put_status(403) |> json(%{"error" => "forbidden"})
+
+      {:error, {:invalid_params, detail}} ->
+        conn |> put_status(400) |> json(%{"error" => "invalid_params", "detail" => detail})
+
+      {:error, {:invalid_if_match, detail}} ->
+        conn |> put_status(400) |> json(%{"error" => "invalid_params", "detail" => detail})
+    end
+  end
+
+  defp extract_put_value(conn) do
+    case conn.body_params do
+      %Plug.Conn.Unfetched{} ->
+        {:error, {:invalid_params, "request body could not be parsed"}}
+
+      %{"_json" => value} ->
+        {:ok, value}
+
+      map when is_map(map) and map_size(map) == 0 ->
+        {:error, {:invalid_params, "request body is empty"}}
+
+      map when is_map(map) ->
+        {:ok, map}
+    end
+  end
+
+  defp build_put_attrs(conn, path, value, store_token) do
+    base = %{
+      op: :set,
+      path: path,
+      value: value,
+      device_id: "http:" <> to_string(store_token.id),
+      client_op_id: request_op_id(conn)
+    }
+
+    case get_req_header(conn, "if-match") do
+      [] ->
+        {:ok, base}
+
+      [raw | _] ->
+        case Integer.parse(raw) do
+          {n, ""} when n > 0 -> {:ok, Map.put(base, :if_match, n)}
+          _ -> {:error, {:invalid_if_match, "If-Match must be a positive integer"}}
+        end
+    end
+  end
+
+  defp request_op_id(conn) do
+    case get_req_header(conn, "x-request-id") do
+      [id | _] when is_binary(id) and id != "" -> id
+      _ -> Ecto.UUID.generate()
+    end
+  end
+
+  defp current_revision_for(store, path) do
+    case Sync.get_entry(store.id, path) do
+      %{seq: seq} -> seq
+      _ -> nil
+    end
+  end
+
+  defp verify_write_permission(store_token) do
+    if Stores.StoreToken.can_write?(store_token), do: :ok, else: {:error, :forbidden}
+  end
+
   def batch(conn, %{"org" => org_slug, "store" => store_name} = params) do
     organization = conn.assigns.organization
     store_token = conn.assigns.store_token
