@@ -82,6 +82,10 @@ defmodule Dust.Sync.Writer do
     metadata = %{store_id: store_id, op: attrs.op, path: attrs.path}
 
     :telemetry.span([:dust, :write], metadata, fn ->
+      # The inner function returns either the op map (on success) or
+      # `{:error, reason}` on CAS conflict. `sqlite_transaction/2` wraps
+      # the success in `{:ok, _}` and rolls back + propagates the error
+      # unchanged on `{:error, _}`.
       result =
         sqlite_transaction(db, fn ->
           # Get current max store_seq from ops AND snapshots
@@ -94,19 +98,6 @@ defmodule Dust.Sync.Writer do
             insert_and_apply(db, next_seq, attrs, store_id)
           end
         end)
-
-      # The inner function now returns {:ok, op} | {:error, reason} so
-      # that a CAS mismatch can short-circuit the with-chain without
-      # raising. Unwrap the extra layer added by sqlite_transaction/2.
-      # The SQLite transaction still commits on {:error, _} — but the
-      # inner fun short-circuits before any INSERT, so the commit is a
-      # no-op and no state is changed.
-      result =
-        case result do
-          {:ok, {:ok, op}} -> {:ok, op}
-          {:ok, {:error, reason}} -> {:error, reason}
-          other -> other
-        end
 
       # Update cached metadata in Postgres (best-effort, after durable commit)
       case result do
@@ -145,18 +136,17 @@ defmodule Dust.Sync.Writer do
     # Apply to materialized state
     materialized = apply_to_entries(db, next_seq, attrs)
 
-    {:ok,
-     %{
-       store_seq: next_seq,
-       op: attrs.op,
-       path: attrs.path,
-       value: ValueCodec.wrap(attrs[:value]),
-       type: type,
-       device_id: attrs.device_id,
-       client_op_id: attrs.client_op_id,
-       store_id: store_id,
-       materialized_value: materialized
-     }}
+    %{
+      store_seq: next_seq,
+      op: attrs.op,
+      path: attrs.path,
+      value: ValueCodec.wrap(attrs[:value]),
+      type: type,
+      device_id: attrs.device_id,
+      client_op_id: attrs.client_op_id,
+      store_id: store_id,
+      materialized_value: materialized
+    }
   end
 
   defp maybe_validate_if_match(db, path, attrs) do
@@ -376,13 +366,24 @@ defmodule Dust.Sync.Writer do
 
   # Single centralized rescue point for SQLite NIF boundary.
   # All transactional work goes through this helper.
+  #
+  # If the inner function returns `{:error, _}`, the transaction is rolled
+  # back and the error is returned unchanged. Any other return value is
+  # committed and wrapped in `{:ok, result}`. Raised exceptions also
+  # trigger a rollback.
   defp sqlite_transaction(db, fun) do
     :ok = Exqlite.Sqlite3.execute(db, "BEGIN")
 
     try do
-      result = fun.()
-      :ok = Exqlite.Sqlite3.execute(db, "COMMIT")
-      {:ok, result}
+      case fun.() do
+        {:error, _} = error ->
+          :ok = Exqlite.Sqlite3.execute(db, "ROLLBACK")
+          error
+
+        result ->
+          :ok = Exqlite.Sqlite3.execute(db, "COMMIT")
+          {:ok, result}
+      end
     rescue
       e ->
         Exqlite.Sqlite3.execute(db, "ROLLBACK")
