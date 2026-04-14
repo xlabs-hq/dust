@@ -66,11 +66,60 @@ Each subscription has a bounded queue (default 1,000 events).
 If exceeded, subscription is dropped and `resync_required` is raised.
 Store sync continues — one slow subscriber does not stall the store.
 
+## Compare-and-swap writes
+
+Clients can make optimistic-concurrency writes by attaching an `if_match`
+field to a write payload. This turns a normal last-writer-wins `set` into a
+compare-and-swap against the target entry's current seq (revision).
+
+- `if_match` is an **optional integer** on `set` write payloads. Its value is
+  the seq the client believes the target entry currently has.
+- If present, the server compares the target entry's current `seq` to
+  `if_match` **inside the same SQLite transaction** that performs the write.
+  There is no TOCTOU race: the check and the write are atomic.
+- **Match** → the write proceeds normally, the entry's seq is bumped, and the
+  reply is `{store_seq: N}` as usual.
+- **Mismatch** (the entry exists but its seq differs) → the server replies
+  with `{error: {reason: "conflict", current_revision: N}}` and the write is
+  not applied. The entry is unchanged.
+- **Missing entry** (the path does not exist) → also treated as a conflict:
+  `{error: {reason: "conflict", current_revision: null}}`. The precondition
+  "this entry exists with seq N" is false.
+
+### Scope
+
+Phase 5 CAS is deliberately narrow:
+
+- Only `set` ops support `if_match`. Sending `if_match` with any other op
+  (`delete`, `merge`, `increment`, `add`, `remove`, `put_file`, ...) returns
+  `{error: {reason: "if_match_unsupported_op"}}`.
+- Only **leaf** (non-dict) values are supported. A `set` with a dict value
+  flattens to multiple leaves and cannot be CAS'd atomically without a
+  subtree index, so the server returns
+  `{error: {reason: "if_match_multi_leaf"}}`.
+- `if_match` is a positive integer. There is no `0` sentinel for "must not
+  exist" and no wildcard.
+
+### Capver gate
+
+`if_match` requires **capver >= 2**. A capver=1 client that sends `if_match`
+gets `{error: {reason: "capver_mismatch"}}`. This prevents silent downgrade:
+old clients never receive conflict errors because they can't send `if_match`
+in the first place.
+
 ## Capability Versioning
 
-Single integer, sent in hello. MVP ships with `capver = 1`.
+Single integer, sent in hello. Current version is `capver = 2`.
 Server responds with `capver_min` and `capver_max`.
 If client capver is outside the range, connection is rejected.
+
+Capver history:
+
+- **1** — initial protocol. All base op types over JSON/msgpack.
+- **2** — adds optional `if_match` on `set` writes (leaf values only) and the
+  `conflict` / `capver_mismatch` / `if_match_unsupported_op` /
+  `if_match_multi_leaf` reply reasons. The server still accepts capver=1
+  joins for reads, but capver=1 clients cannot use CAS.
 
 ## Wire Encoding
 

@@ -3,7 +3,8 @@ defmodule DustProtocol do
 
   # Capability version history
   # 1: Initial protocol — JSON wire format, all current op types
-  @current_capver 1
+  # 2: Adds optional `if_match` (CAS) on `set` writes with leaf values; introduces `conflict` reply
+  @current_capver 2
   @min_capver 1
 
   def current_capver, do: @current_capver

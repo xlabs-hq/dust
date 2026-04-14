@@ -34,6 +34,8 @@ channels:
         $ref: '#/components/messages/Join'
       write:
         $ref: '#/components/messages/Write'
+      writeReply:
+        $ref: '#/components/messages/WriteReply'
       event:
         $ref: '#/components/messages/Event'
       error:
@@ -166,6 +168,62 @@ components:
           client_op_id:
             type: string
             description: Client-generated ID for optimistic reconciliation
+          if_match:
+            type: integer
+            description: |
+              Optional seq (revision) for compare-and-swap writes. If present, the
+              write only succeeds if the target entry's current seq equals this
+              value. Requires capver >= 2. Only supported on `set` ops with
+              non-dict (leaf) values. On mismatch the server replies with
+              `{error: {reason: "conflict", current_revision: N | null}}` and the
+              write is not applied.
+
+    WriteReply:
+      name: write_reply
+      description: |
+        Reply to a write push. On success, returns the assigned `store_seq`.
+        On failure, returns an `error` object with a `reason` code.
+      payload:
+        oneOf:
+          - type: object
+            required: [store_seq]
+            properties:
+              store_seq:
+                type: integer
+                description: Server-assigned monotonic seq for the accepted write.
+          - type: object
+            required: [error]
+            properties:
+              error:
+                type: object
+                required: [reason]
+                properties:
+                  reason:
+                    type: string
+                    enum:
+                      - conflict
+                      - capver_mismatch
+                      - if_match_unsupported_op
+                      - if_match_multi_leaf
+                      - invalid_op
+                      - unauthorized
+                      - rate_limited
+                    description: |
+                      Failure reason code.
+                      - `conflict`: `if_match` did not match the target entry's
+                        current seq (or the path did not exist). No write happens.
+                      - `capver_mismatch`: client sent `if_match` on a capver=1
+                        session; CAS requires capver >= 2.
+                      - `if_match_unsupported_op`: `if_match` was sent on an op
+                        other than `set` (e.g. `delete`, `merge`).
+                      - `if_match_multi_leaf`: `if_match` was sent on a `set` op
+                        with a dict/map value, which would flatten to multiple
+                        leaves and cannot be CAS'd atomically in Phase 5.
+                  current_revision:
+                    type: [integer, "null"]
+                    description: |
+                      Present on `conflict` replies. The entry's current seq, or
+                      `null` if the entry does not exist.
 
     Event:
       name: event
