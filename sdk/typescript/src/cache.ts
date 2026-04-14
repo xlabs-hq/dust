@@ -4,6 +4,7 @@ import { match } from './glob'
 export interface Cache {
   get(store: string, path: string): Entry | null
   readEntry(store: string, path: string): Entry | null
+  readMany(store: string, paths: string[]): Record<string, Entry>
   set(store: string, path: string, entry: Entry): void
   delete(store: string, path: string): void
   deletePrefix(store: string, prefix: string): void
@@ -32,6 +33,21 @@ export class MemoryCache implements Cache {
 
   readEntry(store: string, path: string): Entry | null {
     return this.stores.get(store)?.get(path) ?? null
+  }
+
+  readMany(store: string, paths: string[]): Record<string, Entry> {
+    const storeMap = this.stores.get(store)
+    if (!storeMap) return {}
+
+    const result: Record<string, Entry> = {}
+    const seen = new Set<string>()
+    for (const path of paths) {
+      if (seen.has(path)) continue
+      seen.add(path)
+      const entry = storeMap.get(path)
+      if (entry) result[path] = entry
+    }
+    return result
   }
 
   set(store: string, path: string, entry: Entry): void {
