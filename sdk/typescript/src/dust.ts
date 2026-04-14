@@ -103,6 +103,19 @@ export class Dust {
     return this.cache.browse(store, { ...opts, pattern })
   }
 
+  async getMany(store: string, paths: string[]): Promise<Record<string, unknown>> {
+    if (paths.length > 1000) {
+      throw new Error('getMany: maximum 1000 paths per call')
+    }
+    await this.ensureJoined(store)
+    const raw = this.cache.readMany(store, paths)
+    const result: Record<string, unknown> = {}
+    for (const [path, entry] of Object.entries(raw)) {
+      result[path] = entry.value
+    }
+    return result
+  }
+
   async range(
     store: string,
     from: string,

@@ -322,6 +322,35 @@ describe('Dust', () => {
     })
   })
 
+  describe('getMany', () => {
+    it('getMany returns a record of present values', async () => {
+      const dust = createDust() as any
+      seedEntry(dust, 'store', 'a', 1, 'integer', 1)
+      seedEntry(dust, 'store', 'b', 2, 'integer', 2)
+      const result = await dust.getMany('store', ['a', 'b'])
+      expect(result).toEqual({ a: 1, b: 2 })
+    })
+
+    it('getMany omits missing paths', async () => {
+      const dust = createDust() as any
+      seedEntry(dust, 'store', 'a', 1, 'integer', 1)
+      expect(await dust.getMany('store', ['a', 'missing'])).toEqual({ a: 1 })
+    })
+
+    it('getMany with empty list returns empty object', async () => {
+      const dust = createDust() as any
+      dust.joinedStores.set('store', Promise.resolve())
+      expect(await dust.getMany('store', [])).toEqual({})
+    })
+
+    it('getMany with > 1000 paths throws', async () => {
+      const dust = createDust() as any
+      dust.joinedStores.set('store', Promise.resolve())
+      const paths = Array.from({ length: 1001 }, (_, i) => `p.${i}`)
+      await expect(dust.getMany('store', paths)).rejects.toThrow(/1000/)
+    })
+  })
+
   describe('status', () => {
     it('returns seq from cache', () => {
       const dust = createDust() as any
