@@ -17,6 +17,16 @@ export interface Page<T> {
   nextCursor: string | null
 }
 
+export interface BrowseOptions {
+  pattern?: string
+  from?: string
+  to?: string
+  limit?: number
+  after?: string
+  order?: 'asc' | 'desc'
+  select?: 'entries' | 'keys' | 'prefixes'
+}
+
 export interface Event {
   storeSeq: number
   op: string
