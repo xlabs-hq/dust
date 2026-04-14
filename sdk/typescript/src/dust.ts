@@ -1,11 +1,15 @@
 import { Connection } from './connection'
 import { MemoryCache } from './cache'
 import { match } from './glob'
-import type { DustOptions, EnumOptions, Entry, Event, EventCallback, Page, Status } from './types'
+import type { DustOptions, EnumOptions, Entry, Event, EventCallback, Page, PresentEvent, Status } from './types'
+
+type WatchCallback = (event: Event | PresentEvent) => void
 
 interface Subscription {
   pattern: string
-  callback: EventCallback
+  callback: WatchCallback
+  bootstrapPending?: boolean
+  pendingEvents?: Event[]
 }
 
 export class Dust {
@@ -68,7 +72,7 @@ export class Dust {
       subs = new Set()
       this.subscriptions.set(store, subs)
     }
-    const sub: Subscription = { pattern, callback }
+    const sub: Subscription = { pattern, callback: callback as WatchCallback }
     subs.add(sub)
 
     // Ensure joined — catch errors to prevent unhandled rejections
@@ -78,6 +82,66 @@ export class Dust {
 
     // Return unsubscribe function
     return () => { subs!.delete(sub) }
+  }
+
+  async watch(
+    store: string,
+    pattern: string,
+    callback: WatchCallback,
+    opts: { limit?: number; order?: 'asc' | 'desc' } = {},
+  ): Promise<() => void> {
+    const limit = Math.min(opts.limit ?? 50, 1000)
+    const order = opts.order ?? 'asc'
+
+    const sub: Subscription = {
+      pattern,
+      callback,
+      bootstrapPending: true,
+      pendingEvents: [],
+    }
+
+    let storeSubs = this.subscriptions.get(store)
+    if (!storeSubs) {
+      storeSubs = new Set()
+      this.subscriptions.set(store, storeSubs)
+    }
+    storeSubs.add(sub)
+    const unsubscribe = () => { storeSubs!.delete(sub) }
+
+    try {
+      await this.ensureJoined(store)
+
+      const page = this.cache.browse(store, {
+        pattern,
+        limit,
+        order,
+        select: 'entries',
+      }) as Page<Entry>
+
+      // Synchronous dispatch — no await in this loop.
+      // JS single-thread guarantee prevents interleaving with handleEvent.
+      for (const entry of page.items) {
+        callback({
+          op: 'present',
+          path: entry.path,
+          value: entry.value,
+          type: entry.type,
+          seq: entry.seq,
+        })
+      }
+
+      // Drain events queued during the ensureJoined gap
+      for (const event of sub.pendingEvents!) {
+        callback(event)
+      }
+      sub.pendingEvents = []
+      sub.bootstrapPending = false
+    } catch (err) {
+      unsubscribe()
+      throw err
+    }
+
+    return unsubscribe
   }
 
   async enum(store: string, pattern: string): Promise<Entry[]>
@@ -278,7 +342,11 @@ export class Dust {
     if (subs) {
       for (const sub of subs) {
         if (match(sub.pattern, path)) {
-          sub.callback(event)
+          if (sub.bootstrapPending) {
+            sub.pendingEvents!.push(event)
+          } else {
+            sub.callback(event)
+          }
         }
       }
     }

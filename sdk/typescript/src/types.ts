@@ -43,6 +43,14 @@ export interface Event {
   clientOpId: string
 }
 
+export interface PresentEvent {
+  op: 'present'
+  path: string
+  value: unknown
+  type: string
+  seq: number
+}
+
 export interface Status {
   connected: boolean
   seq: number

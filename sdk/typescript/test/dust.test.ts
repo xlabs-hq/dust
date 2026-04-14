@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { Dust, inferType } from '../src/dust'
+import type { PresentEvent, Event } from '../src/types'
+
+type WatchEvent = Event | PresentEvent
 
 // We test the Dust class's event handling logic by accessing private methods
 // via `as any`. The Connection requires a real server, so we skip integration
@@ -225,6 +228,100 @@ describe('Dust', () => {
       })
 
       expect(events.length).toBe(0)
+    })
+  })
+
+  describe('watch', () => {
+    it('dispatches current matching entries as present events', async () => {
+      const dust = createDust() as any
+      seedEntry(dust, 'store', 'users.alice.name', 'Alice', 'string', 1)
+      seedEntry(dust, 'store', 'users.bob.name', 'Bob', 'string', 2)
+
+      const received: WatchEvent[] = []
+      const unsubscribe = await dust.watch('store', 'users.**', (event: WatchEvent) => {
+        received.push(event)
+      })
+
+      expect(received).toHaveLength(2)
+      expect(received[0]).toMatchObject({ op: 'present', path: 'users.alice.name', value: 'Alice', type: 'string', seq: 1 })
+      expect(received[1]).toMatchObject({ op: 'present', path: 'users.bob.name', value: 'Bob', type: 'string', seq: 2 })
+
+      unsubscribe()
+    })
+
+    it('watch honors limit', async () => {
+      const dust = createDust() as any
+      for (let i = 1; i <= 10; i++) {
+        seedEntry(dust, 'store', `k.${i}`, i, 'integer', i)
+      }
+      const received: WatchEvent[] = []
+      await dust.watch('store', 'k.**', (e: WatchEvent) => { received.push(e) }, { limit: 3 })
+      expect(received).toHaveLength(3)
+    })
+
+    it('watch with no matches returns unsubscribe without emitting', async () => {
+      const dust = createDust() as any
+      dust.joinedStores.set('store', Promise.resolve())
+      const received: WatchEvent[] = []
+      const unsubscribe = await dust.watch('store', 'no.match.**', (e: WatchEvent) => { received.push(e) })
+      expect(received).toEqual([])
+      expect(typeof unsubscribe).toBe('function')
+      unsubscribe()
+    })
+
+    it('live events that arrive during bootstrap hydration are buffered and drained after present events', async () => {
+      const dust = createDust() as any
+      seedEntry(dust, 'store', 'users.alice.name', 'Alice', 'string', 1)
+
+      // Override ensureJoined so we can intercept the async gap and inject a live event.
+      let resolveJoin: () => void = () => {}
+      const joinGate = new Promise<void>((resolve) => { resolveJoin = resolve })
+      dust.ensureJoined = async (_store: string) => {
+        await joinGate
+      }
+
+      const received: WatchEvent[] = []
+      const watchPromise = dust.watch('store', 'users.**', (event: WatchEvent) => {
+        received.push(event)
+      })
+
+      // Yield a microtask so watch() has a chance to register its subscription
+      // and hit the `await ensureJoined(...)` await point.
+      await Promise.resolve()
+
+      // Inject a live event BEFORE the join resolves, for a path that does
+      // NOT match the watch pattern. That way we can observe that:
+      //   (a) the event was NOT delivered synchronously (bootstrapPending),
+      //   (b) it's correctly filtered out (pattern mismatch), and
+      //   (c) the bootstrap still fires Alice as a PresentEvent after resolve.
+      dust.handleEvent('store', {
+        store_seq: 2, op: 'set', path: 'posts.hello', value: 'hi',
+        device_id: 'd', client_op_id: 'o-live-nomatch',
+      })
+
+      // Also inject a matching live event that SHOULD land in the pending
+      // buffer and be drained after the bootstrap present events. We use a
+      // path distinct from anything the bootstrap would synthesize to avoid
+      // ambiguity — but because handleEvent writes to cache first, browse
+      // will also surface it as a PresentEvent. That's expected dual-delivery.
+      dust.handleEvent('store', {
+        store_seq: 3, op: 'set', path: 'users.carol.name', value: 'Carol',
+        device_id: 'd', client_op_id: 'o-live-match',
+      })
+
+      // Callback should NOT have fired yet — we're still in the hydration gap.
+      expect(received).toHaveLength(0)
+
+      // Now unblock the join — watch() proceeds to bootstrap + drain.
+      resolveJoin()
+      await watchPromise
+
+      // Bootstrap present events for alice + carol (cache now has both),
+      // followed by the buffered live 'set' for carol from the pending queue.
+      expect(received).toHaveLength(3)
+      expect(received[0]).toMatchObject({ op: 'present', path: 'users.alice.name' })
+      expect(received[1]).toMatchObject({ op: 'present', path: 'users.carol.name' })
+      expect(received[2]).toMatchObject({ op: 'set', path: 'users.carol.name', value: 'Carol' })
     })
   })
 
