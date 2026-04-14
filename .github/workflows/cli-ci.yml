@@ -11,6 +11,11 @@ on:
       - 'cli/**'
       - '.github/workflows/cli-ci.yml'
 
+# Opt JavaScript-based actions in to Node.js 24 ahead of GitHub's
+# 2026-09-16 forced cutover.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   lint:
     name: Format check

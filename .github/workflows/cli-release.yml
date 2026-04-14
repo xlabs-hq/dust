@@ -8,6 +8,12 @@ on:
 permissions:
   contents: write
 
+# Opt JavaScript-based actions in to Node.js 24 ahead of GitHub's
+# 2026-09-16 forced cutover. Removes the deprecation warnings on
+# upload-artifact@v4, download-artifact@v4, and action-gh-release@v2.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   build-macos-arm64:
     name: Build macos-arm64
