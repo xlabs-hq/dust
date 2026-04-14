@@ -12,6 +12,11 @@ export interface Entry {
   seq: number
 }
 
+export interface Page<T> {
+  items: T[]
+  nextCursor: string | null
+}
+
 export interface Event {
   storeSeq: number
   op: string
