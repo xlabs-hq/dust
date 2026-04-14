@@ -1,6 +1,7 @@
 import { Connection } from './connection'
 import { MemoryCache } from './cache'
 import { match } from './glob'
+import { ConflictError } from './types'
 import type { DustOptions, EnumOptions, Entry, Event, EventCallback, Page, PresentEvent, Status } from './types'
 
 type WatchCallback = (event: Event | PresentEvent) => void
@@ -42,8 +43,13 @@ export class Dust {
     return this.cache.readEntry(store, path)
   }
 
-  async put(store: string, path: string, value: unknown): Promise<{ storeSeq: number }> {
-    return this.write(store, 'set', path, value)
+  async put(
+    store: string,
+    path: string,
+    value: unknown,
+    opts?: { ifMatch?: number },
+  ): Promise<{ storeSeq: number }> {
+    return this.write(store, 'set', path, value, opts)
   }
 
   async merge(store: string, path: string, value: Record<string, unknown>): Promise<{ storeSeq: number }> {
@@ -234,7 +240,13 @@ export class Dust {
 
   // -- Internal --
 
-  private async write(store: string, op: string, path: string, value: unknown): Promise<{ storeSeq: number }> {
+  private async write(
+    store: string,
+    op: string,
+    path: string,
+    value: unknown,
+    opts?: { ifMatch?: number },
+  ): Promise<{ storeSeq: number }> {
     await this.ensureJoined(store)
 
     const topic = `store:${store}`
@@ -250,7 +262,28 @@ export class Dust {
       payload.value = value
     }
 
-    const response = await this.connection.push(topic, 'write', payload) as { store_seq: number }
+    if (opts && typeof opts.ifMatch === 'number') {
+      payload.if_match = opts.ifMatch
+    }
+
+    let response: { store_seq: number }
+    try {
+      response = (await this.connection.push(topic, 'write', payload)) as { store_seq: number }
+    } catch (err) {
+      // Detect the conflict error shape from Connection.push: the thrown Error
+      // has a `response` property mirroring the server's error reply.
+      const resp = (err as { response?: unknown })?.response
+      if (
+        resp !== null &&
+        typeof resp === 'object' &&
+        (resp as { reason?: unknown }).reason === 'conflict'
+      ) {
+        const current = (resp as { current_revision?: unknown }).current_revision
+        const currentRevision = typeof current === 'number' ? current : null
+        throw new ConflictError(currentRevision)
+      }
+      throw err
+    }
     return { storeSeq: response.store_seq }
   }
 

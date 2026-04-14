@@ -57,3 +57,20 @@ export interface Status {
 }
 
 export type EventCallback = (event: Event) => void
+
+/**
+ * Thrown by `Dust.put` when an `ifMatch` CAS precondition fails.
+ *
+ * `currentRevision` is the server's view of the current entry revision
+ * (store_seq) at the time of the conflict, or `null` if the path doesn't
+ * exist or the server didn't report it.
+ */
+export class ConflictError extends Error {
+  readonly currentRevision: number | null
+
+  constructor(currentRevision: number | null = null) {
+    super('conflict')
+    this.name = 'ConflictError'
+    this.currentRevision = currentRevision
+  }
+}

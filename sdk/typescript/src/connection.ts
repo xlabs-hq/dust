@@ -123,7 +123,9 @@ export class Connection {
         typeof reply.response === 'object' && reply.response !== null
           ? JSON.stringify(reply.response)
           : String(reply.response)
-      throw new Error(`Push failed: ${errorInfo}`)
+      const err = new Error(`Push failed: ${errorInfo}`) as Error & { response?: unknown }
+      err.response = reply.response
+      throw err
     }
     return reply.response
   }
@@ -167,7 +169,7 @@ export class Connection {
     }
     base.searchParams.set('token', this.opts.token)
     base.searchParams.set('device_id', this.deviceId)
-    base.searchParams.set('capver', '1')
+    base.searchParams.set('capver', '2')
     base.searchParams.set('vsn', this.format === 'msgpack' ? '3.0.0' : '2.0.0')
     return base.toString()
   }

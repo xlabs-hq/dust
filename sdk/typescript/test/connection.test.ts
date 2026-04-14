@@ -81,7 +81,7 @@ describe('Connection', () => {
         token: 'test',
       })
       const url = conn.buildUrl()
-      expect(url).toContain('capver=1')
+      expect(url).toContain('capver=2')
       expect(url).toContain('vsn=2.0.0')
     })
 

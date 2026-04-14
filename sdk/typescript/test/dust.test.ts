@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { Dust, inferType } from '../src/dust'
+import { ConflictError } from '../src/types'
 import type { PresentEvent, Event } from '../src/types'
 
 type WatchEvent = Event | PresentEvent
@@ -445,6 +446,122 @@ describe('Dust', () => {
       dust.joinedStores.set('store', Promise.resolve())
       const paths = Array.from({ length: 1001 }, (_, i) => `p.${i}`)
       await expect(dust.getMany('store', paths)).rejects.toThrow(/1000/)
+    })
+  })
+
+  describe('put with ifMatch (CAS)', () => {
+    // Stub out the Connection.push method to capture the payload and return a canned reply.
+    function stubPush(dust: any, reply: unknown | Error) {
+      const pushed: Array<{ topic: string; event: string; payload: Record<string, unknown> }> = []
+      dust.joinedStores.set('test/store', Promise.resolve())
+      dust.connection.push = async (
+        topic: string,
+        event: string,
+        payload: Record<string, unknown>,
+      ) => {
+        pushed.push({ topic, event, payload })
+        if (reply instanceof Error) throw reply
+        return reply
+      }
+      return pushed
+    }
+
+    it('put with matching ifMatch sends if_match in payload and resolves', async () => {
+      const dust = createDust() as any
+      const pushed = stubPush(dust, { store_seq: 43 })
+
+      const result = await dust.put('test/store', 'k', 'v', { ifMatch: 42 })
+
+      expect(result).toEqual({ storeSeq: 43 })
+      expect(pushed).toHaveLength(1)
+      expect(pushed[0].topic).toBe('store:test/store')
+      expect(pushed[0].event).toBe('write')
+      expect(pushed[0].payload.if_match).toBe(42)
+      expect(pushed[0].payload.op).toBe('set')
+      expect(pushed[0].payload.path).toBe('k')
+      expect(pushed[0].payload.value).toBe('v')
+    })
+
+    // Helper: build an Error matching what Connection.push throws on !ok replies.
+    function pushError(response: unknown): Error {
+      const err = new Error(
+        `Push failed: ${typeof response === 'object' && response !== null ? JSON.stringify(response) : String(response)}`,
+      ) as Error & { response?: unknown }
+      err.response = response
+      return err
+    }
+
+    it('put with stale ifMatch throws ConflictError with currentRevision', async () => {
+      const dust = createDust() as any
+      stubPush(dust, pushError({ reason: 'conflict', current_revision: 42 }))
+
+      let caught: unknown = null
+      try {
+        await dust.put('test/store', 'k', 'v', { ifMatch: 7 })
+      } catch (err) {
+        caught = err
+      }
+
+      expect(caught).toBeInstanceOf(ConflictError)
+      expect((caught as ConflictError).currentRevision).toBe(42)
+      expect((caught as ConflictError).message).toBe('conflict')
+    })
+
+    it('put with stale ifMatch and null current_revision', async () => {
+      const dust = createDust() as any
+      stubPush(dust, pushError({ reason: 'conflict', current_revision: null }))
+
+      let caught: unknown = null
+      try {
+        await dust.put('test/store', 'missing', 'v', { ifMatch: 99 })
+      } catch (err) {
+        caught = err
+      }
+
+      expect(caught).toBeInstanceOf(ConflictError)
+      expect((caught as ConflictError).currentRevision).toBeNull()
+    })
+
+    it('put without ifMatch does not send if_match in payload', async () => {
+      const dust = createDust() as any
+      const pushed = stubPush(dust, { store_seq: 5 })
+
+      const result = await dust.put('test/store', 'k', 'v')
+
+      expect(result).toEqual({ storeSeq: 5 })
+      expect(pushed[0].payload).not.toHaveProperty('if_match')
+    })
+
+    it('put with empty opts object does not send if_match', async () => {
+      const dust = createDust() as any
+      const pushed = stubPush(dust, { store_seq: 5 })
+
+      await dust.put('test/store', 'k', 'v', {})
+
+      expect(pushed[0].payload).not.toHaveProperty('if_match')
+    })
+
+    it('put keeps existing return shape for non-CAS callers', async () => {
+      const dust = createDust() as any
+      stubPush(dust, { store_seq: 17 })
+
+      const result = await dust.put('test/store', 'k', 'v')
+      // Regression: exact shape, no extra keys
+      expect(result).toEqual({ storeSeq: 17 })
+    })
+
+    it('non-conflict push errors surface as regular Errors, not ConflictError', async () => {
+      const dust = createDust() as any
+      stubPush(dust, pushError({ reason: 'rate_limited' }))
+
+      let caught: unknown = null
+      try {
+        await dust.put('test/store', 'k', 'v', { ifMatch: 1 })
+      } catch (err) {
+        caught = err
+      }
+      expect(caught).toBeInstanceOf(Error)
+      expect(caught).not.toBeInstanceOf(ConflictError)
     })
   })
 
