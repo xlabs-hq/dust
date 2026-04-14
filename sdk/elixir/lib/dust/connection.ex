@@ -52,7 +52,7 @@ defmodule Dust.Connection do
           URI.encode_query(%{
             "token" => token,
             "device_id" => device_id,
-            "capver" => "1",
+            "capver" => "2",
             "vsn" => "2.0.0"
           })
         )
