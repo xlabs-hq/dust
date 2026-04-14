@@ -84,6 +84,32 @@ export class Dust {
     return () => { subs!.delete(sub) }
   }
 
+  /**
+   * Subscribe to changes matching a pattern, with all currently-cached
+   * matching entries delivered as `present` events before any live events.
+   *
+   * Returns a Promise that resolves to an unsubscribe function once the
+   * initial bootstrap has completed. Bootstrap entries are emitted
+   * synchronously after the cache is hydrated, so no live event can
+   * interleave mid-loop.
+   *
+   * **Race-window semantics:** If a live event for a matching path arrives
+   * during the hydration window (between `await ensureJoined` and the
+   * bootstrap loop), the cache is updated first, then the event is buffered.
+   * The bootstrap loop will emit the (freshly-written) entry as a `present`
+   * event, then the drain loop will emit the original live event — so the
+   * same path may appear twice, once as `present` and once as the original
+   * op. Present-before-live ordering is always preserved for any given path.
+   * Write consumers to apply deltas idempotently so double-delivery is safe.
+   *
+   * @param store - Store name (e.g. "org/store")
+   * @param pattern - Glob pattern (`*`, `**`, literal segments)
+   * @param callback - Function called with each event. Receives
+   *   `PresentEvent` for bootstrap items and `Event` for live updates.
+   * @param opts - Options for bootstrap: `limit` (default 50, max 1000),
+   *   `order` ('asc' | 'desc', default 'asc').
+   * @returns Promise resolving to an unsubscribe function.
+   */
   async watch(
     store: string,
     pattern: string,
@@ -186,7 +212,7 @@ export class Dust {
     to: string,
     opts: Omit<EnumOptions, 'select'> & { select?: 'entries' | 'keys' } = {},
   ): Promise<Page<Entry> | Page<string>> {
-    if ((opts as any).select === 'prefixes') {
+    if ((opts as { select?: string }).select === 'prefixes') {
       throw new Error('range: select prefixes is not supported')
     }
     await this.ensureJoined(store)
