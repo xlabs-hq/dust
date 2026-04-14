@@ -3,6 +3,7 @@ import { match } from './glob'
 
 export interface Cache {
   get(store: string, path: string): Entry | null
+  readEntry(store: string, path: string): Entry | null
   set(store: string, path: string, entry: Entry): void
   delete(store: string, path: string): void
   deletePrefix(store: string, prefix: string): void
@@ -27,6 +28,10 @@ export class MemoryCache implements Cache {
 
   get(store: string, path: string): Entry | null {
     return this.getStore(store).get(path) ?? null
+  }
+
+  readEntry(store: string, path: string): Entry | null {
+    return this.stores.get(store)?.get(path) ?? null
   }
 
   set(store: string, path: string, entry: Entry): void {

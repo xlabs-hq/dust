@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { MemoryCache } from '../src/cache'
+import type { Entry } from '../src/types'
 
 describe('MemoryCache', () => {
   it('stores and retrieves entries', () => {
@@ -64,5 +65,24 @@ describe('MemoryCache', () => {
     cache.clear('s')
     expect(cache.get('s', 'a')).toBeNull()
     expect(cache.lastSeq('s')).toBe(0)
+  })
+
+  describe('readEntry', () => {
+    it('returns the entry for a present key', () => {
+      const cache = new MemoryCache()
+      const entry: Entry = { path: 'a.b', value: 'hello', type: 'string', seq: 7 }
+      cache.set('store', 'a.b', entry)
+      expect(cache.readEntry('store', 'a.b')).toEqual(entry)
+    })
+
+    it('returns null for a missing key', () => {
+      const cache = new MemoryCache()
+      expect(cache.readEntry('store', 'missing')).toBeNull()
+    })
+
+    it('returns null for a missing store', () => {
+      const cache = new MemoryCache()
+      expect(cache.readEntry('nope', 'any')).toBeNull()
+    })
   })
 })
