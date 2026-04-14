@@ -196,20 +196,26 @@ defmodule DustWeb.StoreChannel do
         with :ok <- verify_store_active(socket.assigns.store_id),
              {:ok, _} <- validate_path(params["path"]),
              :ok <- validate_merge_value(op, params["value"]),
+             :ok <- validate_if_match(op, params, socket),
              :ok <- check_billing_limits(op, params, socket.assigns.store_id, org) do
-          op_attrs = %{
-            op: op,
-            path: params["path"],
-            value: params["value"],
-            device_id: socket.assigns.device_id,
-            client_op_id: params["client_op_id"]
-          }
+          op_attrs =
+            %{
+              op: op,
+              path: params["path"],
+              value: params["value"],
+              device_id: socket.assigns.device_id,
+              client_op_id: params["client_op_id"]
+            }
+            |> maybe_put_if_match(params)
 
           case Sync.write(socket.assigns.store_id, op_attrs) do
             {:ok, db_op} ->
               broadcast!(socket, "event", format_event(db_op))
               notify_org(socket)
               {:reply, {:ok, %{store_seq: db_op.store_seq}}, socket}
+
+            {:error, :conflict} ->
+              {:reply, {:error, %{reason: "conflict"}}, socket}
 
             {:error, reason} ->
               {:reply, {:error, %{reason: inspect(reason)}}, socket}
@@ -221,11 +227,50 @@ defmodule DustWeb.StoreChannel do
           {:error, :limit_exceeded, info} ->
             {:reply, {:error, %{reason: "limit_exceeded"} |> Map.merge(info)}, socket}
 
+          {:error, {:if_match, details}} ->
+            {:reply, {:error, details}, socket}
+
           {:error, reason} ->
             {:reply, {:error, %{reason: to_string(reason)}}, socket}
         end
     end
   end
+
+  # Validate if_match preconditions:
+  #   * requires capver >= 2
+  #   * only the :set op supports if_match
+  #   * only leaf (non-map) values support if_match
+  # Returns :ok when if_match is absent or valid; {:error, {:if_match, %{reason: ...}}}
+  # when the client requested CAS but the request is malformed.
+  defp validate_if_match(op, params, socket) do
+    case Map.get(params, "if_match") do
+      nil ->
+        :ok
+
+      _if_match ->
+        capver = socket.assigns[:capver] || 1
+
+        cond do
+          capver < 2 ->
+            {:error, {:if_match, %{reason: "capver_mismatch"}}}
+
+          op != :set ->
+            {:error, {:if_match, %{reason: "if_match_unsupported_op", op: params["op"]}}}
+
+          is_map(params["value"]) and not ValueCodec.typed_value?(params["value"]) ->
+            {:error, {:if_match, %{reason: "if_match_multi_leaf"}}}
+
+          true ->
+            :ok
+        end
+    end
+  end
+
+  defp maybe_put_if_match(attrs, %{"if_match" => if_match}) when not is_nil(if_match) do
+    Map.put(attrs, :if_match, if_match)
+  end
+
+  defp maybe_put_if_match(attrs, _params), do: attrs
 
   @impl true
   def handle_info({:catch_up, last_seq}, socket) do

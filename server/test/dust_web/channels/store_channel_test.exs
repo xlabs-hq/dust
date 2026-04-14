@@ -498,6 +498,155 @@ defmodule DustWeb.StoreChannelTest do
     end
   end
 
+  describe "write with if_match (CAS)" do
+    setup %{token: token, store: store} do
+      # Build a capver=2 socket — the StoreSocket normally assigns capver from
+      # connect params, but in channel tests we short-circuit that and pass it
+      # directly to the socket helper.
+      {:ok, store_token} = Stores.authenticate_token(token.raw_token)
+
+      capver2_socket =
+        socket(DustWeb.StoreSocket, "test_v2", %{
+          store_token: store_token,
+          device_id: "dev_test",
+          capver: 2
+        })
+
+      {:ok, _, joined} =
+        subscribe_and_join(capver2_socket, DustWeb.StoreChannel, "store:#{store.id}", %{
+          "last_store_seq" => 0
+        })
+
+      # Drain any pending catch_up_complete
+      assert_push "catch_up_complete", _
+
+      %{capver2_socket: joined}
+    end
+
+    test "write with if_match on capver=2 channel succeeds", %{
+      capver2_socket: socket,
+      store: store
+    } do
+      # Seed an entry
+      {:ok, _} =
+        Sync.write(store.id, %{
+          op: :set,
+          path: "k",
+          value: 1,
+          device_id: "d",
+          client_op_id: "seed"
+        })
+
+      %{seq: seq} = Sync.get_entry(store.id, "k")
+
+      ref =
+        push(socket, "write", %{
+          "op" => "set",
+          "path" => "k",
+          "value" => 2,
+          "client_op_id" => "cas_ok",
+          "if_match" => seq
+        })
+
+      assert_reply ref, :ok, %{store_seq: new_seq}
+      assert new_seq > seq
+      assert Sync.get_entry(store.id, "k").value == 2
+    end
+
+    test "write with if_match on capver=1 channel returns capver_mismatch", %{
+      socket: socket,
+      store: store
+    } do
+      {:ok, _, socket} =
+        subscribe_and_join(socket, DustWeb.StoreChannel, "store:#{store.id}", %{
+          "last_store_seq" => 0
+        })
+
+      assert_push "catch_up_complete", _
+
+      ref =
+        push(socket, "write", %{
+          "op" => "set",
+          "path" => "k",
+          "value" => 1,
+          "client_op_id" => "cas_old",
+          "if_match" => 1
+        })
+
+      assert_reply ref, :error, %{reason: "capver_mismatch"}
+    end
+
+    test "write with if_match + dict value returns if_match_multi_leaf", %{
+      capver2_socket: socket
+    } do
+      ref =
+        push(socket, "write", %{
+          "op" => "set",
+          "path" => "users.alice",
+          "value" => %{"name" => "alice"},
+          "client_op_id" => "cas_dict",
+          "if_match" => 1
+        })
+
+      assert_reply ref, :error, %{reason: "if_match_multi_leaf"}
+    end
+
+    test "write with if_match on non-set op returns if_match_unsupported_op", %{
+      capver2_socket: socket
+    } do
+      ref =
+        push(socket, "write", %{
+          "op" => "increment",
+          "path" => "counter",
+          "value" => 1,
+          "client_op_id" => "cas_inc",
+          "if_match" => 1
+        })
+
+      assert_reply ref, :error, %{reason: "if_match_unsupported_op", op: "increment"}
+    end
+
+    test "write with stale if_match returns conflict", %{
+      capver2_socket: socket,
+      store: store
+    } do
+      # Seed and capture stale seq
+      {:ok, _} =
+        Sync.write(store.id, %{
+          op: :set,
+          path: "k",
+          value: 1,
+          device_id: "d",
+          client_op_id: "seed1"
+        })
+
+      %{seq: stale_seq} = Sync.get_entry(store.id, "k")
+
+      # Bump seq with a second write
+      {:ok, _} =
+        Sync.write(store.id, %{
+          op: :set,
+          path: "k",
+          value: 2,
+          device_id: "d",
+          client_op_id: "seed2"
+        })
+
+      ref =
+        push(socket, "write", %{
+          "op" => "set",
+          "path" => "k",
+          "value" => 3,
+          "client_op_id" => "cas_stale",
+          "if_match" => stale_seq
+        })
+
+      assert_reply ref, :error, %{reason: "conflict"}
+      # Entry should not have been touched by the stale write
+      assert Sync.get_entry(store.id, "k").value == 2
+    end
+  end
+
   describe "writes after archive" do
     test "write is rejected after store is archived", %{socket: socket, store: store} do
       {:ok, _, socket} =
