@@ -17,6 +17,13 @@ export interface Page<T> {
   nextCursor: string | null
 }
 
+export interface EnumOptions {
+  limit?: number
+  after?: string
+  order?: 'asc' | 'desc'
+  select?: 'entries' | 'keys' | 'prefixes'
+}
+
 export interface BrowseOptions {
   pattern?: string
   from?: string

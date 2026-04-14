@@ -255,6 +255,48 @@ describe('Dust', () => {
     })
   })
 
+  describe('enum', () => {
+    function seedEntry(dust: any, store: string, path: string, value: unknown, type: string, seq: number) {
+      dust.joinedStores.set(store, Promise.resolve())
+      dust.cache.set(store, path, { path, value, type, seq })
+    }
+
+    it('enum with no opts preserves the flat array shape (backwards compat)', async () => {
+      const dust = createDust() as any
+      seedEntry(dust, 'store', 'a', 1, 'integer', 1)
+      seedEntry(dust, 'store', 'b', 2, 'integer', 2)
+
+      const result = await dust.enum('store', '**')
+
+      expect(Array.isArray(result)).toBe(true)
+      expect(result).toHaveLength(2)
+    })
+
+    it('enum with opts returns a Page', async () => {
+      const dust = createDust() as any
+      for (const k of ['a', 'b', 'c']) {
+        seedEntry(dust, 'store', k, k, 'string', 1)
+      }
+
+      const page = await dust.enum('store', '**', { limit: 2 })
+
+      expect(page.items).toHaveLength(2)
+      expect(page.nextCursor).toBeTruthy()
+    })
+
+    it('enum with select keys returns string array in Page', async () => {
+      const dust = createDust() as any
+      for (const k of ['a', 'b']) {
+        seedEntry(dust, 'store', k, k, 'string', 1)
+      }
+
+      const page = await dust.enum('store', '**', { select: 'keys' })
+
+      expect(page.items).toEqual(['a', 'b'])
+      expect(page.items.every((i: unknown) => typeof i === 'string')).toBe(true)
+    })
+  })
+
   describe('status', () => {
     it('returns seq from cache', () => {
       const dust = createDust() as any

@@ -1,7 +1,7 @@
 import { Connection } from './connection'
 import { MemoryCache } from './cache'
 import { match } from './glob'
-import type { DustOptions, Entry, Event, EventCallback, Status } from './types'
+import type { DustOptions, EnumOptions, Entry, Event, EventCallback, Page, Status } from './types'
 
 interface Subscription {
   pattern: string
@@ -80,9 +80,27 @@ export class Dust {
     return () => { subs!.delete(sub) }
   }
 
-  async enum(store: string, pattern: string): Promise<Entry[]> {
+  async enum(store: string, pattern: string): Promise<Entry[]>
+  async enum(
+    store: string,
+    pattern: string,
+    opts: EnumOptions & { select: 'keys' | 'prefixes' },
+  ): Promise<Page<string>>
+  async enum(
+    store: string,
+    pattern: string,
+    opts: EnumOptions & { select?: 'entries' },
+  ): Promise<Page<Entry>>
+  async enum(
+    store: string,
+    pattern: string,
+    opts?: EnumOptions,
+  ): Promise<Entry[] | Page<Entry> | Page<string>> {
     await this.ensureJoined(store)
-    return this.cache.entries(store, pattern)
+    if (opts === undefined) {
+      return this.cache.entries(store, pattern)
+    }
+    return this.cache.browse(store, { ...opts, pattern })
   }
 
   status(store: string): Status {
