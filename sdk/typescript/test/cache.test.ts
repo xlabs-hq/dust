@@ -151,6 +151,50 @@ describe('MemoryCache', () => {
     })
   })
 
+  describe('browse range', () => {
+    const setup = () => {
+      const cache = new MemoryCache()
+      for (const p of ['a', 'b', 'c', 'd', 'e']) {
+        cache.set('store', p, { path: p, value: p, type: 'string', seq: 1 })
+      }
+      return cache
+    }
+
+    it('returns entries in [from, to)', () => {
+      const cache = setup()
+      const page = cache.browse('store', { from: 'b', to: 'd', limit: 10 })
+      expect((page.items as Entry[]).map((e) => e.path)).toEqual(['b', 'c'])
+    })
+
+    it('from is inclusive, to is exclusive', () => {
+      const cache = setup()
+      const page = cache.browse('store', { from: 'a', to: 'c', limit: 10 })
+      expect((page.items as Entry[]).map((e) => e.path)).toEqual(['a', 'b'])
+    })
+
+    it('from >= to returns empty', () => {
+      const cache = setup()
+      const page = cache.browse('store', { from: 'z', to: 'a', limit: 10 })
+      expect(page.items).toEqual([])
+    })
+
+    it('range respects order desc', () => {
+      const cache = setup()
+      const page = cache.browse('store', { from: 'a', to: 'd', limit: 10, order: 'desc' })
+      expect((page.items as Entry[]).map((e) => e.path)).toEqual(['c', 'b', 'a'])
+    })
+
+    it('range with limit + cursor paginates', () => {
+      const cache = setup()
+      const page1 = cache.browse('store', { from: 'a', to: 'z', limit: 2 })
+      expect((page1.items as Entry[]).map((e) => e.path)).toEqual(['a', 'b'])
+      expect(page1.nextCursor).toEqual('b')
+
+      const page2 = cache.browse('store', { from: 'a', to: 'z', limit: 2, after: 'b' })
+      expect((page2.items as Entry[]).map((e) => e.path)).toEqual(['c', 'd'])
+    })
+  })
+
   describe('readMany', () => {
     it('returns a record of present entries', () => {
       const cache = new MemoryCache()
