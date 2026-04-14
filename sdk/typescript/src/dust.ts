@@ -33,6 +33,11 @@ export class Dust {
     return entry?.value ?? null
   }
 
+  async entry(store: string, path: string): Promise<Entry | null> {
+    await this.ensureJoined(store)
+    return this.cache.readEntry(store, path)
+  }
+
   async put(store: string, path: string, value: unknown): Promise<{ storeSeq: number }> {
     return this.write(store, 'set', path, value)
   }

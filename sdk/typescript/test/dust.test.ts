@@ -223,6 +223,38 @@ describe('Dust', () => {
     })
   })
 
+  describe('entry', () => {
+    it('returns the cached Entry for a present path', async () => {
+      const dust = createDust() as any
+      // Mark store as joined so entry() skips the real join.
+      dust.joinedStores.set('test/store', Promise.resolve())
+      dust.cache.set('test/store', 'users.alice.name', {
+        path: 'users.alice.name',
+        value: 'Alice',
+        type: 'string',
+        seq: 7,
+      })
+
+      const result = await dust.entry('test/store', 'users.alice.name')
+
+      expect(result).toEqual({
+        path: 'users.alice.name',
+        value: 'Alice',
+        type: 'string',
+        seq: 7,
+      })
+    })
+
+    it('returns null for a missing path', async () => {
+      const dust = createDust() as any
+      dust.joinedStores.set('test/store', Promise.resolve())
+
+      const result = await dust.entry('test/store', 'no.such')
+
+      expect(result).toBeNull()
+    })
+  })
+
   describe('status', () => {
     it('returns seq from cache', () => {
       const dust = createDust() as any
