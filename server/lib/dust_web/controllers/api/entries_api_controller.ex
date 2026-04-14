@@ -92,6 +92,22 @@ defmodule DustWeb.Api.EntriesApiController do
             "current_revision" => current_revision_for(store, path)
           })
 
+        {:error, :if_match_unsupported_op} ->
+          conn
+          |> put_status(400)
+          |> json(%{
+            "error" => "if_match_unsupported_op",
+            "detail" => "If-Match is only supported for set operations"
+          })
+
+        {:error, :if_match_multi_leaf} ->
+          conn
+          |> put_status(400)
+          |> json(%{
+            "error" => "if_match_multi_leaf",
+            "detail" => "If-Match requires a leaf value, not a map/dict"
+          })
+
         {:error, reason} ->
           conn
           |> put_status(400)

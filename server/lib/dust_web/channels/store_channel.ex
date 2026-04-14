@@ -217,6 +217,12 @@ defmodule DustWeb.StoreChannel do
             {:error, :conflict} ->
               {:reply, {:error, %{reason: "conflict"}}, socket}
 
+            {:error, :if_match_unsupported_op} ->
+              {:reply, {:error, %{reason: "if_match_unsupported_op", op: params["op"]}}, socket}
+
+            {:error, :if_match_multi_leaf} ->
+              {:reply, {:error, %{reason: "if_match_multi_leaf"}}, socket}
+
             {:error, reason} ->
               {:reply, {:error, %{reason: inspect(reason)}}, socket}
           end
@@ -236,13 +242,12 @@ defmodule DustWeb.StoreChannel do
     end
   end
 
-  # Validate if_match preconditions:
-  #   * requires capver >= 2
-  #   * only the :set op supports if_match
-  #   * only leaf (non-map) values support if_match
-  # Returns :ok when if_match is absent or valid; {:error, {:if_match, %{reason: ...}}}
-  # when the client requested CAS but the request is malformed.
-  defp validate_if_match(op, params, socket) do
+  # Validate the ONE if_match precondition that is specific to the channel
+  # transport: capver must be >= 2 for CAS to be available. The remaining
+  # CAS preconditions (op must be :set, value must be a leaf) are enforced
+  # transport-agnostically inside `Dust.Sync.write/2` so HTTP and WebSocket
+  # share the same error taxonomy.
+  defp validate_if_match(_op, params, socket) do
     case Map.get(params, "if_match") do
       nil ->
         :ok
@@ -250,18 +255,10 @@ defmodule DustWeb.StoreChannel do
       _if_match ->
         capver = socket.assigns[:capver] || 1
 
-        cond do
-          capver < 2 ->
-            {:error, {:if_match, %{reason: "capver_mismatch"}}}
-
-          op != :set ->
-            {:error, {:if_match, %{reason: "if_match_unsupported_op", op: params["op"]}}}
-
-          is_map(params["value"]) and not ValueCodec.typed_value?(params["value"]) ->
-            {:error, {:if_match, %{reason: "if_match_multi_leaf"}}}
-
-          true ->
-            :ok
+        if capver < 2 do
+          {:error, {:if_match, %{reason: "capver_mismatch"}}}
+        else
+          :ok
         end
     end
   end

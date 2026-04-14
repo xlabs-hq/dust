@@ -3,16 +3,49 @@ defmodule Dust.Sync do
   alias Dust.Sync.{Writer, Rollback, StoreDB, ValueCodec}
 
   def write(store_id, op_attrs) do
-    case Writer.write(store_id, op_attrs) do
-      {:ok, op} ->
-        notify_webhooks(store_id, op)
-        {:ok, op}
+    with :ok <- validate_if_match_attrs(op_attrs) do
+      case Writer.write(store_id, op_attrs) do
+        {:ok, op} ->
+          notify_webhooks(store_id, op)
+          {:ok, op}
 
-      error ->
-        error
+        error ->
+          error
+      end
     end
   catch
     :exit, reason -> {:error, {:writer_unavailable, reason}}
+  end
+
+  # Transport-agnostic CAS preconditions. Both the Phoenix channel and the
+  # HTTP controller route writes through `Sync.write/2`, so these two gates
+  # (unsupported op, multi-leaf dict value) must live here to preserve a
+  # consistent error taxonomy across transports. The channel layer enforces
+  # an additional transport-specific `capver >= 2` gate before calling us.
+  defp validate_if_match_attrs(attrs) do
+    case fetch_if_match(attrs) do
+      nil ->
+        :ok
+
+      _if_match ->
+        op = attrs[:op] || attrs["op"]
+        value = attrs[:value] || attrs["value"]
+
+        cond do
+          op != :set ->
+            {:error, :if_match_unsupported_op}
+
+          is_map(value) and not ValueCodec.typed_value?(value) ->
+            {:error, :if_match_multi_leaf}
+
+          true ->
+            :ok
+        end
+    end
+  end
+
+  defp fetch_if_match(attrs) do
+    attrs[:if_match] || attrs["if_match"]
   end
 
   defp notify_webhooks(store_id, op) do

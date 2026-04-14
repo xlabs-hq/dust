@@ -576,6 +576,29 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       assert %{value: 1} = Sync.get_entry(store.id, "cas.counter")
     end
 
+    test "If-Match with dict body returns 400 if_match_multi_leaf", %{
+      conn: conn,
+      token: token,
+      store: store
+    } do
+      resp =
+        conn
+        |> api_conn(token)
+        |> put_req_header("content-type", "application/json")
+        |> put_req_header("if-match", "5")
+        |> put(
+          "/api/stores/entriesorg/mystore/entries/users.alice",
+          ~s({"name": "Alice"})
+        )
+
+      body = json_response(resp, 400)
+      assert body["error"] == "if_match_multi_leaf"
+      assert is_binary(body["detail"])
+
+      # The existing subtree is unchanged (safety invariant preserved).
+      assert %{value: "Alice"} = Sync.get_entry(store.id, "users.alice.name")
+    end
+
     test "returns 401 without Bearer token", %{conn: conn} do
       resp =
         conn
