@@ -71,7 +71,8 @@ module Dust
         stores                        List stores
         status [store]                Show sync status
 
-        put <store> <path> <json>     Set a value
+        put <store> <path> <json> [--if-match N]
+                                      Set a value (--if-match: CAS on revision N)
         get <store> <path>            Read a value
         get-many <store> <path>...    Batch-read paths ({entries, missing} envelope)
         merge <store> <path> <json>   Merge keys

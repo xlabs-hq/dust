@@ -108,7 +108,7 @@ module Dust
       {
         "token"     => @config.token.not_nil!,
         "device_id" => @config.device_id,
-        "capver"    => "1",
+        "capver"    => "2",
       }
     end
   end

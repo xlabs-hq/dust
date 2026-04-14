@@ -3,14 +3,39 @@ require "json"
 module Dust
   module Commands
     module Data
-      # dust put <store> <path> <json>
+      # dust put <store> <path> <json> [--if-match N]
       def self.put(config : Config, args : Array(String))
         Output.require_auth!(config)
-        Output.require_args!(args, 3, "dust put <store> <path> <json>")
 
-        store, path, json_str = args[0], args[1], args[2]
+        positional = [] of String
+        if_match : Int64? = nil
+
+        i = 0
+        while i < args.size
+          case args[i]
+          when "--if-match"
+            if i + 1 < args.size
+              begin
+                if_match = args[i + 1].to_i64
+              rescue ArgumentError
+                Output.error("--if-match requires an integer value")
+              end
+              i += 2
+            else
+              Output.error("--if-match requires a value. Usage: dust put <store> <path> <json> [--if-match N]")
+              i += 1
+            end
+          else
+            positional << args[i]
+            i += 1
+          end
+        end
+
+        Output.require_args!(positional, 3, "dust put <store> <path> <json> [--if-match N]")
+
+        store, path, json_str = positional[0], positional[1], positional[2]
         value = parse_json(json_str)
-        result = write_op(config, store, "set", path, value)
+        result = write_op(config, store, "set", path, value, if_match: if_match)
         seq = result["response"]["store_seq"]
         Output.success("OK store_seq=#{seq}")
       end
@@ -320,7 +345,7 @@ module Dust
         end
       end
 
-      private def self.write_op(config : Config, store : String, op : String, path : String, value : JSON::Any?) : JSON::Any
+      private def self.write_op(config : Config, store : String, op : String, path : String, value : JSON::Any?, if_match : Int64? = nil) : JSON::Any
         conn = Connection.new(config)
         begin
           conn.connect_sync
@@ -336,11 +361,19 @@ module Dust
             payload["value"] = value
           end
 
+          if im = if_match
+            payload["if_match"] = JSON::Any.new(im)
+          end
+
           result = channel.push("write", payload)
 
           status = result["status"].as_s
           unless status == "ok"
             reason = result["response"]?.try(&.["reason"]?.try(&.as_s)) || "unknown error"
+            if reason == "conflict"
+              STDERR.puts %({"error":"conflict"})
+              exit 1
+            end
             Output.error("Write failed: #{reason}")
           end
 
