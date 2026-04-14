@@ -167,4 +167,101 @@ defmodule Dust.SyncTest do
       assert %{value: 42, type: "integer"} = entries["count"]
     end
   end
+
+  describe "CAS writes" do
+    test "set with matching if_match succeeds", %{store: store} do
+      {:ok, _} =
+        Sync.write(store.id, %{
+          op: :set,
+          path: "k",
+          value: 1,
+          device_id: "d",
+          client_op_id: "c1"
+        })
+
+      %{seq: seq} = Sync.get_entry(store.id, "k")
+
+      assert {:ok, %{store_seq: _}} =
+               Sync.write(store.id, %{
+                 op: :set,
+                 path: "k",
+                 value: 2,
+                 device_id: "d",
+                 client_op_id: "c2",
+                 if_match: seq
+               })
+
+      assert %{value: 2} = Sync.get_entry(store.id, "k")
+    end
+
+    test "set with stale if_match returns :conflict", %{store: store} do
+      {:ok, _} =
+        Sync.write(store.id, %{
+          op: :set,
+          path: "k",
+          value: 1,
+          device_id: "d",
+          client_op_id: "c1"
+        })
+
+      %{seq: stale_seq} = Sync.get_entry(store.id, "k")
+
+      # Bump the seq with another write
+      {:ok, _} =
+        Sync.write(store.id, %{
+          op: :set,
+          path: "k",
+          value: 2,
+          device_id: "d",
+          client_op_id: "c2"
+        })
+
+      assert {:error, :conflict} =
+               Sync.write(store.id, %{
+                 op: :set,
+                 path: "k",
+                 value: 3,
+                 device_id: "d",
+                 client_op_id: "c3",
+                 if_match: stale_seq
+               })
+
+      # Verify the entry was NOT updated
+      assert %{value: 2} = Sync.get_entry(store.id, "k")
+    end
+
+    test "set with if_match on a missing path returns :conflict", %{store: store} do
+      assert {:error, :conflict} =
+               Sync.write(store.id, %{
+                 op: :set,
+                 path: "missing",
+                 value: 1,
+                 device_id: "d",
+                 client_op_id: "c1",
+                 if_match: 42
+               })
+    end
+
+    test "set without if_match is LWW as before", %{store: store} do
+      {:ok, _} =
+        Sync.write(store.id, %{
+          op: :set,
+          path: "k",
+          value: 1,
+          device_id: "d",
+          client_op_id: "c1"
+        })
+
+      assert {:ok, _} =
+               Sync.write(store.id, %{
+                 op: :set,
+                 path: "k",
+                 value: 2,
+                 device_id: "d",
+                 client_op_id: "c2"
+               })
+
+      assert %{value: 2} = Sync.get_entry(store.id, "k")
+    end
+  end
 end

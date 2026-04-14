@@ -90,42 +90,23 @@ defmodule Dust.Sync.Writer do
           current_seq = max(ops_seq, snap_seq)
           next_seq = current_seq + 1
 
-          # Insert op
-          value_json = encode_value(attrs[:value])
-          type = attrs[:type] || ValueCodec.detect_type(attrs[:value])
-
-          exec(
-            db,
-            """
-              INSERT INTO store_ops (store_seq, op, path, value, type, device_id, client_op_id)
-              VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-              next_seq,
-              to_string(attrs.op),
-              attrs.path,
-              value_json,
-              type,
-              attrs.device_id,
-              attrs.client_op_id
-            ]
-          )
-
-          # Apply to materialized state
-          materialized = apply_to_entries(db, next_seq, attrs)
-
-          %{
-            store_seq: next_seq,
-            op: attrs.op,
-            path: attrs.path,
-            value: ValueCodec.wrap(attrs[:value]),
-            type: type,
-            device_id: attrs.device_id,
-            client_op_id: attrs.client_op_id,
-            store_id: store_id,
-            materialized_value: materialized
-          }
+          with :ok <- maybe_validate_if_match(db, attrs.path, attrs) do
+            insert_and_apply(db, next_seq, attrs, store_id)
+          end
         end)
+
+      # The inner function now returns {:ok, op} | {:error, reason} so
+      # that a CAS mismatch can short-circuit the with-chain without
+      # raising. Unwrap the extra layer added by sqlite_transaction/2.
+      # The SQLite transaction still commits on {:error, _} — but the
+      # inner fun short-circuits before any INSERT, so the commit is a
+      # no-op and no state is changed.
+      result =
+        case result do
+          {:ok, {:ok, op}} -> {:ok, op}
+          {:ok, {:error, reason}} -> {:error, reason}
+          other -> other
+        end
 
       # Update cached metadata in Postgres (best-effort, after durable commit)
       case result do
@@ -137,6 +118,62 @@ defmodule Dust.Sync.Writer do
           {result, metadata}
       end
     end)
+  end
+
+  defp insert_and_apply(db, next_seq, attrs, store_id) do
+    # Insert op
+    value_json = encode_value(attrs[:value])
+    type = attrs[:type] || ValueCodec.detect_type(attrs[:value])
+
+    exec(
+      db,
+      """
+        INSERT INTO store_ops (store_seq, op, path, value, type, device_id, client_op_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      """,
+      [
+        next_seq,
+        to_string(attrs.op),
+        attrs.path,
+        value_json,
+        type,
+        attrs.device_id,
+        attrs.client_op_id
+      ]
+    )
+
+    # Apply to materialized state
+    materialized = apply_to_entries(db, next_seq, attrs)
+
+    {:ok,
+     %{
+       store_seq: next_seq,
+       op: attrs.op,
+       path: attrs.path,
+       value: ValueCodec.wrap(attrs[:value]),
+       type: type,
+       device_id: attrs.device_id,
+       client_op_id: attrs.client_op_id,
+       store_id: store_id,
+       materialized_value: materialized
+     }}
+  end
+
+  defp maybe_validate_if_match(db, path, attrs) do
+    case fetch_if_match(attrs) do
+      nil ->
+        :ok
+
+      expected when is_integer(expected) ->
+        case query_one(db, "SELECT seq FROM store_entries WHERE path = ?", [path]) do
+          ^expected -> :ok
+          _ -> {:error, :conflict}
+        end
+    end
+  end
+
+  defp fetch_if_match(attrs) do
+    attrs[:if_match] || attrs["if_match"]
   end
 
   defp do_compact(db) do
