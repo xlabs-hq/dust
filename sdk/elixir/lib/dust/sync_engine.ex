@@ -22,6 +22,10 @@ defmodule Dust.SyncEngine do
     GenServer.call(via(store), {:put, path, value})
   end
 
+  def put(store, path, value, opts) when is_list(opts) do
+    GenServer.call(via(store), {:put, path, value, opts})
+  end
+
   def delete(store, path) do
     GenServer.call(via(store), {:delete, path})
   end
@@ -80,6 +84,10 @@ defmodule Dust.SyncEngine do
 
   def handle_write_rejected(store, client_op_id, reason) do
     GenServer.cast(via(store), {:write_rejected, client_op_id, reason})
+  end
+
+  def handle_write_accepted(store, client_op_id, store_seq) do
+    GenServer.cast(via(store), {:write_accepted, client_op_id, store_seq})
   end
 
   def set_catch_up_complete(store, through_seq) do
@@ -164,30 +172,16 @@ defmodule Dust.SyncEngine do
 
   @impl true
   def handle_call({:put, path, value}, _from, state) do
-    client_op_id = generate_op_id()
-    type = detect_type(value)
-
-    # Save previous value for rollback on rejection
-    prev = state.cache.read(state.cache_target, state.store, path)
-
-    # Optimistic local write
-    :ok = state.cache.write(state.cache_target, state.store, path, value, type, 0)
-
-    # Fire local callbacks
-    dispatch_callbacks(state, path, %{
-      store: state.store, path: path, op: :set, value: value,
-      committed: false, source: :local, client_op_id: client_op_id
-    })
-
-    # Queue for server (with prev_value for rollback)
-    op_msg = %{op: :set, path: path, value: value, client_op_id: client_op_id, prev: prev}
-    pending = Map.put(state.pending_ops, client_op_id, op_msg)
-    state = %{state | pending_ops: pending}
-
-    # Notify connection to send
+    {op_msg, state} = do_put(path, value, [], nil, state)
     send_to_connection(state.store, op_msg)
-
     {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_call({:put, path, value, opts}, from, state) do
+    {op_msg, state} = do_put(path, value, opts, from, state)
+    send_to_connection(state.store, op_msg)
+    {:noreply, state}
   end
 
   @impl true
@@ -545,6 +539,41 @@ defmodule Dust.SyncEngine do
           error: %{code: :rejected, message: to_string(reason)}
         })
 
+        # If a put/4 caller is awaiting a reply, surface the error.
+        case Map.get(op_attrs, :from) do
+          nil -> :ok
+          from -> GenServer.reply(from, {:error, reason_to_atom(reason)})
+        end
+
+        {:noreply, %{state | pending_ops: pending}}
+    end
+  end
+
+  @impl true
+  def handle_cast({:write_accepted, client_op_id, store_seq}, state) do
+    case Map.get(state.pending_ops, client_op_id) do
+      nil ->
+        {:noreply, state}
+
+      op_attrs ->
+        # Reply to any put/4 caller waiting for the server ack.
+        case Map.get(op_attrs, :from) do
+          nil ->
+            :ok
+
+          from ->
+            GenServer.reply(from, {:ok, store_seq})
+        end
+
+        # Leave pending_ops intact — it's cleared by :server_event reconciliation
+        # so rollback on later rejection (by reason like :rate_limited) still works.
+        # But once we've replied successfully, drop the :from so subsequent events
+        # don't double-reply.
+        pending =
+          Map.update(state.pending_ops, client_op_id, op_attrs, fn attrs ->
+            Map.delete(attrs, :from)
+          end)
+
         {:noreply, %{state | pending_ops: pending}}
     end
   end
@@ -672,6 +701,54 @@ defmodule Dust.SyncEngine do
         :ok
     end
   end
+
+  defp do_put(path, value, opts, from, state) do
+    client_op_id = generate_op_id()
+    type = detect_type(value)
+
+    # Save previous value for rollback on rejection
+    prev = state.cache.read(state.cache_target, state.store, path)
+
+    # Optimistic local write
+    :ok = state.cache.write(state.cache_target, state.store, path, value, type, 0)
+
+    # Fire local callbacks
+    dispatch_callbacks(state, path, %{
+      store: state.store, path: path, op: :set, value: value,
+      committed: false, source: :local, client_op_id: client_op_id
+    })
+
+    op_msg =
+      %{op: :set, path: path, value: value, client_op_id: client_op_id, prev: prev}
+      |> maybe_put_if_match(opts)
+      |> maybe_put_from(from)
+
+    pending = Map.put(state.pending_ops, client_op_id, op_msg)
+    {op_msg, %{state | pending_ops: pending}}
+  end
+
+  defp maybe_put_if_match(op_msg, opts) do
+    case Keyword.fetch(opts, :if_match) do
+      {:ok, value} -> Map.put(op_msg, :if_match, value)
+      :error -> op_msg
+    end
+  end
+
+  defp maybe_put_from(op_msg, nil), do: op_msg
+  defp maybe_put_from(op_msg, from), do: Map.put(op_msg, :from, from)
+
+  defp reason_to_atom(reason) when is_atom(reason), do: reason
+  defp reason_to_atom("conflict"), do: :conflict
+  defp reason_to_atom("rate_limited"), do: :rate_limited
+  defp reason_to_atom("unauthorized"), do: :unauthorized
+  defp reason_to_atom("invalid_op"), do: :invalid_op
+  defp reason_to_atom("capver_mismatch"), do: :capver_mismatch
+  defp reason_to_atom("if_match_unsupported_op"), do: :if_match_unsupported_op
+  defp reason_to_atom("if_match_multi_leaf"), do: :if_match_multi_leaf
+  # Unknown string reasons are returned as-is so callers see the server's
+  # raw reason without risking unsafe atom creation.
+  defp reason_to_atom(reason) when is_binary(reason), do: reason
+  defp reason_to_atom(_), do: :unknown
 
   defp send_to_connection(store, op_attrs) do
     case GenServer.whereis(Dust.Connection) do

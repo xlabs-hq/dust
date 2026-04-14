@@ -188,6 +188,12 @@ defmodule Dust.Connection do
           {:error, %{reason: reason}} ->
             Dust.SyncEngine.handle_write_rejected(store_name, client_op_id, reason)
 
+          {:ok, %{"store_seq" => store_seq}} ->
+            Dust.SyncEngine.handle_write_accepted(store_name, client_op_id, store_seq)
+
+          {:ok, %{store_seq: store_seq}} ->
+            Dust.SyncEngine.handle_write_accepted(store_name, client_op_id, store_seq)
+
           _ ->
             :ok
         end
@@ -225,12 +231,14 @@ defmodule Dust.Connection do
   def handle_info({:send_write, store_name, op_attrs}, socket) do
     topic = "store:#{store_name}"
 
-    params = %{
-      "op" => to_string(op_attrs.op),
-      "path" => op_attrs.path,
-      "value" => op_attrs[:value],
-      "client_op_id" => op_attrs.client_op_id
-    }
+    params =
+      %{
+        "op" => to_string(op_attrs.op),
+        "path" => op_attrs.path,
+        "value" => op_attrs[:value],
+        "client_op_id" => op_attrs.client_op_id
+      }
+      |> maybe_put_if_match(op_attrs)
 
     if MapSet.member?(socket.assigns.joined_stores, store_name) do
       {:ok, ref} = push(socket, topic, "write", params)
@@ -272,6 +280,12 @@ defmodule Dust.Connection do
   end
 
   # -- Private helpers --
+
+  defp maybe_put_if_match(params, %{if_match: value}) when not is_nil(value) do
+    Map.put(params, "if_match", value)
+  end
+
+  defp maybe_put_if_match(params, _op_attrs), do: params
 
   defp flush_outbox(socket, store_name) do
     outbox = Map.get(socket.assigns, :outbox, %{})

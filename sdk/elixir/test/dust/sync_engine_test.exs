@@ -581,6 +581,96 @@ defmodule Dust.SyncEngineTest do
     end
   end
 
+  describe "put/4 with if_match" do
+    setup do
+      # Register the test pid as Dust.Connection so we can intercept
+      # {:send_write, store, op_attrs} messages and verify the payload.
+      Process.register(self(), Dust.Connection)
+      :ok
+    end
+
+    test "forwards if_match through the pending op to the connection" do
+      task =
+        Task.async(fn ->
+          SyncEngine.put("test/store", "k", 2, if_match: 7)
+        end)
+
+      assert_receive {:send_write, "test/store",
+                      %{op: :set, path: "k", value: 2, if_match: 7, client_op_id: client_op_id}},
+                     500
+
+      # Ack so the caller unblocks
+      SyncEngine.handle_write_accepted("test/store", client_op_id, 42)
+
+      assert Task.await(task, 500) == {:ok, 42}
+    end
+
+    test "put/4 without if_match still sends through the connection and returns {:ok, seq}" do
+      task =
+        Task.async(fn ->
+          SyncEngine.put("test/store", "k", "v", [])
+        end)
+
+      assert_receive {:send_write, "test/store",
+                      %{op: :set, path: "k", value: "v", client_op_id: client_op_id} = op_attrs},
+                     500
+
+      refute Map.has_key?(op_attrs, :if_match)
+
+      SyncEngine.handle_write_accepted("test/store", client_op_id, 5)
+
+      assert Task.await(task, 500) == {:ok, 5}
+    end
+
+    test "put/4 returns {:error, :conflict} when server rejects with conflict" do
+      task =
+        Task.async(fn ->
+          SyncEngine.put("test/store", "k", 3, if_match: 1)
+        end)
+
+      assert_receive {:send_write, "test/store", %{client_op_id: client_op_id}}, 500
+
+      SyncEngine.handle_write_rejected("test/store", client_op_id, "conflict")
+
+      assert Task.await(task, 500) == {:error, :conflict}
+    end
+
+    test "put/4 returns {:error, reason} for non-conflict rejections" do
+      task =
+        Task.async(fn ->
+          SyncEngine.put("test/store", "k", 3, if_match: 1)
+        end)
+
+      assert_receive {:send_write, "test/store", %{client_op_id: client_op_id}}, 500
+
+      SyncEngine.handle_write_rejected("test/store", client_op_id, "rate_limited")
+
+      assert Task.await(task, 500) == {:error, :rate_limited}
+    end
+
+    test "Dust.put/4 delegates to SyncEngine.put/4" do
+      task =
+        Task.async(fn ->
+          Dust.put("test/store", "k", "v", if_match: 9)
+        end)
+
+      assert_receive {:send_write, "test/store",
+                      %{op: :set, path: "k", value: "v", if_match: 9, client_op_id: client_op_id}},
+                     500
+
+      SyncEngine.handle_write_accepted("test/store", client_op_id, 10)
+
+      assert Task.await(task, 500) == {:ok, 10}
+    end
+
+    test "put/3 still returns :ok and does not block" do
+      # put/3 must remain non-blocking and not return {:ok, seq}.
+      assert :ok = SyncEngine.put("test/store", "k", "v")
+      # Drain the send_write message so it doesn't leak to other tests.
+      assert_receive {:send_write, "test/store", _}, 500
+    end
+  end
+
   defp drain_events(timeout_ms) do
     receive do
       {:event, event} -> [event | drain_events(timeout_ms)]

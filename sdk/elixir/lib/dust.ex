@@ -19,6 +19,7 @@ defmodule Dust do
   defdelegate get_many(store, paths), to: Dust.SyncEngine
   defdelegate entry(store, path), to: Dust.SyncEngine
   defdelegate put(store, path, value), to: Dust.SyncEngine
+  defdelegate put(store, path, value, opts), to: Dust.SyncEngine
   defdelegate delete(store, path), to: Dust.SyncEngine
   defdelegate merge(store, path, map), to: Dust.SyncEngine
   defdelegate increment(store, path, delta \\ 1), to: Dust.SyncEngine
