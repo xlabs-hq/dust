@@ -10,6 +10,11 @@ describe('Dust', () => {
     return new Dust({ url: 'ws://localhost:7755/ws/sync', token: 'test' })
   }
 
+  function seedEntry(dust: any, store: string, path: string, value: unknown, type: string, seq: number) {
+    dust.joinedStores.set(store, Promise.resolve())
+    dust.cache.set(store, path, { path, value, type, seq })
+  }
+
   describe('event handling', () => {
     it('handleEvent updates cache on set', () => {
       const dust = createDust() as any
@@ -256,11 +261,6 @@ describe('Dust', () => {
   })
 
   describe('enum', () => {
-    function seedEntry(dust: any, store: string, path: string, value: unknown, type: string, seq: number) {
-      dust.joinedStores.set(store, Promise.resolve())
-      dust.cache.set(store, path, { path, value, type, seq })
-    }
-
     it('enum with no opts preserves the flat array shape (backwards compat)', async () => {
       const dust = createDust() as any
       seedEntry(dust, 'store', 'a', 1, 'integer', 1)
@@ -294,6 +294,31 @@ describe('Dust', () => {
 
       expect(page.items).toEqual(['a', 'b'])
       expect(page.items.every((i: unknown) => typeof i === 'string')).toBe(true)
+    })
+  })
+
+  describe('range', () => {
+    it('range returns entries in [from, to)', async () => {
+      const dust = createDust() as any
+      for (const k of ['a', 'b', 'c', 'd', 'e']) {
+        seedEntry(dust, 'store', k, k, 'string', 1)
+      }
+      const page = await dust.range('store', 'b', 'e', { limit: 10 })
+      expect(page.items.map((e: any) => e.path)).toEqual(['b', 'c', 'd'])
+    })
+
+    it('range rejects select prefixes', async () => {
+      const dust = createDust() as any
+      await expect(dust.range('store', 'a', 'z', { select: 'prefixes' as any }))
+        .rejects.toThrow()
+    })
+
+    it('range with from >= to returns empty page', async () => {
+      const dust = createDust() as any
+      seedEntry(dust, 'store', 'x', 'x', 'string', 1)
+      const page = await dust.range('store', 'z', 'a')
+      expect(page.items).toEqual([])
+      expect(page.nextCursor).toBeNull()
     })
   })
 

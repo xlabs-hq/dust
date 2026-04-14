@@ -103,6 +103,19 @@ export class Dust {
     return this.cache.browse(store, { ...opts, pattern })
   }
 
+  async range(
+    store: string,
+    from: string,
+    to: string,
+    opts: Omit<EnumOptions, 'select'> & { select?: 'entries' | 'keys' } = {},
+  ): Promise<Page<Entry> | Page<string>> {
+    if ((opts as any).select === 'prefixes') {
+      throw new Error('range: select prefixes is not supported')
+    }
+    await this.ensureJoined(store)
+    return this.cache.browse(store, { ...opts, from, to })
+  }
+
   status(store: string): Status {
     return {
       connected: this.connection.connected,
