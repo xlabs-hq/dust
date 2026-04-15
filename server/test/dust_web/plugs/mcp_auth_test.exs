@@ -1,5 +1,5 @@
 defmodule DustWeb.Plugs.MCPAuthTest do
-  use DustWeb.ConnCase, async: true
+  use DustWeb.ConnCase, async: false
 
   alias Dust.Accounts
   alias Dust.IntegrationHelpers

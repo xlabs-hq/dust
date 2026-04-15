@@ -30,7 +30,11 @@ defmodule Dust.DataCase do
   setup tags do
     Dust.DataCase.setup_sandbox(tags)
 
-    # Clean up SQLite store files between tests
+    # Clean up SQLite store files between tests. Production code keys store
+    # files by `{org_slug}/{store_name}.db`, so successive tests that reuse
+    # the same slug/name (the common fixture pattern) would otherwise see
+    # stale data. Store-creating tests MUST be `async: false` — concurrent
+    # async tests would race on this rm_rf.
     store_dir = Application.get_env(:dust, :store_data_dir, "priv/stores")
     File.rm_rf!(store_dir)
     on_exit(fn -> File.rm_rf!(store_dir) end)

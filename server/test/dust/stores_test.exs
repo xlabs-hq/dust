@@ -1,5 +1,5 @@
 defmodule Dust.StoresTest do
-  use Dust.DataCase, async: true
+  use Dust.DataCase, async: false
 
   alias Dust.{Accounts, Stores}
 
