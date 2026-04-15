@@ -3,6 +3,8 @@ defmodule DustWeb.Api.DiffController do
 
   alias Dust.{Stores, Sync}
 
+  action_fallback DustWeb.Api.FallbackController
+
   def show(conn, %{"org" => org_slug, "store" => store_name} = params) do
     organization = conn.assigns.organization
     store_token = conn.assigns.store_token
@@ -11,29 +13,23 @@ defmodule DustWeb.Api.DiffController do
          {:ok, store} <- find_store(organization, store_name),
          :ok <- verify_token_scope(store_token, store),
          :ok <- verify_read_permission(store_token),
-         {:ok, from_seq} <- parse_int(params, "from_seq"),
-         to_seq <- parse_optional_int(params, "to_seq"),
-         {:ok, diff} <- Sync.Diff.changes(store.id, from_seq, to_seq) do
-      json(conn, %{
-        from_seq: diff.from_seq,
-        to_seq: diff.to_seq,
-        changes:
-          Enum.map(diff.changes, fn c ->
-            %{path: c.path, before: c.before, after: c.after}
-          end)
-      })
-    else
-      {:error, :org_mismatch} ->
-        conn |> put_status(404) |> json(%{error: "not_found"})
+         {:ok, from_seq} <- parse_int(params, "from_seq") do
+      to_seq = parse_optional_int(params, "to_seq")
+      do_diff(conn, store, from_seq, to_seq)
+    end
+  end
 
-      {:error, :not_found} ->
-        conn |> put_status(404) |> json(%{error: "not_found"})
-
-      {:error, :forbidden} ->
-        conn |> put_status(403) |> json(%{error: "forbidden"})
-
-      {:error, :invalid_param, field} ->
-        conn |> put_status(400) |> json(%{error: "invalid_param", field: field})
+  defp do_diff(conn, store, from_seq, to_seq) do
+    case Sync.Diff.changes(store.id, from_seq, to_seq) do
+      {:ok, diff} ->
+        json(conn, %{
+          from_seq: diff.from_seq,
+          to_seq: diff.to_seq,
+          changes:
+            Enum.map(diff.changes, fn c ->
+              %{path: c.path, before: c.before, after: c.after}
+            end)
+        })
 
       {:error, :compacted, %{earliest_available: earliest}} ->
         conn |> put_status(409) |> json(%{error: "compacted", earliest_available: earliest})
@@ -61,17 +57,17 @@ defmodule DustWeb.Api.DiffController do
 
   defp parse_int(params, key) do
     case Map.get(params, key) do
-      nil -> {:error, :invalid_param, key}
+      nil -> {:error, {:invalid_params, "#{key} is required"}}
       val when is_binary(val) -> parse_int_string(val, key)
       val when is_integer(val) -> {:ok, val}
-      _ -> {:error, :invalid_param, key}
+      _ -> {:error, {:invalid_params, "#{key} must be an integer"}}
     end
   end
 
   defp parse_int_string(val, key) do
     case Integer.parse(val) do
       {int, ""} -> {:ok, int}
-      _ -> {:error, :invalid_param, key}
+      _ -> {:error, {:invalid_params, "#{key} must be an integer"}}
     end
   end
 

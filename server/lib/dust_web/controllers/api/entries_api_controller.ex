@@ -4,6 +4,8 @@ defmodule DustWeb.Api.EntriesApiController do
   alias Dust.Stores
   alias Dust.Sync
 
+  action_fallback DustWeb.Api.FallbackController
+
   def show(conn, %{"org" => org_slug, "store" => store_name, "path" => path_segments}) do
     organization = conn.assigns.organization
     store_token = conn.assigns.store_token
@@ -15,15 +17,6 @@ defmodule DustWeb.Api.EntriesApiController do
          :ok <- verify_read_permission(store_token),
          {:ok, entry} <- fetch_entry(store.id, path) do
       json(conn, render_entry(entry))
-    else
-      {:error, :org_mismatch} ->
-        conn |> put_status(404) |> json(%{"error" => "not_found"})
-
-      {:error, :not_found} ->
-        conn |> put_status(404) |> json(%{"error" => "not_found"})
-
-      {:error, :forbidden} ->
-        conn |> put_status(403) |> json(%{"error" => "forbidden"})
     end
   end
 
@@ -35,7 +28,7 @@ defmodule DustWeb.Api.EntriesApiController do
   end
 
   defp render_entry(%{path: p, value: v, type: t, seq: s}) do
-    %{"path" => p, "value" => v, "type" => t, "revision" => s}
+    %{path: p, value: v, type: t, revision: s}
   end
 
   def index(conn, %{"org" => org_slug, "store" => store_name} = params) do
@@ -51,21 +44,6 @@ defmodule DustWeb.Api.EntriesApiController do
         :range -> do_range(conn, store, params)
         :enum -> do_enum(conn, store, params)
       end
-    else
-      {:error, :org_mismatch} ->
-        conn |> put_status(404) |> json(%{"error" => "not_found"})
-
-      {:error, :not_found} ->
-        conn |> put_status(404) |> json(%{"error" => "not_found"})
-
-      {:error, :forbidden} ->
-        conn |> put_status(403) |> json(%{"error" => "forbidden"})
-
-      {:error, {:conflicting_params, detail}} ->
-        conn |> put_status(400) |> json(%{"error" => "conflicting_params", "detail" => detail})
-
-      {:error, {:invalid_params, detail}} ->
-        conn |> put_status(400) |> json(%{"error" => "invalid_params", "detail" => detail})
     end
   end
 
@@ -80,54 +58,43 @@ defmodule DustWeb.Api.EntriesApiController do
          :ok <- verify_token_scope(store_token, store),
          :ok <- verify_write_permission(store_token),
          {:ok, attrs} <- build_put_attrs(conn, path, value, store_token) do
-      case Sync.write(store.id, attrs) do
-        {:ok, op} ->
-          json(conn, %{"revision" => op.store_seq, "store_seq" => op.store_seq})
+      write_and_respond(conn, store, path, attrs)
+    end
+  end
 
-        {:error, :conflict} ->
-          conn
-          |> put_status(412)
-          |> json(%{
-            "error" => "conflict",
-            "current_revision" => current_revision_for(store, path)
-          })
+  defp write_and_respond(conn, store, path, attrs) do
+    case Sync.write(store.id, attrs) do
+      {:ok, op} ->
+        json(conn, %{revision: op.store_seq, store_seq: op.store_seq})
 
-        {:error, :if_match_unsupported_op} ->
-          conn
-          |> put_status(400)
-          |> json(%{
-            "error" => "if_match_unsupported_op",
-            "detail" => "If-Match is only supported for set operations"
-          })
+      {:error, :conflict} ->
+        conn
+        |> put_status(412)
+        |> json(%{
+          error: "conflict",
+          current_revision: current_revision_for(store, path)
+        })
 
-        {:error, :if_match_multi_leaf} ->
-          conn
-          |> put_status(400)
-          |> json(%{
-            "error" => "if_match_multi_leaf",
-            "detail" => "If-Match requires a leaf value, not a map/dict"
-          })
+      {:error, :if_match_unsupported_op} ->
+        conn
+        |> put_status(400)
+        |> json(%{
+          error: "if_match_unsupported_op",
+          detail: "If-Match is only supported for set operations"
+        })
 
-        {:error, reason} ->
-          conn
-          |> put_status(400)
-          |> json(%{"error" => "invalid_params", "detail" => inspect(reason)})
-      end
-    else
-      {:error, :org_mismatch} ->
-        conn |> put_status(404) |> json(%{"error" => "not_found"})
+      {:error, :if_match_multi_leaf} ->
+        conn
+        |> put_status(400)
+        |> json(%{
+          error: "if_match_multi_leaf",
+          detail: "If-Match requires a leaf value, not a map/dict"
+        })
 
-      {:error, :not_found} ->
-        conn |> put_status(404) |> json(%{"error" => "not_found"})
-
-      {:error, :forbidden} ->
-        conn |> put_status(403) |> json(%{"error" => "forbidden"})
-
-      {:error, {:invalid_params, detail}} ->
-        conn |> put_status(400) |> json(%{"error" => "invalid_params", "detail" => detail})
-
-      {:error, {:invalid_if_match, detail}} ->
-        conn |> put_status(400) |> json(%{"error" => "invalid_params", "detail" => detail})
+      {:error, reason} ->
+        conn
+        |> put_status(400)
+        |> json(%{error: "invalid_params", detail: inspect(reason)})
     end
   end
 
@@ -163,7 +130,7 @@ defmodule DustWeb.Api.EntriesApiController do
       [raw | _] ->
         case Integer.parse(raw) do
           {n, ""} when n > 0 -> {:ok, Map.put(base, :if_match, n)}
-          _ -> {:error, {:invalid_if_match, "If-Match must be a positive integer"}}
+          _ -> {:error, {:invalid_params, "If-Match must be a positive integer"}}
         end
     end
   end
@@ -198,21 +165,9 @@ defmodule DustWeb.Api.EntriesApiController do
       %{entries: entries, missing: missing} = Sync.get_many_entries(store.id, paths)
 
       json(conn, %{
-        "entries" => render_batch_entries(entries),
-        "missing" => missing
+        entries: render_batch_entries(entries),
+        missing: missing
       })
-    else
-      {:error, :org_mismatch} ->
-        conn |> put_status(404) |> json(%{"error" => "not_found"})
-
-      {:error, :not_found} ->
-        conn |> put_status(404) |> json(%{"error" => "not_found"})
-
-      {:error, :forbidden} ->
-        conn |> put_status(403) |> json(%{"error" => "forbidden"})
-
-      {:error, {:invalid_params, detail}} ->
-        conn |> put_status(400) |> json(%{"error" => "invalid_params", "detail" => detail})
     end
   end
 
@@ -233,7 +188,7 @@ defmodule DustWeb.Api.EntriesApiController do
 
   defp render_batch_entries(entries) do
     Map.new(entries, fn {path, %{value: v, type: t, seq: s}} ->
-      {path, %{"value" => v, "type" => t, "revision" => s}}
+      {path, %{value: v, type: t, revision: s}}
     end)
   end
 
@@ -264,10 +219,10 @@ defmodule DustWeb.Api.EntriesApiController do
       json(conn, render_page(page))
     else
       {:error, :invalid_pattern_for_prefixes} ->
-        conn |> put_status(400) |> json(%{"error" => "invalid_pattern_for_prefixes"})
+        conn |> put_status(400) |> json(%{error: "invalid_pattern_for_prefixes"})
 
       {:error, {:invalid_params, detail}} ->
-        conn |> put_status(400) |> json(%{"error" => "invalid_params", "detail" => detail})
+        conn |> put_status(400) |> json(%{error: "invalid_params", detail: detail})
     end
   end
 
@@ -280,12 +235,12 @@ defmodule DustWeb.Api.EntriesApiController do
         conn
         |> put_status(400)
         |> json(%{
-          "error" => "unsupported_select",
-          "detail" => "select=prefixes not supported for range"
+          error: "unsupported_select",
+          detail: "select=prefixes not supported for range"
         })
 
       {:error, {:invalid_params, detail}} ->
-        conn |> put_status(400) |> json(%{"error" => "invalid_params", "detail" => detail})
+        conn |> put_status(400) |> json(%{error: "invalid_params", detail: detail})
     end
   end
 
@@ -386,11 +341,11 @@ defmodule DustWeb.Api.EntriesApiController do
   defp parse_after(_), do: {:ok, nil}
 
   defp render_page(%{items: items, next_cursor: cursor}) do
-    %{"items" => Enum.map(items, &render_item/1), "next_cursor" => cursor}
+    %{items: Enum.map(items, &render_item/1), next_cursor: cursor}
   end
 
   defp render_item(%{path: p, value: v, type: t, revision: r}) do
-    %{"path" => p, "value" => v, "type" => t, "revision" => r}
+    %{path: p, value: v, type: t, revision: r}
   end
 
   defp render_item(path) when is_binary(path), do: path

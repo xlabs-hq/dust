@@ -3,6 +3,8 @@ defmodule DustWeb.Api.CloneController do
 
   alias Dust.{Stores, Sync}
 
+  action_fallback DustWeb.Api.FallbackController
+
   def create(conn, %{"org" => org_slug, "store" => store_name, "name" => target_name}) do
     organization = conn.assigns.organization
     store_token = conn.assigns.store_token
@@ -10,23 +12,24 @@ defmodule DustWeb.Api.CloneController do
     with :ok <- verify_org(organization, org_slug),
          {:ok, source} <- find_store(organization, store_name),
          :ok <- verify_token_scope(store_token, source),
-         :ok <- verify_write_permission(store_token),
-         {:ok, target} <- Sync.Clone.clone_store(source, organization, target_name) do
-      conn
-      |> put_status(201)
-      |> json(%{
-        ok: true,
-        store: %{id: target.id, name: target.name, full_name: "#{org_slug}/#{target.name}"}
-      })
-    else
-      {:error, :org_mismatch} ->
-        conn |> put_status(404) |> json(%{error: "not_found"})
+         :ok <- verify_write_permission(store_token) do
+      do_clone(conn, source, organization, org_slug, target_name)
+    end
+  end
 
-      {:error, :not_found} ->
-        conn |> put_status(404) |> json(%{error: "not_found"})
+  def create(_conn, _params) do
+    {:error, {:invalid_params, "name is required"}}
+  end
 
-      {:error, :forbidden} ->
-        conn |> put_status(403) |> json(%{error: "forbidden"})
+  defp do_clone(conn, source, organization, org_slug, target_name) do
+    case Sync.Clone.clone_store(source, organization, target_name) do
+      {:ok, target} ->
+        conn
+        |> put_status(201)
+        |> json(%{
+          ok: true,
+          store: %{id: target.id, name: target.name, full_name: "#{org_slug}/#{target.name}"}
+        })
 
       {:error, :limit_exceeded, info} ->
         conn |> put_status(402) |> json(%{error: "limit_exceeded"} |> Map.merge(info))
@@ -34,10 +37,6 @@ defmodule DustWeb.Api.CloneController do
       {:error, %Ecto.Changeset{}} ->
         conn |> put_status(422) |> json(%{error: "name_taken"})
     end
-  end
-
-  def create(conn, _params) do
-    conn |> put_status(400) |> json(%{error: "name is required"})
   end
 
   defp verify_org(organization, org_slug) do

@@ -3,6 +3,8 @@ defmodule DustWeb.Api.ImportController do
 
   alias Dust.{Stores, Sync}
 
+  action_fallback DustWeb.Api.FallbackController
+
   def create(conn, %{"org" => org_slug, "store" => store_name}) do
     organization = conn.assigns.organization
     store_token = conn.assigns.store_token
@@ -15,15 +17,6 @@ defmodule DustWeb.Api.ImportController do
       lines = String.split(body, "\n")
       {:ok, count} = Sync.Import.from_jsonl(store.id, lines, "system:import")
       json(conn, %{ok: true, entries_imported: count})
-    else
-      {:error, :org_mismatch} ->
-        conn |> put_status(404) |> json(%{error: "not_found"})
-
-      {:error, :not_found} ->
-        conn |> put_status(404) |> json(%{error: "not_found"})
-
-      {:error, :forbidden} ->
-        conn |> put_status(403) |> json(%{error: "forbidden"})
     end
   end
 

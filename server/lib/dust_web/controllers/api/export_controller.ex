@@ -3,6 +3,8 @@ defmodule DustWeb.Api.ExportController do
 
   alias Dust.{Stores, Sync}
 
+  action_fallback DustWeb.Api.FallbackController
+
   def show(conn, %{"org" => org_slug, "store" => store_name} = params) do
     organization = conn.assigns.organization
     store_token = conn.assigns.store_token
@@ -13,15 +15,6 @@ defmodule DustWeb.Api.ExportController do
          :ok <- verify_read_permission(store_token) do
       format = Map.get(params, "format", "jsonl")
       do_export(conn, store, org_slug, store_name, format)
-    else
-      {:error, :org_mismatch} ->
-        conn |> put_status(404) |> json(%{error: "not_found"})
-
-      {:error, :not_found} ->
-        conn |> put_status(404) |> json(%{error: "not_found"})
-
-      {:error, :forbidden} ->
-        conn |> put_status(403) |> json(%{error: "forbidden"})
     end
   end
 

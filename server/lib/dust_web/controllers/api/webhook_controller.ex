@@ -4,6 +4,8 @@ defmodule DustWeb.Api.WebhookController do
   alias Dust.{Stores, Webhooks}
   alias Dust.Webhooks.DeliveryWorker
 
+  action_fallback DustWeb.Api.FallbackController
+
   @ping_timeout 5_000
 
   def index(conn, %{"org" => org_slug, "store" => store_name}) do
@@ -16,8 +18,6 @@ defmodule DustWeb.Api.WebhookController do
         |> Enum.map(&serialize_webhook_without_secret/1)
 
       json(conn, %{webhooks: webhooks})
-    else
-      {:error, reason} -> error_response(conn, reason)
     end
   end
 
@@ -25,17 +25,20 @@ defmodule DustWeb.Api.WebhookController do
     with :ok <- verify_org(conn, org_slug),
          {:ok, store} <- find_store(conn, store_name),
          :ok <- verify_token_scope(conn, store),
-         :ok <- verify_write_permission(conn),
-         {:ok, webhook} <- Webhooks.create_webhook(store, %{url: params["url"]}) do
-      conn
-      |> put_status(201)
-      |> json(serialize_webhook_with_secret(webhook))
-    else
-      {:error, %Ecto.Changeset{} = _changeset} ->
-        conn |> put_status(422) |> json(%{error: "invalid_params"})
+         :ok <- verify_write_permission(conn) do
+      do_create_webhook(conn, store, params)
+    end
+  end
 
-      {:error, reason} ->
-        error_response(conn, reason)
+  defp do_create_webhook(conn, store, params) do
+    case Webhooks.create_webhook(store, %{url: params["url"]}) do
+      {:ok, webhook} ->
+        conn
+        |> put_status(201)
+        |> json(serialize_webhook_with_secret(webhook))
+
+      {:error, %Ecto.Changeset{}} ->
+        conn |> put_status(422) |> json(%{error: "invalid_params"})
     end
   end
 
@@ -46,8 +49,6 @@ defmodule DustWeb.Api.WebhookController do
          :ok <- verify_write_permission(conn),
          :ok <- Webhooks.delete_webhook(webhook_id, store.id) do
       json(conn, %{ok: true})
-    else
-      {:error, reason} -> error_response(conn, reason)
     end
   end
 
@@ -57,42 +58,43 @@ defmodule DustWeb.Api.WebhookController do
          :ok <- verify_token_scope(conn, store),
          :ok <- verify_write_permission(conn),
          {:ok, webhook} <- Webhooks.get_webhook(webhook_id, store.id) do
-      payload =
-        %{
-          event: "ping",
-          store: "#{org_slug}/#{store_name}",
-          timestamp: DateTime.utc_now() |> DateTime.to_iso8601()
-        }
+      do_ping(conn, webhook, org_slug, store_name)
+    end
+  end
 
-      body = Jason.encode!(payload)
-      signature = DeliveryWorker.sign(body, webhook.secret)
-      start_time = System.monotonic_time(:millisecond)
+  defp do_ping(conn, webhook, org_slug, store_name) do
+    payload = %{
+      event: "ping",
+      store: "#{org_slug}/#{store_name}",
+      timestamp: DateTime.utc_now() |> DateTime.to_iso8601()
+    }
 
-      case Req.post(webhook.url,
-             body: body,
-             headers: [
-               {"content-type", "application/json"},
-               {"x-dust-signature", "sha256=#{signature}"}
-             ],
-             receive_timeout: @ping_timeout,
-             retry: false
-           ) do
-        {:ok, %{status: status}} when status >= 200 and status < 300 ->
-          elapsed = System.monotonic_time(:millisecond) - start_time
-          Webhooks.reactivate(webhook.id)
-          json(conn, %{ok: true, status_code: status, response_ms: elapsed})
+    body = Jason.encode!(payload)
+    signature = DeliveryWorker.sign(body, webhook.secret)
+    start_time = System.monotonic_time(:millisecond)
 
-        {:ok, %{status: status}} ->
-          elapsed = System.monotonic_time(:millisecond) - start_time
-          json(conn, %{ok: false, status_code: status, response_ms: elapsed})
+    case Req.post(webhook.url,
+           body: body,
+           headers: [
+             {"content-type", "application/json"},
+             {"x-dust-signature", "sha256=#{signature}"}
+           ],
+           receive_timeout: @ping_timeout,
+           retry: false
+         ) do
+      {:ok, %{status: status}} when status >= 200 and status < 300 ->
+        elapsed = System.monotonic_time(:millisecond) - start_time
+        Webhooks.reactivate(webhook.id)
+        json(conn, %{ok: true, status_code: status, response_ms: elapsed})
 
-        {:error, reason} ->
-          conn
-          |> put_status(502)
-          |> json(%{ok: false, error: inspect(reason)})
-      end
-    else
-      {:error, reason} -> error_response(conn, reason)
+      {:ok, %{status: status}} ->
+        elapsed = System.monotonic_time(:millisecond) - start_time
+        json(conn, %{ok: false, status_code: status, response_ms: elapsed})
+
+      {:error, reason} ->
+        conn
+        |> put_status(502)
+        |> json(%{ok: false, error: inspect(reason)})
     end
   end
 
@@ -109,8 +111,6 @@ defmodule DustWeb.Api.WebhookController do
         |> Enum.map(&serialize_delivery/1)
 
       json(conn, %{deliveries: deliveries})
-    else
-      {:error, reason} -> error_response(conn, reason)
     end
   end
 
@@ -189,8 +189,6 @@ defmodule DustWeb.Api.WebhookController do
     }
   end
 
-  # --- Error responses ---
-
   defp parse_int(nil, default), do: default
 
   defp parse_int(val, default) when is_binary(val) do
@@ -202,13 +200,4 @@ defmodule DustWeb.Api.WebhookController do
 
   defp parse_int(val, _default) when is_integer(val) and val > 0, do: val
   defp parse_int(_, default), do: default
-
-  defp error_response(conn, :not_found),
-    do: conn |> put_status(404) |> json(%{error: "not_found"})
-
-  defp error_response(conn, :org_mismatch),
-    do: conn |> put_status(404) |> json(%{error: "not_found"})
-
-  defp error_response(conn, :forbidden),
-    do: conn |> put_status(403) |> json(%{error: "forbidden"})
 end

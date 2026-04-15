@@ -3,23 +3,15 @@ defmodule DustWeb.Api.StoreApiController do
 
   alias Dust.Stores
 
+  action_fallback DustWeb.Api.FallbackController
+
   def index(conn, _params) do
     org = conn.assigns.organization
     stores = Stores.list_stores(org)
 
     json(conn, %{
       org: org.slug,
-      stores:
-        Enum.map(stores, fn store ->
-          %{
-            id: store.id,
-            name: store.name,
-            full_name: "#{org.slug}/#{store.name}",
-            status: store.status,
-            inserted_at: store.inserted_at,
-            expires_at: store.expires_at
-          }
-        end)
+      stores: Enum.map(stores, &serialize_store(org, &1))
     })
   end
 
@@ -27,39 +19,50 @@ defmodule DustWeb.Api.StoreApiController do
     org = conn.assigns.organization
     store_token = conn.assigns.store_token
 
-    if not Stores.StoreToken.can_write?(store_token) do
-      conn |> put_status(403) |> json(%{error: "forbidden"})
-    else
-      attrs = %{name: name}
-      attrs = if params["ttl"], do: Map.put(attrs, :ttl, params["ttl"]), else: attrs
-
-      case Stores.create_store(org, attrs) do
-        {:ok, store} ->
-          conn
-          |> put_status(201)
-          |> json(%{
-            id: store.id,
-            name: store.name,
-            full_name: "#{org.slug}/#{store.name}",
-            status: store.status,
-            expires_at: store.expires_at
-          })
-
-        {:error, :limit_exceeded, info} ->
-          conn
-          |> put_status(402)
-          |> json(%{error: "limit_exceeded"} |> Map.merge(info))
-
-        {:error, changeset} ->
-          conn
-          |> put_status(422)
-          |> json(%{error: format_errors(changeset)})
-      end
+    with :ok <- verify_write_permission(store_token) do
+      handle_create(conn, org, name, params)
     end
   end
 
-  def create(conn, _params) do
-    conn |> put_status(400) |> json(%{error: "name is required"})
+  def create(_conn, _params) do
+    {:error, {:invalid_params, "name is required"}}
+  end
+
+  defp handle_create(conn, org, name, params) do
+    attrs = %{name: name}
+    attrs = if params["ttl"], do: Map.put(attrs, :ttl, params["ttl"]), else: attrs
+
+    case Stores.create_store(org, attrs) do
+      {:ok, store} ->
+        conn
+        |> put_status(201)
+        |> json(serialize_store(org, store))
+
+      {:error, :limit_exceeded, info} ->
+        conn
+        |> put_status(402)
+        |> json(%{error: "limit_exceeded"} |> Map.merge(info))
+
+      {:error, changeset} ->
+        conn
+        |> put_status(422)
+        |> json(%{error: format_errors(changeset)})
+    end
+  end
+
+  defp serialize_store(org, store) do
+    %{
+      id: store.id,
+      name: store.name,
+      full_name: "#{org.slug}/#{store.name}",
+      status: store.status,
+      inserted_at: store.inserted_at,
+      expires_at: store.expires_at
+    }
+  end
+
+  defp verify_write_permission(store_token) do
+    if Stores.StoreToken.can_write?(store_token), do: :ok, else: {:error, :forbidden}
   end
 
   defp format_errors(changeset) do

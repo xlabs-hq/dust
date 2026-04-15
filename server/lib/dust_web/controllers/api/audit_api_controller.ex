@@ -3,6 +3,8 @@ defmodule DustWeb.Api.AuditApiController do
 
   alias Dust.{Stores, Sync.Audit}
 
+  action_fallback DustWeb.Api.FallbackController
+
   def index(conn, %{"org" => org_slug, "store" => store_name} = params) do
     organization = conn.assigns.organization
     store_token = conn.assigns.store_token
@@ -31,15 +33,6 @@ defmodule DustWeb.Api.AuditApiController do
           total_pages: total_pages
         }
       })
-    else
-      {:error, :org_mismatch} ->
-        conn |> put_status(404) |> json(%{error: "not_found"})
-
-      {:error, :not_found} ->
-        conn |> put_status(404) |> json(%{error: "not_found"})
-
-      {:error, :forbidden} ->
-        conn |> put_status(403) |> json(%{error: "forbidden"})
     end
   end
 
