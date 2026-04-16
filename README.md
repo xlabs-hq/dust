@@ -76,6 +76,32 @@ end)
 
 Or run `mix dust.install` to generate the module, config, and migration automatically.
 
+### TypeScript SDK
+
+```bash
+npm install @dust-sync/sdk
+```
+
+```typescript
+import { Dust } from "@dust-sync/sdk"
+
+const dust = new Dust({
+  url: "wss://your-host.com/ws/sync",
+  token: "dust_tok_...",
+})
+
+// Write
+await dust.put("james/blog", "posts.hello", { title: "Hello", body: "First post" })
+
+// Read (instant, from local cache)
+const post = await dust.get("james/blog", "posts.hello")
+
+// Subscribe to changes
+const unsub = dust.on("james/blog", "posts.*", (event) => {
+  console.log(`${event.path} changed!`)
+})
+```
+
 ## Core Operations
 
 ### Set, Get, Delete
@@ -112,8 +138,70 @@ entries = Dust.enum("james/blog", "posts.*")
 # => [{"posts.hello", %{...}}, {"posts.goodbye", %{...}}]
 ```
 
+With pagination and ordering:
+
+```elixir
+page = Dust.enum("james/blog", "posts.**", limit: 20, order: :desc)
+# => %Dust.Page{items: [...], next_cursor: "..."}
+
+# Cursor-based pagination
+next_page = Dust.enum("james/blog", "posts.**", limit: 20, after: page.next_cursor)
+
+# Select modes: :entries (default), :keys, :prefixes
+keys = Dust.enum("james/blog", "posts.**", select: :keys)
+```
+
 ```bash
-dust enum james/blog "posts.*"
+dust enum james/blog "posts.**" --limit 20 --order desc
+dust enum james/blog "posts.**" --select keys
+```
+
+### Entry
+
+Get the full entry (path, value, type, revision) instead of just the value:
+
+```elixir
+{:ok, entry} = Dust.entry("james/blog", "posts.hello")
+# => %Dust.Entry{path: "posts.hello", value: %{...}, type: "map", revision: 42}
+```
+
+### GetMany
+
+Batch-read up to 1000 paths in one call:
+
+```elixir
+values = Dust.get_many("james/blog", ["posts.hello", "posts.goodbye", "settings.theme"])
+# => %{"posts.hello" => %{...}, "settings.theme" => "dark"}
+```
+
+### Range
+
+Read entries in a lexicographic range `[from, to)`:
+
+```elixir
+page = Dust.range("james/blog", "metrics.2026-04-01", "metrics.2026-04-30", limit: 100)
+# => %Dust.Page{items: [...], next_cursor: "..."}
+```
+
+```bash
+dust range james/blog metrics.2026-04-01 metrics.2026-04-30 --limit 100
+```
+
+### Compare-and-Swap
+
+Conditional writes using optimistic concurrency. Pass the expected revision — the write fails with `:conflict` if another write landed first:
+
+```elixir
+{:ok, entry} = Dust.entry("james/blog", "posts.hello")
+case Dust.put("james/blog", "posts.hello", updated_post, if_match: entry.revision) do
+  :ok -> :saved
+  {:error, :conflict} -> :retry
+end
+```
+
+```bash
+dust put james/blog posts.hello '{"title":"Updated"}' --if-match 42
+# Exit code 1 on conflict
 ```
 
 ## Type System
@@ -225,6 +313,29 @@ config :my_app, MyApp.Dust,
   subscribers: [MyApp.BlogSubscriber]
 ```
 
+### Watch with Bootstrap
+
+`watch` combines subscription with an initial snapshot — it delivers all matching cached entries as `present` events before any live events. This avoids the "subscribe then backfill" race window:
+
+```elixir
+# Elixir — watch/4 is an alias for on/4
+Dust.on("james/blog", "posts.*", fn event ->
+  # First batch: event.op == :present for cached entries
+  # Then live: :set, :merge, :delete, etc.
+end)
+```
+
+```typescript
+// TypeScript — watch() delivers present events then live events
+const unsub = await dust.watch("org/store", "posts.*", (event) => {
+  if (event.op === "present") {
+    // Bootstrap: currently cached entry
+  } else {
+    // Live update
+  }
+}, { limit: 100, order: "desc" })
+```
+
 ### CLI Watch
 
 Stream changes as JSON lines:
@@ -233,6 +344,9 @@ Stream changes as JSON lines:
 dust watch james/blog "posts.*"
 # {"store_seq":42,"op":"set","path":"posts.hello","value":{"title":"Hello"},...}
 # {"store_seq":43,"op":"merge","path":"posts.hello","value":{"body":"Updated"},...}
+
+# Include currently cached entries before streaming live events
+dust watch james/blog "posts.*" --include-current
 ```
 
 ### Phoenix PubSub
@@ -363,7 +477,9 @@ The server processes writes one at a time per store. The canonical rule: later `
 ```
 dust/
   server/          # Phoenix app — the hosted sync service
-  sdk/elixir/      # Elixir SDK + Phoenix integration
+  sdk/
+    elixir/        # Elixir SDK + Phoenix integration
+    typescript/    # TypeScript/Node.js SDK (@dust-sync/sdk)
   protocol/
     spec/          # AsyncAPI definition + sync semantics doc
     elixir/        # Shared protocol types (MessagePack, paths, globs)
@@ -410,6 +526,18 @@ Set `DUST_API_KEY=dust_tok_...` as an environment variable. The SDK reads it aut
 ### Scoped Tokens
 
 Generate tokens with per-store, per-permission scope from the web dashboard at `/:org/tokens`.
+
+### MCP OAuth
+
+MCP clients (Claude Desktop, Cursor, ChatGPT) authenticate via OAuth 2.1 with Dynamic Client Registration. Point your MCP client at `https://<host>/mcp` and it discovers the flow automatically.
+
+Discovery endpoints:
+
+- `GET /.well-known/oauth-authorization-server` — server metadata
+- `GET /.well-known/oauth-protected-resource` — resource metadata
+- `POST /register` — Dynamic Client Registration
+- `GET /oauth/authorize` → `GET /oauth/callback` — authorization code flow
+- `POST /oauth/token` — exchange code for access token (30-day sliding expiry)
 
 ## License
 
