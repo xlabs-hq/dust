@@ -1,7 +1,22 @@
 defmodule Dust.SyncEngine do
   use GenServer
 
-  defstruct [:store, :cache, :cache_target, :callbacks, :pending_ops, :status, :last_store_seq, :catch_up_seq, :activity_buffer]
+  defstruct [
+    :store,
+    :cache,
+    :cache_target,
+    :callbacks,
+    :pending_ops,
+    :status,
+    :last_store_seq,
+    :catch_up_seq,
+    :activity_buffer,
+    # HTTP base URL (derived from the WS url) and bearer token, kept
+    # here so FileRefs unwrapped from the cache carry the auth context
+    # they need to fetch blob content via /api/files/:hash.
+    :http_url,
+    :token
+  ]
 
   def start_link(opts) do
     store = Keyword.fetch!(opts, :store)
@@ -164,7 +179,9 @@ defmodule Dust.SyncEngine do
       pending_ops: %{},
       status: :disconnected,
       last_store_seq: last_seq,
-      activity_buffer: activity_buffer
+      activity_buffer: activity_buffer,
+      http_url: derive_http_url(Keyword.get(opts, :url)),
+      token: Keyword.get(opts, :token)
     }
 
     {:ok, state}
@@ -174,7 +191,7 @@ defmodule Dust.SyncEngine do
   def handle_call({:get, path}, _from, state) do
     result =
       case state.cache.read(state.cache_target, state.store, path) do
-        {:ok, value} -> {:ok, unwrap_value(value)}
+        {:ok, value} -> {:ok, unwrap_value(value, state)}
         other -> other
       end
 
@@ -187,7 +204,7 @@ defmodule Dust.SyncEngine do
 
     result =
       Enum.reduce(raw, %{}, fn {path, {value, _type, _seq}}, acc ->
-        Map.put(acc, path, unwrap_value(value))
+        Map.put(acc, path, unwrap_value(value, state))
       end)
 
     {:reply, result, state}
@@ -806,8 +823,25 @@ defmodule Dust.SyncEngine do
   defp wrap_items(items, :keys), do: items
   defp wrap_items(items, :prefixes), do: items
 
-  defp unwrap_value(%{"_type" => "file"} = map), do: Dust.FileRef.from_map(map)
-  defp unwrap_value(other), do: other
+  defp unwrap_value(%{"_type" => "file"} = map, state) do
+    Dust.FileRef.from_map(map, server_url: state.http_url, token: state.token)
+  end
+
+  defp unwrap_value(other, _state), do: other
+
+  defp derive_http_url(nil), do: nil
+
+  defp derive_http_url(ws_url) when is_binary(ws_url) do
+    case URI.parse(ws_url) do
+      %URI{scheme: scheme, host: host, port: port} when is_binary(host) ->
+        http_scheme = if scheme in ["wss", "https"], do: "https", else: "http"
+        port_part = if port, do: ":#{port}", else: ""
+        "#{http_scheme}://#{host}#{port_part}"
+
+      _ ->
+        nil
+    end
+  end
 
   defp detect_type(%Decimal{}), do: "decimal"
   defp detect_type(%DateTime{}), do: "datetime"

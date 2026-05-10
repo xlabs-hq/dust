@@ -30,7 +30,12 @@ defmodule Dust.Supervisor do
 
     engine_children =
       Enum.map(stores, fn store ->
-        {Dust.SyncEngine, store: store, cache: cache, activity_buffer: activity_name}
+        {Dust.SyncEngine,
+         store: store,
+         cache: cache,
+         activity_buffer: activity_name,
+         url: url,
+         token: token}
       end)
 
     connection_children =

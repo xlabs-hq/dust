@@ -85,32 +85,21 @@ module Dust
           return
         end
 
-        # Create store (ignore error if already exists)
-        create_body = {} of String => JSON::Any
-        create_body["name"] = JSON::Any.new(store_name)
-        create_body["ttl"] = JSON::Any.new(ttl_flag) if ttl_flag
-
-        store_resp = HTTP::Client.post(
-          "#{base_url}/api/stores",
-          headers: HTTP::Headers{
-            "Authorization" => "Bearer #{config.token.not_nil!}",
-            "Content-Type"  => "application/json",
-          },
-          body: create_body.to_json
-        )
-
-        case store_resp.status_code
-        when 201
-          puts "Created store: #{full_name}"
-        when 422
-          puts "Store #{full_name} already exists — using it"
-        when 402
-          Output.error("Store limit reached. Upgrade your plan to create more stores.")
-        else
-          Output.error("Failed to create store (#{store_resp.status_code}): #{store_resp.body}")
+        # Verify the target store exists and the caller has access to it.
+        # Store creation is dashboard-only in v0.1.
+        unless store_accessible?(config, base_url, store_name)
+          STDERR.puts "Store '#{full_name}' is not accessible with this token."
+          STDERR.puts ""
+          STDERR.puts "If the store doesn't exist yet, create it in the dashboard:"
+          STDERR.puts "  https://dustlayer.io/#{org_slug}/stores"
+          STDERR.puts ""
+          STDERR.puts "Then `dust login` with a token scoped to that store and re-run `dust init`."
+          exit 1
         end
 
-        # Create token for the new store
+        # Create a project-scoped token for the target store. This only
+        # succeeds when the calling token is itself scoped to the same
+        # store (POST /api/tokens enforces same-store creation).
         token_body = {} of String => JSON::Any
         token_body["store_name"] = JSON::Any.new(store_name)
         token_body["name"] = JSON::Any.new("dust-init-#{store_name}")
@@ -126,7 +115,16 @@ module Dust
           body: token_body.to_json
         )
 
-        unless token_resp.status_code == 201
+        case token_resp.status_code
+        when 201
+          # ok
+        when 403
+          Output.error(
+            "Cannot create a token for '#{full_name}' with the current login. " \
+            "Your active token is scoped to a different store. Run `dust login` " \
+            "with a token for #{full_name} (or a token created in the dashboard for that store).",
+          )
+        else
           Output.error("Failed to create token (#{token_resp.status_code}): #{token_resp.body}")
         end
 
@@ -159,6 +157,18 @@ module Dust
         puts "  await dust.put('#{full_name}', 'hello', 'world')"
         puts "  const value = await dust.get('#{full_name}', 'hello')"
         puts ""
+      end
+
+      private def self.store_accessible?(config : Config, base_url : String, store_name : String) : Bool
+        resp = HTTP::Client.get(
+          "#{base_url}/api/stores",
+          headers: HTTP::Headers{"Authorization" => "Bearer #{config.token.not_nil!}"}
+        )
+        return false unless resp.status.success?
+
+        result = JSON.parse(resp.body)
+        stores = result["stores"]?.try(&.as_a) || [] of JSON::Any
+        stores.any? { |s| s["name"]?.try(&.as_s?) == store_name }
       end
 
       private def self.fetch_org_slug(config : Config, base_url : String) : String

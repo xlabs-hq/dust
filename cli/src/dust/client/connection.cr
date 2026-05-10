@@ -94,7 +94,8 @@ module Dust
       !@explicitly_closed
     end
 
-    private def build_endpoint : String
+    # Exposed for tests. Pure functions on @config — no side effects.
+    def build_endpoint : String
       base = URI.parse(@config.server_url)
       path = (base.path || "").rstrip('/')
       path += "/websocket" unless path.ends_with?("/websocket")
@@ -104,7 +105,7 @@ module Dust
       "#{scheme}://#{base.host}#{port_str}#{path}"
     end
 
-    private def build_params : Hash(String, String)
+    def build_params : Hash(String, String)
       {
         "token"     => @config.token.not_nil!,
         "device_id" => @config.device_id,

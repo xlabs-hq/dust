@@ -4,53 +4,17 @@ module Dust
   module Commands
     module Store
       def self.create(config : Config, args : Array(String))
-        Output.require_auth!(config)
-
-        if args.empty?
-          Output.error("Usage: dust create <org/store> [--ttl seconds]")
-        end
-
-        store_name = args[0]
-        parts = store_name.split("/")
-        if parts.size != 2
-          Output.error("Store must be in org/store format")
-        end
-
-        ttl : Int64? = nil
-        i = 1
-        while i < args.size
-          if args[i] == "--ttl" && i + 1 < args.size
-            ttl = args[i + 1].to_i64
-            i += 2
-          else
-            i += 1
-          end
-        end
-
-        base_url = derive_http_url(config.server_url)
-        body = {} of String => JSON::Any
-        body["name"] = JSON::Any.new(parts[1])
-        body["ttl"] = JSON::Any.new(ttl) if ttl
-
-        response = HTTP::Client.post(
-          "#{base_url}/api/stores",
-          headers: HTTP::Headers{
-            "Authorization" => "Bearer #{config.token.not_nil!}",
-            "Content-Type"  => "application/json",
-          },
-          body: body.to_json
-        )
-
-        if response.status_code == 201
-          result = JSON.parse(response.body)
-          Output.success("Created #{result["full_name"]}")
-          expires = result["expires_at"]?
-          if expires && !expires.raw.nil?
-            puts "Expires: #{expires.as_s}"
-          end
-        else
-          Output.error("Create failed (#{response.status_code}): #{response.body}")
-        end
+        # Store creation is dashboard-only in v0.1 — store-scoped API
+        # tokens have no authority to create new stores. Removing the
+        # API call entirely so we don't pretend to try.
+        STDERR.puts "Store creation is not available via the CLI in this version."
+        STDERR.puts ""
+        STDERR.puts "Create stores in the dashboard at https://dustlayer.io/, then"
+        STDERR.puts "use `dust login` to pick up the new store-scoped token."
+        STDERR.puts ""
+        STDERR.puts "Tracking: org-admin tokens that re-enable CLI store creation"
+        STDERR.puts "are on the roadmap — see https://github.com/xlabs-hq/dust"
+        exit 1
       end
 
       def self.list(config : Config, args : Array(String))

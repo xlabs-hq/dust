@@ -7,6 +7,10 @@ defmodule Dust.Protocol.Path do
 
   Path segments cannot be empty. There is no escape for a literal
   `.` in a key — keys with dots in their names are not supported.
+
+  This module mirrors `DustProtocol.Path` from the canonical wire-
+  protocol package; the SDK keeps its own copy so it can be hex-
+  publishable without the protocol package as a dep.
   """
 
   @doc """
@@ -42,6 +46,31 @@ defmodule Dust.Protocol.Path do
       {:error, :empty_segment}
     else
       {:ok, canonical}
+    end
+  end
+
+  @doc """
+  Build a canonical path from a list of URL path segments (as
+  captured by Phoenix `*path` glob routes). Rejects any segment
+  containing `.` to make the URL → wire mapping injective.
+
+  Mirrors `DustProtocol.Path.from_url_segments/1` in the canonical
+  package. Useful when building HTTP requests against the Dust REST
+  API from inside the SDK.
+  """
+  @spec from_url_segments([binary()]) :: {:ok, binary()} | {:error, atom()}
+  def from_url_segments([]), do: {:error, :empty_path}
+
+  def from_url_segments(segments) when is_list(segments) do
+    cond do
+      Enum.any?(segments, &(&1 == "")) ->
+        {:error, :empty_segment}
+
+      Enum.any?(segments, &String.contains?(&1, ".")) ->
+        {:error, :dot_in_segment}
+
+      true ->
+        {:ok, Enum.join(segments, ".")}
     end
   end
 

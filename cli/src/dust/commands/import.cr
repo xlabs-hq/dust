@@ -29,7 +29,30 @@ module Dust
 
         if response.status.success?
           result = JSON.parse(response.body)
-          Output.success("Imported #{result["entries_imported"]} entries")
+          imported = result["imported"]?.try(&.as_i) || 0
+          skipped = result["skipped"]?.try(&.as_i) || 0
+          unparseable = result["unparseable"]?.try(&.as_i) || 0
+          failed = result["failed"]?.try(&.as_a) || [] of JSON::Any
+          ok = result["ok"]?.try(&.as_bool?) || false
+
+          if ok
+            Output.success("Imported #{imported} entries (#{skipped} skipped)")
+          else
+            STDERR.puts "Imported #{imported} of #{imported + unparseable + failed.size} entries"
+            STDERR.puts "  skipped:     #{skipped}"
+            STDERR.puts "  unparseable: #{unparseable}"
+            STDERR.puts "  failed:      #{failed.size}"
+
+            failed.first(20).each do |f|
+              line = f["line"]?.try(&.as_i) || "?"
+              path = f["path"]?.try(&.as_s?) || "(unknown)"
+              reason = f["reason"]?.try(&.as_s?) || "unknown"
+              STDERR.puts "    line #{line}: #{path} — #{reason}"
+            end
+
+            STDERR.puts "    … and #{failed.size - 20} more" if failed.size > 20
+            exit 1
+          end
         else
           Output.error("Import failed (#{response.status_code}): #{response.body}")
         end
