@@ -4,36 +4,46 @@ defmodule DustWeb.Api.WebhookController do
 
   alias Dust.{Stores, Webhooks}
   alias Dust.Webhooks.DeliveryWorker
+  alias DustWeb.Api.Refs
 
   action_fallback DustWeb.Api.FallbackController
 
   @ping_timeout 5_000
 
-  @webhook_schema %{
-    type: :object,
-    properties: %{
-      id: %{type: :string, format: :uuid},
-      url: %{type: :string, format: :uri},
-      active: %{type: :boolean},
-      failure_count: %{type: :integer},
-      last_delivered_seq: %{type: :integer, nullable: true},
-      inserted_at: %{type: :string, format: "date-time"}
-    }
-  }
+  @webhook_ref Refs.schema("Webhook")
 
   @org_store_params [
-    org: [in: :path, schema: %{type: :string}, required: true],
-    store: [in: :path, schema: %{type: :string}, required: true]
+    _: Refs.parameter("OrgSlug"),
+    _: Refs.parameter("StoreName")
   ]
 
+  @webhook_id_param [
+    id: [
+      in: :path,
+      schema: %{type: :string, format: :uuid},
+      required: true,
+      description: "Webhook ID."
+    ]
+  ]
+
+  @request_id_param [_: Refs.parameter("RequestId")]
+
   operation :index,
+    operation_id: "webhooks.list",
     summary: "List webhooks for a store",
     tags: ["Webhooks"],
-    parameters: @org_store_params,
+    parameters: @org_store_params ++ @request_id_param,
     responses: [
       ok:
-        {%{type: :object, properties: %{webhooks: %{type: :array, items: @webhook_schema}}},
-         description: "List of webhooks"}
+        {%{
+           type: :object,
+           properties: %{webhooks: %{type: :array, items: @webhook_ref}},
+           required: [:webhooks]
+         }, description: "List of webhooks"},
+      unauthorized: Refs.unauthorized(),
+      forbidden: Refs.forbidden(),
+      not_found: Refs.not_found(),
+      too_many_requests: Refs.rate_limited()
     ]
 
   def index(conn, %{"org" => org_slug, "store" => store_name}) do
@@ -50,14 +60,18 @@ defmodule DustWeb.Api.WebhookController do
   end
 
   operation :create,
+    operation_id: "webhooks.create",
     summary: "Register a new webhook",
+    description:
+      "The HMAC-SHA256 signing `secret` is returned **only on creation** — store it and use it to verify incoming `x-dust-signature` headers on delivery. Server keeps a hashed copy.",
     tags: ["Webhooks"],
-    parameters: @org_store_params,
+    parameters: @org_store_params ++ @request_id_param,
     request_body:
       {%{
          type: :object,
          properties: %{url: %{type: :string, format: :uri}},
-         required: [:url]
+         required: [:url],
+         example: %{url: "https://example.com/hooks/dust"}
        }, description: "Webhook URL"},
     responses: [
       created:
@@ -66,13 +80,23 @@ defmodule DustWeb.Api.WebhookController do
            properties: %{
              id: %{type: :string, format: :uuid},
              url: %{type: :string},
-             secret: %{type: :string, description: "HMAC signing secret. Only returned on create."},
+             secret: %{type: :string, description: "HMAC secret. Only returned on create."},
              active: %{type: :boolean},
              inserted_at: %{type: :string, format: "date-time"}
-           }
+           },
+           required: [:id, :url, :secret, :active, :inserted_at]
          }, description: "Webhook created"},
+      bad_request: Refs.bad_request(),
+      unauthorized: Refs.unauthorized(),
+      forbidden: Refs.forbidden(),
+      not_found: Refs.not_found(),
       unprocessable_entity:
-        {%{type: :object, properties: %{error: %{type: :string}}}, description: "Invalid params"}
+        {%{
+           type: :object,
+           properties: %{error: %{type: :string, enum: ["invalid_params"]}},
+           required: [:error]
+         }, description: "Invalid params"},
+      too_many_requests: Refs.rate_limited()
     ]
 
   def create(conn, %{"org" => org_slug, "store" => store_name} = params) do
@@ -97,13 +121,18 @@ defmodule DustWeb.Api.WebhookController do
   end
 
   operation :delete,
+    operation_id: "webhooks.delete",
     summary: "Delete a webhook",
     tags: ["Webhooks"],
-    parameters:
-      @org_store_params ++
-        [id: [in: :path, schema: %{type: :string, format: :uuid}, required: true]],
+    parameters: @org_store_params ++ @webhook_id_param ++ @request_id_param,
     responses: [
-      ok: {%{type: :object, properties: %{ok: %{type: :boolean}}}, description: "Webhook deleted"}
+      ok:
+        {%{type: :object, properties: %{ok: %{type: :boolean}}, required: [:ok]},
+         description: "Webhook deleted"},
+      unauthorized: Refs.unauthorized(),
+      forbidden: Refs.forbidden(),
+      not_found: Refs.not_found(),
+      too_many_requests: Refs.rate_limited()
     ]
 
   def delete(conn, %{"org" => org_slug, "store" => store_name, "id" => webhook_id}) do
@@ -117,11 +146,12 @@ defmodule DustWeb.Api.WebhookController do
   end
 
   operation :ping,
+    operation_id: "webhooks.ping",
     summary: "Send a test ping to a webhook",
+    description:
+      "Synchronously POSTs a `{event: 'ping', store, timestamp}` payload to the webhook URL using the registered secret. Returns the upstream's status code and response time. 5-second timeout.",
     tags: ["Webhooks"],
-    parameters:
-      @org_store_params ++
-        [id: [in: :path, schema: %{type: :string, format: :uuid}, required: true]],
+    parameters: @org_store_params ++ @webhook_id_param ++ @request_id_param,
     responses: [
       ok:
         {%{
@@ -130,11 +160,19 @@ defmodule DustWeb.Api.WebhookController do
              ok: %{type: :boolean},
              status_code: %{type: :integer},
              response_ms: %{type: :integer}
-           }
+           },
+           required: [:ok, :status_code, :response_ms]
          }, description: "Ping result"},
+      unauthorized: Refs.unauthorized(),
+      forbidden: Refs.forbidden(),
+      not_found: Refs.not_found(),
       bad_gateway:
-        {%{type: :object, properties: %{ok: %{type: :boolean}, error: %{type: :string}}},
-         description: "Webhook endpoint unreachable"}
+        {%{
+           type: :object,
+           properties: %{ok: %{type: :boolean}, error: %{type: :string}},
+           required: [:ok, :error]
+         }, description: "Webhook endpoint unreachable"},
+      too_many_requests: Refs.rate_limited()
     ]
 
   def ping(conn, %{"org" => org_slug, "store" => store_name, "id" => webhook_id}) do
@@ -184,39 +222,32 @@ defmodule DustWeb.Api.WebhookController do
   end
 
   operation :deliveries,
+    operation_id: "webhooks.list_deliveries",
     summary: "List recent webhook delivery attempts",
     tags: ["Webhooks"],
     parameters:
       @org_store_params ++
+        @webhook_id_param ++
         [
-          id: [in: :path, schema: %{type: :string, format: :uuid}, required: true],
           limit: [
             in: :query,
-            schema: %{type: :integer, default: 20, maximum: 100},
+            schema: %{type: :integer, default: 20, maximum: 100, minimum: 1},
             required: false
           ]
-        ],
+        ] ++ @request_id_param,
     responses: [
       ok:
         {%{
            type: :object,
            properties: %{
-             deliveries: %{
-               type: :array,
-               items: %{
-                 type: :object,
-                 properties: %{
-                   id: %{type: :string, format: :uuid},
-                   store_seq: %{type: :integer},
-                   status_code: %{type: :integer, nullable: true},
-                   response_ms: %{type: :integer, nullable: true},
-                   error: %{type: :string, nullable: true},
-                   attempted_at: %{type: :string, format: "date-time"}
-                 }
-               }
-             }
-           }
-         }, description: "Recent deliveries"}
+             deliveries: %{type: :array, items: Refs.schema("WebhookDelivery")}
+           },
+           required: [:deliveries]
+         }, description: "Recent deliveries"},
+      unauthorized: Refs.unauthorized(),
+      forbidden: Refs.forbidden(),
+      not_found: Refs.not_found(),
+      too_many_requests: Refs.rate_limited()
     ]
 
   def deliveries(conn, %{"org" => org_slug, "store" => store_name, "id" => webhook_id} = params) do

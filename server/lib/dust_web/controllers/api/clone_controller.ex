@@ -3,21 +3,27 @@ defmodule DustWeb.Api.CloneController do
   use Oaskit.Controller
 
   alias Dust.{Stores, Sync}
+  alias DustWeb.Api.Refs
 
   action_fallback DustWeb.Api.FallbackController
 
   operation :create,
+    operation_id: "stores.clone",
     summary: "Clone a store into a new store",
+    description:
+      "Creates a new store containing a snapshot of the source store's entries. The new store starts at sequence 0 and accepts writes immediately.",
     tags: ["Stores"],
     parameters: [
-      org: [in: :path, schema: %{type: :string}, required: true],
-      store: [in: :path, schema: %{type: :string}, required: true]
+      _: Refs.parameter("OrgSlug"),
+      _: Refs.parameter("StoreName"),
+      _: Refs.parameter("RequestId")
     ],
     request_body:
       {%{
          type: :object,
-         properties: %{name: %{type: :string, description: "Target store name"}},
-         required: [:name]
+         properties: %{name: %{type: :string, description: "Target store name."}},
+         required: [:name],
+         example: %{name: "config-clone"}
        }, description: "Clone target"},
     responses: [
       created:
@@ -31,15 +37,29 @@ defmodule DustWeb.Api.CloneController do
                  id: %{type: :string, format: :uuid},
                  name: %{type: :string},
                  full_name: %{type: :string}
-               }
+               },
+               required: [:id, :name, :full_name]
              }
-           }
+           },
+           required: [:ok, :store]
          }, description: "Cloned store"},
+      bad_request: Refs.bad_request(),
+      unauthorized: Refs.unauthorized(),
+      forbidden: Refs.forbidden(),
+      not_found: Refs.not_found(),
       payment_required:
-        {%{type: :object, properties: %{error: %{type: :string}}},
-         description: "Plan limit exceeded"},
+        {%{
+           type: :object,
+           properties: %{error: %{type: :string, enum: ["limit_exceeded"]}},
+           required: [:error]
+         }, description: "Plan limit exceeded"},
       unprocessable_entity:
-        {%{type: :object, properties: %{error: %{type: :string}}}, description: "Name taken"}
+        {%{
+           type: :object,
+           properties: %{error: %{type: :string, enum: ["name_taken"]}},
+           required: [:error]
+         }, description: "Target name already exists"},
+      too_many_requests: Refs.rate_limited()
     ]
 
   def create(conn, %{"org" => org_slug, "store" => store_name, "name" => target_name}) do

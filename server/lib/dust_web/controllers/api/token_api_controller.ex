@@ -3,37 +3,31 @@ defmodule DustWeb.Api.TokenApiController do
   use Oaskit.Controller
 
   alias Dust.Stores
+  alias DustWeb.Api.Refs
 
   action_fallback DustWeb.Api.FallbackController
 
-  @permissions_schema %{
-    type: :object,
-    properties: %{
-      read: %{type: :boolean},
-      write: %{type: :boolean}
-    }
-  }
-
-  @token_schema %{
-    type: :object,
-    properties: %{
-      id: %{type: :string, format: :uuid},
-      name: %{type: :string},
-      store_name: %{type: :string},
-      permissions: @permissions_schema,
-      expires_at: %{type: :string, format: "date-time", nullable: true},
-      last_used_at: %{type: :string, format: "date-time", nullable: true},
-      inserted_at: %{type: :string, format: "date-time"}
-    }
-  }
+  @token_ref Refs.schema("Token")
+  @unauthorized Refs.unauthorized()
+  @forbidden Refs.forbidden()
+  @not_found Refs.not_found()
+  @bad_request Refs.bad_request()
+  @rate_limited Refs.rate_limited()
 
   operation :index,
+    operation_id: "tokens.list",
     summary: "List API tokens for the current organization",
     tags: ["Tokens"],
     responses: [
       ok:
-        {%{type: :object, properties: %{tokens: %{type: :array, items: @token_schema}}},
-         description: "List of tokens"}
+        {%{
+           type: :object,
+           properties: %{tokens: %{type: :array, items: @token_ref}},
+           required: [:tokens]
+         }, description: "List of tokens"},
+      unauthorized: @unauthorized,
+      forbidden: @forbidden,
+      too_many_requests: @rate_limited
     ]
 
   def index(conn, _params) do
@@ -44,18 +38,22 @@ defmodule DustWeb.Api.TokenApiController do
   end
 
   operation :create,
+    operation_id: "tokens.create",
     summary: "Create a new API token",
+    description:
+      "The plaintext `raw_token` is returned **only on creation** — store it immediately. The server keeps a hashed copy and cannot recover it later.",
     tags: ["Tokens"],
     request_body:
       {%{
          type: :object,
          properties: %{
-           store_name: %{type: :string},
-           name: %{type: :string, description: "Human-readable label for the token"},
+           store_name: %{type: :string, description: "Store the token will scope to."},
+           name: %{type: :string, description: "Human-readable label for the token."},
            read: %{type: :boolean, default: true},
            write: %{type: :boolean, default: false}
          },
-         required: [:store_name, :name]
+         required: [:store_name, :name],
+         example: %{store_name: "config", name: "ci-deploy", read: true, write: true}
        }, description: "Token creation payload"},
     responses: [
       created:
@@ -64,11 +62,26 @@ defmodule DustWeb.Api.TokenApiController do
            properties: %{
              id: %{type: :string, format: :uuid},
              name: %{type: :string},
-             raw_token: %{type: :string, description: "Only returned on creation. Store this!"},
+             raw_token: %{
+               type: :string,
+               description: "Plaintext token. Only returned on creation."
+             },
              store_name: %{type: :string},
-             permissions: @permissions_schema
-           }
-         }, description: "Token created"}
+             permissions: %{
+               type: :object,
+               properties: %{read: %{type: :boolean}, write: %{type: :boolean}},
+               required: [:read, :write]
+             }
+           },
+           required: [:id, :name, :raw_token, :store_name, :permissions]
+         }, description: "Token created"},
+      bad_request: @bad_request,
+      unauthorized: @unauthorized,
+      forbidden: @forbidden,
+      not_found: @not_found,
+      unprocessable_entity:
+        {Refs.schema("ValidationError"), description: "Validation error"},
+      too_many_requests: @rate_limited
     ]
 
   def create(conn, %{"store_name" => store_name, "name" => name} = params) do
@@ -116,6 +129,7 @@ defmodule DustWeb.Api.TokenApiController do
   end
 
   operation :delete,
+    operation_id: "tokens.revoke",
     summary: "Revoke an API token",
     tags: ["Tokens"],
     parameters: [
@@ -123,8 +137,15 @@ defmodule DustWeb.Api.TokenApiController do
     ],
     responses: [
       ok:
-        {%{type: :object, properties: %{ok: %{type: :boolean}}}, description: "Token revoked"},
-      not_found: {%{type: :object}, description: "Token not found"}
+        {%{
+           type: :object,
+           properties: %{ok: %{type: :boolean}},
+           required: [:ok]
+         }, description: "Token revoked"},
+      unauthorized: @unauthorized,
+      forbidden: @forbidden,
+      not_found: @not_found,
+      too_many_requests: @rate_limited
     ]
 
   def delete(conn, %{"id" => id}) do

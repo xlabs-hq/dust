@@ -4,41 +4,41 @@ defmodule DustWeb.Api.EntriesApiController do
 
   alias Dust.Stores
   alias Dust.Sync
+  alias DustWeb.Api.Refs
 
   action_fallback DustWeb.Api.FallbackController
 
-  @entry_schema %{
-    type: :object,
-    properties: %{
-      path: %{type: :string},
-      value: %{description: "Entry value (any JSON type)"},
-      type: %{type: :string, enum: ["string", "integer", "float", "boolean", "map", "list", "decimal", "datetime", "file"]},
-      revision: %{type: :integer, description: "Per-entry sequence number"}
-    }
-  }
+  @entry_ref Refs.schema("Entry")
+  @unauthorized Refs.unauthorized()
+  @forbidden Refs.forbidden()
+  @not_found Refs.not_found()
+  @bad_request Refs.bad_request()
+  @rate_limited Refs.rate_limited()
 
+  # Parameter refs use the `_` key per oaskit convention — the actual
+  # name comes from the component definition. Keyword lists can have
+  # duplicate keys, so multiple `_:` entries are fine.
   @org_store_params [
-    org: [in: :path, schema: %{type: :string}, required: true],
-    store: [in: :path, schema: %{type: :string}, required: true]
+    _: Refs.parameter("OrgSlug"),
+    _: Refs.parameter("StoreName")
   ]
 
+  @entry_path_param [_: Refs.parameter("EntryPath")]
+  @if_match_param [_: Refs.parameter("IfMatch")]
+  @request_id_param [_: Refs.parameter("RequestId")]
+
   operation :show,
+    operation_id: "entries.get",
     summary: "Read a single entry by path",
     tags: ["Entries"],
-    parameters:
-      @org_store_params ++
-        [
-          path: [
-            in: :path,
-            schema: %{type: :string},
-            required: true,
-            description: "Dot-separated path"
-          ]
-        ],
+    parameters: @org_store_params ++ @entry_path_param ++ @request_id_param,
     responses: [
-      ok: {@entry_schema, description: "Entry"},
-      not_found:
-        {%{type: :object, properties: %{error: %{type: :string}}}, description: "No such entry"}
+      ok: {@entry_ref, description: "Entry"},
+      bad_request: @bad_request,
+      unauthorized: @unauthorized,
+      forbidden: @forbidden,
+      not_found: @not_found,
+      too_many_requests: @rate_limited
     ]
 
   def show(conn, %{"org" => org_slug, "store" => store_name, "path" => path_segments}) do
@@ -85,29 +85,47 @@ defmodule DustWeb.Api.EntriesApiController do
   end
 
   operation :index,
+    operation_id: "entries.list",
     summary: "List entries by glob pattern or key range",
-    description:
-      "Use `pattern` for glob matching (default `**`), or `from`+`to` for a key range. The two modes are mutually exclusive.",
+    description: """
+    Use `pattern` for glob matching (default `**`), or `from`+`to` for
+    a lexicographic key range. The two modes are mutually exclusive.
+
+    `*` matches a single path segment. `**` matches one or more
+    segments. Slashes between segments are accepted as aliases for
+    dots — so `pattern=projects/alpha/*` is equivalent to
+    `pattern=projects.alpha.*`.
+
+    Use `select=keys` to return path strings only, or `select=prefixes`
+    (pattern mode only) to return distinct next-segment prefixes
+    matching `<base>.**`.
+    """,
     tags: ["Entries"],
     parameters:
       @org_store_params ++
         [
-          pattern: [in: :query, schema: %{type: :string, default: "**"}, required: false],
+          pattern: [
+            in: :query,
+            schema: %{type: :string, default: "**"},
+            required: false,
+            description: "Glob pattern. Mutually exclusive with `from`/`to`.",
+            example: "projects/alpha/*"
+          ],
           from: [
             in: :query,
             schema: %{type: :string},
             required: false,
-            description: "Range start (inclusive)"
+            description: "Range start (inclusive). Requires `to`."
           ],
           to: [
             in: :query,
             schema: %{type: :string},
             required: false,
-            description: "Range end (exclusive)"
+            description: "Range end (exclusive). Requires `from`."
           ],
           limit: [
             in: :query,
-            schema: %{type: :integer, default: 50, maximum: 1000},
+            schema: %{type: :integer, default: 50, maximum: 1000, minimum: 1},
             required: false
           ],
           order: [
@@ -124,9 +142,9 @@ defmodule DustWeb.Api.EntriesApiController do
             in: :query,
             schema: %{type: :string},
             required: false,
-            description: "Pagination cursor"
+            description: "Opaque pagination cursor — pass the previous response's `next_cursor`."
           ]
-        ],
+        ] ++ @request_id_param,
     responses: [
       ok:
         {%{
@@ -134,13 +152,20 @@ defmodule DustWeb.Api.EntriesApiController do
            properties: %{
              items: %{
                oneOf: [
-                 %{type: :array, items: @entry_schema},
+                 %{type: :array, items: @entry_ref},
                  %{type: :array, items: %{type: :string}}
-               ]
+               ],
+               description:
+                 "Array of entries (default), keys (`select=keys`), or prefix strings (`select=prefixes`)."
              },
              next_cursor: %{type: :string, nullable: true}
-           }
-         }, description: "Page of entries (or keys/prefixes)"}
+           },
+           required: [:items, :next_cursor]
+         }, description: "Page of entries (or keys/prefixes)"},
+      bad_request: @bad_request,
+      unauthorized: @unauthorized,
+      forbidden: @forbidden,
+      too_many_requests: @rate_limited
     ]
 
   def index(conn, %{"org" => org_slug, "store" => store_name} = params) do
@@ -160,39 +185,52 @@ defmodule DustWeb.Api.EntriesApiController do
   end
 
   operation :put,
+    operation_id: "entries.put",
     summary: "Write an entry at the given path",
-    description:
-      "Set the value at `path`. Pass `If-Match: <revision>` for compare-and-swap (CAS) writes. Body can be any JSON value.",
+    description: """
+    Set the value at `path`. The body can be any JSON value (object,
+    scalar, array). To perform a compare-and-swap write, send the
+    `If-Match` header with the entry's current `revision` — the write
+    fails with `412` if the revision has advanced. CAS is leaf-only
+    (no subtree CAS).
+
+    Optionally send `X-Request-Id` to attach an opaque correlation
+    id; if present, it is used as the write's `client_op_id` for
+    server-side deduplication.
+    """,
     tags: ["Entries"],
     parameters:
-      @org_store_params ++
-        [
-          path: [in: :path, schema: %{type: :string}, required: true]
-        ],
+      @org_store_params ++ @entry_path_param ++ @if_match_param ++ @request_id_param,
     request_body:
-      {%{description: "Any JSON value (object, scalar, array)"}, description: "Entry value"},
+      {%{description: "Any JSON value (object, scalar, array, string, number, boolean, null)"},
+       description: "Entry value"},
     responses: [
       ok:
         {%{
            type: :object,
            properties: %{
-             revision: %{type: :integer},
-             store_seq: %{type: :integer}
-           }
+             revision: %{type: :integer, description: "Per-entry sequence after the write."},
+             store_seq: %{
+               type: :integer,
+               description: "Store-wide monotonic sequence after the write."
+             }
+           },
+           required: [:revision, :store_seq],
+           example: %{revision: 8, store_seq: 142}
          }, description: "Write accepted"},
-      bad_request:
-        {%{
-           type: :object,
-           properties: %{error: %{type: :string}, detail: %{type: :string}}
-         }, description: "Invalid request"},
+      bad_request: @bad_request,
+      unauthorized: @unauthorized,
+      forbidden: @forbidden,
       precondition_failed:
         {%{
            type: :object,
            properties: %{
              error: %{type: :string, enum: ["conflict"]},
              current_revision: %{type: :integer, nullable: true}
-           }
-         }, description: "If-Match revision mismatch"}
+           },
+           required: [:error]
+         }, description: "If-Match revision mismatch"},
+      too_many_requests: @rate_limited
     ]
 
   def put(conn, %{"org" => org_slug, "store" => store_name, "path" => path_segments}) do
@@ -302,9 +340,12 @@ defmodule DustWeb.Api.EntriesApiController do
   end
 
   operation :batch,
+    operation_id: "entries.batch_get",
     summary: "Read multiple entries in one request",
+    description:
+      "Returns found entries keyed by canonical (dotted) path, plus a `missing` list of paths that did not match an entry. Up to 1000 paths per call.",
     tags: ["Entries"],
-    parameters: @org_store_params,
+    parameters: @org_store_params ++ @request_id_param,
     request_body:
       {%{
          type: :object,
@@ -313,10 +354,12 @@ defmodule DustWeb.Api.EntriesApiController do
              type: :array,
              items: %{type: :string},
              maxItems: 1000,
-             description: "Up to 1000 entry paths"
+             description:
+               "Up to 1000 entry paths. Slashes are accepted as aliases for dots; canonical (dotted) keys are returned."
            }
          },
-         required: [:paths]
+         required: [:paths],
+         example: %{paths: ["projects/alpha/title", "projects/alpha/owner"]}
        }, description: "Batch read request"},
     responses: [
       ok:
@@ -325,12 +368,21 @@ defmodule DustWeb.Api.EntriesApiController do
            properties: %{
              entries: %{
                type: :object,
-               additionalProperties: @entry_schema,
-               description: "Map keyed by path"
+               additionalProperties: @entry_ref,
+               description: "Map keyed by canonical (dotted) path."
              },
-             missing: %{type: :array, items: %{type: :string}}
-           }
-         }, description: "Batch result"}
+             missing: %{
+               type: :array,
+               items: %{type: :string},
+               description: "Paths that did not match an entry."
+             }
+           },
+           required: [:entries, :missing]
+         }, description: "Batch result"},
+      bad_request: @bad_request,
+      unauthorized: @unauthorized,
+      forbidden: @forbidden,
+      too_many_requests: @rate_limited
     ]
 
   def batch(conn, %{"org" => org_slug, "store" => store_name} = params) do

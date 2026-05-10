@@ -3,17 +3,32 @@ defmodule DustWeb.Api.DiffController do
   use Oaskit.Controller
 
   alias Dust.{Stores, Sync}
+  alias DustWeb.Api.Refs
 
   action_fallback DustWeb.Api.FallbackController
 
   operation :show,
+    operation_id: "sync.diff",
     summary: "Diff a store between two sequence numbers",
+    description:
+      "Returns net per-path changes between `from_seq` (exclusive) and `to_seq` (inclusive, defaults to current). Returns 409 if `from_seq` has been compacted away.",
     tags: ["Sync"],
     parameters: [
-      org: [in: :path, schema: %{type: :string}, required: true],
-      store: [in: :path, schema: %{type: :string}, required: true],
-      from_seq: [in: :query, schema: %{type: :integer}, required: true],
-      to_seq: [in: :query, schema: %{type: :integer}, required: false]
+      _: Refs.parameter("OrgSlug"),
+      _: Refs.parameter("StoreName"),
+      from_seq: [
+        in: :query,
+        schema: %{type: :integer, minimum: 0},
+        required: true,
+        description: "Sequence number to diff from (exclusive)."
+      ],
+      to_seq: [
+        in: :query,
+        schema: %{type: :integer, minimum: 0},
+        required: false,
+        description: "Sequence number to diff to (inclusive). Defaults to current store_seq."
+      ],
+      _: Refs.parameter("RequestId")
     ],
     responses: [
       ok:
@@ -28,21 +43,29 @@ defmodule DustWeb.Api.DiffController do
                  type: :object,
                  properties: %{
                    path: %{type: :string},
-                   before: %{},
-                   after: %{}
-                 }
+                   before: %{description: "Value at from_seq (null if absent)."},
+                   after: %{description: "Value at to_seq (null if deleted)."}
+                 },
+                 required: [:path, :before, :after]
                }
              }
-           }
+           },
+           required: [:from_seq, :to_seq, :changes]
          }, description: "Diff result"},
+      bad_request: Refs.bad_request(),
+      unauthorized: Refs.unauthorized(),
+      forbidden: Refs.forbidden(),
+      not_found: Refs.not_found(),
       conflict:
         {%{
            type: :object,
            properties: %{
              error: %{type: :string, enum: ["compacted"]},
              earliest_available: %{type: :integer}
-           }
-         }, description: "from_seq has been compacted away"}
+           },
+           required: [:error, :earliest_available]
+         }, description: "from_seq has been compacted away"},
+      too_many_requests: Refs.rate_limited()
     ]
 
   def show(conn, %{"org" => org_slug, "store" => store_name} = params) do

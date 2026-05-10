@@ -1,10 +1,21 @@
 defmodule DustWeb.ApiSpec do
   @moduledoc """
-  Top-level OpenAPI 3.1 spec for the Dust HTTP API. Endpoints with
-  `operation` annotations on their controller actions are picked up
-  automatically by `Oaskit.Spec.Paths.from_router/2`.
+  Top-level OpenAPI 3.1 spec for the Dust HTTP API.
 
-  Browse the spec at `/api-docs` (Redoc UI) or `/openapi.json` (raw).
+  Per-operation details live as `operation` annotations on each
+  controller action; this module provides:
+
+  * shared response shapes (`Unauthorized`, `Forbidden`, etc.)
+  * shared header parameters (`If-Match`, `X-Request-Id`)
+  * shared schemas (`Error`, `Pagination`, `Entry`, `Store`, `Token`,
+    `Webhook`, `WebhookDelivery`)
+  * the `webhooks` top-level section documenting outbound delivery
+    payloads
+  * a post-pass that rewrites Phoenix glob routes (`*path`) into
+    OpenAPI-valid `{path}` parameters — `Oaskit.Spec.Paths.from_router/2`
+    doesn't handle `*` segments natively.
+
+  Browse at `/api-docs` (Redoc UI) or fetch the JSON at `/openapi.json`.
   """
   use Oaskit
 
@@ -13,32 +24,432 @@ defmodule DustWeb.ApiSpec do
 
   @impl true
   def spec do
+    paths =
+      DustWeb.Router
+      |> Paths.from_router(filter: &String.starts_with?(&1.path, "/api/"))
+      |> normalize_glob_paths()
+
     %{
       openapi: "3.1.1",
       info: %{
         title: "Dust API",
         version: "0.1.0",
         description: """
-        HTTP API for [Dust](https://dustlayer.io) — reactive global state for AI agents.
+        HTTP API for [Dust](https://dustlayer.io) — reactive global state
+        for AI agents.
 
-        All endpoints require a Bearer token in the `Authorization` header.
-        Tokens are scoped to a store and have read or write permissions.
+        ### Authentication
+
+        All endpoints require a Bearer token in the `Authorization`
+        header. Tokens are scoped to a single store and have either
+        `read` or `read+write` permissions. Create tokens at
+        `/:org/tokens` in the dashboard.
+
+        ### Paths
+
+        Entries are addressed by dot-separated paths (`projects.alpha.title`).
+        The HTTP API also accepts slashes between segments
+        (`projects/alpha/title`) — they are normalised to dots
+        server-side. URL path *segments* themselves cannot contain `.`;
+        keys with literal dots in their names are not supported.
+
+        ### Errors
+
+        Every endpoint may return `401 Unauthorized` (missing/invalid
+        token), `403 Forbidden` (token lacks permission), `429 Too Many
+        Requests` (rate limited), or `500 Internal Server Error`. Per-
+        operation responses below document the operation-specific
+        codes (404, 400, 412, etc.) — assume the four common codes
+        always apply.
+
+        ### Request IDs
+
+        Send `X-Request-Id` to attach an opaque correlation id; the
+        server echoes it back on every response. Useful for support
+        tickets and end-to-end tracing. Also used as the
+        `client_op_id` fallback for write endpoints if not supplied.
 
         Source: <https://github.com/xlabs-hq/dust>.
-        """
+        """,
+        contact: %{
+          name: "Dust",
+          url: "https://github.com/xlabs-hq/dust"
+        },
+        license: %{name: "MIT"}
       },
       servers: [Server.from_config(:dust, DustWeb.Endpoint)],
-      paths: Paths.from_router(DustWeb.Router, filter: &String.starts_with?(&1.path, "/api/")),
+      paths: paths,
+      webhooks: webhooks(),
       components: %{
         securitySchemes: %{
           "bearerAuth" => %{
             type: "http",
             scheme: "bearer",
-            description: "Bearer token scoped to a store. Create at `/:org/tokens`."
+            description: "Bearer token scoped to a single store."
+          }
+        },
+        schemas: shared_schemas(),
+        responses: shared_responses(),
+        parameters: shared_parameters(),
+        headers: shared_headers()
+      },
+      security: [%{"bearerAuth" => []}]
+    }
+  end
+
+  # --- Path post-processing ---
+
+  # Rewrite Phoenix glob captures (`/entries/*path`) into
+  # OpenAPI-valid `{path}` form. Slashes inside the path travel as
+  # literal slashes in the URL — clients should not URL-encode them.
+  defp normalize_glob_paths(paths) do
+    Map.new(paths, fn {key, value} ->
+      new_key = Regex.replace(~r{/\*(\w+)}, key, "/{\\1}")
+      {new_key, value}
+    end)
+  end
+
+  # --- Shared schemas ---
+
+  defp shared_schemas do
+    %{
+      "Error" => %{
+        type: :object,
+        description: "Standard error envelope.",
+        properties: %{
+          error: %{
+            type: :string,
+            description: "Machine-readable error code (e.g. `not_found`, `invalid_params`)."
+          },
+          detail: %{type: :string, description: "Human-readable explanation, when applicable."}
+        },
+        required: [:error],
+        example: %{error: "invalid_params", detail: "name is required"}
+      },
+      "ValidationError" => %{
+        type: :object,
+        description: "Returned when the request body fails schema validation.",
+        properties: %{
+          error: %{
+            type: :object,
+            description: "Field-keyed map of error messages.",
+            additionalProperties: %{type: :array, items: %{type: :string}}
+          }
+        },
+        required: [:error],
+        example: %{error: %{name: ["has already been taken"]}}
+      },
+      "Pagination" => %{
+        type: :object,
+        description: "Page metadata for cursor-paginated responses.",
+        properties: %{
+          page: %{type: :integer},
+          limit: %{type: :integer},
+          total: %{type: :integer},
+          total_pages: %{type: :integer}
+        },
+        required: [:page, :limit, :total, :total_pages]
+      },
+      "Entry" => %{
+        type: :object,
+        description: "A single key/value entry in a store.",
+        properties: %{
+          path: %{type: :string, description: "Dot-separated path."},
+          value: %{description: "Entry value (any JSON type, may be null for tombstones)."},
+          type: %{
+            type: :string,
+            enum: [
+              "string",
+              "integer",
+              "float",
+              "boolean",
+              "map",
+              "list",
+              "decimal",
+              "datetime",
+              "file"
+            ]
+          },
+          revision: %{
+            type: :integer,
+            description: "Per-entry sequence number; use as `If-Match` for CAS."
+          }
+        },
+        required: [:path, :value, :type, :revision],
+        example: %{
+          path: "projects.alpha.title",
+          value: "Project Alpha",
+          type: "string",
+          revision: 7
+        }
+      },
+      "Store" => %{
+        type: :object,
+        properties: %{
+          id: %{type: :string, format: :uuid},
+          name: %{type: :string},
+          full_name: %{
+            type: :string,
+            description: "`org_slug/store_name` — globally unique."
+          },
+          status: %{type: :string, enum: ["active", "archived"]},
+          inserted_at: %{type: :string, format: "date-time"},
+          expires_at: %{type: :string, format: "date-time", nullable: true}
+        },
+        required: [:id, :name, :full_name, :status, :inserted_at]
+      },
+      "Token" => %{
+        type: :object,
+        properties: %{
+          id: %{type: :string, format: :uuid},
+          name: %{type: :string},
+          store_name: %{type: :string},
+          permissions: %{
+            type: :object,
+            properties: %{
+              read: %{type: :boolean},
+              write: %{type: :boolean}
+            },
+            required: [:read, :write]
+          },
+          expires_at: %{type: :string, format: "date-time", nullable: true},
+          last_used_at: %{type: :string, format: "date-time", nullable: true},
+          inserted_at: %{type: :string, format: "date-time"}
+        },
+        required: [:id, :name, :store_name, :permissions, :inserted_at]
+      },
+      "Webhook" => %{
+        type: :object,
+        properties: %{
+          id: %{type: :string, format: :uuid},
+          url: %{type: :string, format: :uri},
+          active: %{type: :boolean},
+          failure_count: %{type: :integer},
+          last_delivered_seq: %{type: :integer, nullable: true},
+          inserted_at: %{type: :string, format: "date-time"}
+        },
+        required: [:id, :url, :active, :failure_count, :inserted_at]
+      },
+      "WebhookDelivery" => %{
+        type: :object,
+        properties: %{
+          id: %{type: :string, format: :uuid},
+          store_seq: %{type: :integer},
+          status_code: %{type: :integer, nullable: true},
+          response_ms: %{type: :integer, nullable: true},
+          error: %{type: :string, nullable: true},
+          attempted_at: %{type: :string, format: "date-time"}
+        },
+        required: [:id, :store_seq, :attempted_at]
+      },
+      "AuditOp" => %{
+        type: :object,
+        properties: %{
+          store_seq: %{type: :integer},
+          op: %{
+            type: :string,
+            enum: ["set", "delete", "merge", "increment", "add", "remove"]
+          },
+          path: %{type: :string},
+          value: %{description: "Operation value (any JSON type)."},
+          device_id: %{type: :string},
+          inserted_at: %{type: :string, format: "date-time"}
+        },
+        required: [:store_seq, :op, :path, :device_id, :inserted_at]
+      },
+      "WebhookEvent" => %{
+        type: :object,
+        description: "Payload delivered to webhook subscribers.",
+        properties: %{
+          event: %{
+            type: :string,
+            enum: ["change", "ping"],
+            description: "`change` for entry updates; `ping` from the test endpoint."
+          },
+          store: %{type: :string, description: "`org_slug/store_name`."},
+          store_seq: %{
+            type: :integer,
+            description: "Monotonic sequence at the time of delivery."
+          },
+          path: %{type: :string, description: "Path of the changed entry (omitted for `ping`)."},
+          op: %{
+            type: :string,
+            enum: ["set", "delete", "merge", "increment", "add", "remove"],
+            description: "Operation that produced the change (omitted for `ping`)."
+          },
+          value: %{description: "New value (omitted for `delete` and `ping`)."},
+          timestamp: %{type: :string, format: "date-time"}
+        },
+        required: [:event, :store, :timestamp]
+      }
+    }
+  end
+
+  # --- Shared response objects ---
+
+  defp shared_responses do
+    %{
+      "Unauthorized" => %{
+        description: "Missing or invalid Bearer token.",
+        content: %{
+          "application/json" => %{
+            schema: %{"$ref": "#/components/schemas/Error"},
+            example: %{error: "unauthorized"}
           }
         }
       },
-      security: [%{"bearerAuth" => []}]
+      "Forbidden" => %{
+        description: "Token does not have permission for this resource.",
+        content: %{
+          "application/json" => %{
+            schema: %{"$ref": "#/components/schemas/Error"},
+            example: %{error: "forbidden"}
+          }
+        }
+      },
+      "NotFound" => %{
+        description: "The requested resource does not exist.",
+        content: %{
+          "application/json" => %{
+            schema: %{"$ref": "#/components/schemas/Error"},
+            example: %{error: "not_found"}
+          }
+        }
+      },
+      "BadRequest" => %{
+        description: "Malformed request — see `error`/`detail` for specifics.",
+        content: %{
+          "application/json" => %{
+            schema: %{"$ref": "#/components/schemas/Error"},
+            example: %{
+              error: "invalid_params",
+              detail: "limit must be 1..1000"
+            }
+          }
+        }
+      },
+      "RateLimited" => %{
+        description: "Too many requests — see `Retry-After` header for back-off.",
+        content: %{
+          "application/json" => %{
+            schema: %{"$ref": "#/components/schemas/Error"},
+            example: %{error: "rate_limited"}
+          }
+        },
+        headers: %{
+          "Retry-After" => %{
+            description: "Seconds to wait before retrying.",
+            schema: %{type: :integer}
+          }
+        }
+      }
+    }
+  end
+
+  # --- Shared parameters & headers ---
+
+  defp shared_parameters do
+    %{
+      "OrgSlug" => %{
+        name: "org",
+        in: :path,
+        required: true,
+        description: "Organization slug.",
+        schema: %{type: :string}
+      },
+      "StoreName" => %{
+        name: "store",
+        in: :path,
+        required: true,
+        description: "Store name within the organization.",
+        schema: %{type: :string}
+      },
+      "EntryPath" => %{
+        name: "path",
+        in: :path,
+        required: true,
+        description:
+          "Dot- or slash-separated entry path. Slashes are normalised to dots; segments cannot contain `.`.",
+        schema: %{type: :string},
+        example: "projects/alpha/title"
+      },
+      "RequestId" => %{
+        name: "X-Request-Id",
+        in: :header,
+        required: false,
+        description:
+          "Opaque correlation ID. Echoed back on the response. Used as the write op's `client_op_id` fallback.",
+        schema: %{type: :string}
+      },
+      "IfMatch" => %{
+        name: "If-Match",
+        in: :header,
+        required: false,
+        description:
+          "Compare-and-swap precondition. Pass the entry's current `revision`; the write fails with 412 if the revision has advanced. Leaf-only (cannot CAS a subtree).",
+        schema: %{type: :integer}
+      }
+    }
+  end
+
+  defp shared_headers do
+    %{
+      "X-Request-Id" => %{
+        description: "Echoed correlation ID. Generated server-side if not supplied.",
+        schema: %{type: :string}
+      }
+    }
+  end
+
+  # --- Outbound webhooks ---
+
+  defp webhooks do
+    %{
+      "change" => %{
+        description: """
+        Delivered to every active webhook subscriber when a store entry
+        changes. Signed with HMAC-SHA256 over the raw body using the
+        subscription's secret; the signature is sent in the
+        `x-dust-signature` header as `sha256=<hex>`.
+
+        Delivery is at-least-once; subscribers should be idempotent
+        keyed on `store_seq`.
+        """,
+        post: %{
+          operationId: "webhooks.change",
+          requestBody: %{
+            description: "Outbound delivery payload.",
+            content: %{
+              "application/json" => %{
+                schema: %{"$ref": "#/components/schemas/WebhookEvent"},
+                example: %{
+                  event: "change",
+                  store: "acme/config",
+                  store_seq: 42,
+                  path: "settings.theme",
+                  op: "set",
+                  value: "dark",
+                  timestamp: "2026-05-10T12:34:56Z"
+                }
+              }
+            },
+            required: true
+          },
+          parameters: [
+            %{
+              name: "x-dust-signature",
+              in: :header,
+              required: true,
+              description: "`sha256=<hex>` HMAC of the raw body using the webhook secret.",
+              schema: %{type: :string},
+              example: "sha256=fce4b0..."
+            }
+          ],
+          responses: %{
+            "2XX" => %{description: "Subscriber accepted the delivery."}
+          }
+        }
+      }
     }
   end
 end

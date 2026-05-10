@@ -3,52 +3,54 @@ defmodule DustWeb.Api.AuditApiController do
   use Oaskit.Controller
 
   alias Dust.{Stores, Sync.Audit}
+  alias DustWeb.Api.Refs
 
   action_fallback DustWeb.Api.FallbackController
 
   operation :index,
+    operation_id: "audit.list",
     summary: "List audit log entries for a store",
+    description:
+      "Page-based pagination. Filter by `path` (glob pattern), `device_id`, `op`, or `since` (ISO 8601 timestamp).",
     tags: ["Audit"],
     parameters: [
-      org: [in: :path, schema: %{type: :string}, required: true],
-      store: [in: :path, schema: %{type: :string}, required: true],
-      path: [in: :query, schema: %{type: :string}, required: false],
+      _: Refs.parameter("OrgSlug"),
+      _: Refs.parameter("StoreName"),
+      path: [
+        in: :query,
+        schema: %{type: :string},
+        required: false,
+        description: "Glob pattern; slashes are normalised to dots."
+      ],
       device_id: [in: :query, schema: %{type: :string}, required: false],
-      op: [in: :query, schema: %{type: :string}, required: false],
+      op: [
+        in: :query,
+        schema: %{
+          type: :string,
+          enum: ["set", "delete", "merge", "increment", "add", "remove"]
+        },
+        required: false
+      ],
       since: [in: :query, schema: %{type: :string, format: "date-time"}, required: false],
-      limit: [in: :query, schema: %{type: :integer, default: 50}, required: false],
-      page: [in: :query, schema: %{type: :integer, default: 1}, required: false]
+      limit: [in: :query, schema: %{type: :integer, default: 50, minimum: 1}, required: false],
+      page: [in: :query, schema: %{type: :integer, default: 1, minimum: 1}, required: false],
+      _: Refs.parameter("RequestId")
     ],
     responses: [
       ok:
         {%{
            type: :object,
            properties: %{
-             ops: %{
-               type: :array,
-               items: %{
-                 type: :object,
-                 properties: %{
-                   store_seq: %{type: :integer},
-                   op: %{type: :string},
-                   path: %{type: :string},
-                   value: %{},
-                   device_id: %{type: :string},
-                   inserted_at: %{type: :string, format: "date-time"}
-                 }
-               }
-             },
-             pagination: %{
-               type: :object,
-               properties: %{
-                 page: %{type: :integer},
-                 limit: %{type: :integer},
-                 total: %{type: :integer},
-                 total_pages: %{type: :integer}
-               }
-             }
-           }
-         }, description: "Paginated audit log"}
+             ops: %{type: :array, items: Refs.schema("AuditOp")},
+             pagination: Refs.schema("Pagination")
+           },
+           required: [:ops, :pagination]
+         }, description: "Paginated audit log"},
+      bad_request: Refs.bad_request(),
+      unauthorized: Refs.unauthorized(),
+      forbidden: Refs.forbidden(),
+      not_found: Refs.not_found(),
+      too_many_requests: Refs.rate_limited()
     ]
 
   def index(conn, %{"org" => org_slug, "store" => store_name} = params) do

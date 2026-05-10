@@ -3,22 +3,18 @@ defmodule DustWeb.Api.StoreApiController do
   use Oaskit.Controller
 
   alias Dust.Stores
+  alias DustWeb.Api.Refs
 
   action_fallback DustWeb.Api.FallbackController
 
-  @store_schema %{
-    type: :object,
-    properties: %{
-      id: %{type: :string, format: :uuid},
-      name: %{type: :string},
-      full_name: %{type: :string, description: "org_slug/store_name"},
-      status: %{type: :string, enum: ["active", "expired"]},
-      inserted_at: %{type: :string, format: "date-time"},
-      expires_at: %{type: :string, format: "date-time", nullable: true}
-    }
-  }
+  @store_ref Refs.schema("Store")
+  @unauthorized Refs.unauthorized()
+  @forbidden Refs.forbidden()
+  @bad_request Refs.bad_request()
+  @rate_limited Refs.rate_limited()
 
   operation :index,
+    operation_id: "stores.list",
     summary: "List stores in the current organization",
     tags: ["Stores"],
     responses: [
@@ -27,9 +23,26 @@ defmodule DustWeb.Api.StoreApiController do
            type: :object,
            properties: %{
              org: %{type: :string},
-             stores: %{type: :array, items: @store_schema}
+             stores: %{type: :array, items: @store_ref}
+           },
+           required: [:org, :stores],
+           example: %{
+             org: "acme",
+             stores: [
+               %{
+                 id: "01HX...",
+                 name: "config",
+                 full_name: "acme/config",
+                 status: "active",
+                 inserted_at: "2026-01-01T00:00:00Z",
+                 expires_at: nil
+               }
+             ]
            }
-         }, description: "List of stores"}
+         }, description: "List of stores"},
+      unauthorized: @unauthorized,
+      forbidden: @forbidden,
+      too_many_requests: @rate_limited
     ]
 
   def index(conn, _params) do
@@ -43,27 +56,44 @@ defmodule DustWeb.Api.StoreApiController do
   end
 
   operation :create,
+    operation_id: "stores.create",
     summary: "Create a new store",
     tags: ["Stores"],
     request_body:
       {%{
          type: :object,
          properties: %{
-           name: %{type: :string, description: "Store name (slash-separated paths supported)"},
-           ttl: %{type: :integer, description: "Optional TTL in seconds"}
+           name: %{
+             type: :string,
+             description: "Store name. Cannot contain `/`.",
+             example: "config"
+           },
+           ttl: %{
+             type: :integer,
+             description: "Optional TTL in seconds. Store auto-expires after this duration."
+           }
          },
-         required: [:name]
+         required: [:name],
+         example: %{name: "config"}
        }, description: "Store creation payload"},
     responses: [
-      created: {@store_schema, description: "Store created"},
+      created: {@store_ref, description: "Store created"},
+      bad_request: @bad_request,
+      unauthorized: @unauthorized,
+      forbidden: @forbidden,
       payment_required:
         {%{
            type: :object,
-           properties: %{error: %{type: :string, enum: ["limit_exceeded"]}}
+           properties: %{
+             error: %{type: :string, enum: ["limit_exceeded"]},
+             limit: %{type: :integer},
+             current: %{type: :integer}
+           },
+           required: [:error]
          }, description: "Plan limit exceeded"},
       unprocessable_entity:
-        {%{type: :object, properties: %{error: %{type: :object}}},
-         description: "Validation error"}
+        {Refs.schema("ValidationError"), description: "Validation error"},
+      too_many_requests: @rate_limited
     ]
 
   def create(conn, %{"name" => name} = params) do

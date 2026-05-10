@@ -3,27 +3,45 @@ defmodule DustWeb.Api.ExportController do
   use Oaskit.Controller
 
   alias Dust.{Stores, Sync}
+  alias DustWeb.Api.Refs
 
   action_fallback DustWeb.Api.FallbackController
 
   operation :show,
+    operation_id: "sync.export",
     summary: "Export a store as JSONL or SQLite",
+    description:
+      "`format=jsonl` (default) returns `application/x-ndjson` — one entry per line. `format=sqlite` returns a binary `.db` file (`application/x-sqlite3`) suitable for offline use.",
     tags: ["Sync"],
     parameters: [
-      org: [in: :path, schema: %{type: :string}, required: true],
-      store: [in: :path, schema: %{type: :string}, required: true],
+      _: Refs.parameter("OrgSlug"),
+      _: Refs.parameter("StoreName"),
       format: [
         in: :query,
         schema: %{type: :string, enum: ["jsonl", "sqlite"], default: "jsonl"},
         required: false
-      ]
+      ],
+      _: Refs.parameter("RequestId")
     ],
     responses: [
-      ok:
-        {%{
-           type: :string,
-           description: "JSONL stream (default) or binary SQLite file"
-         }, description: "Export payload"}
+      ok: [
+        description: "Export payload",
+        content: %{
+          "application/x-ndjson" => %{
+            schema: %{
+              type: :string,
+              description: "Newline-delimited JSON, one entry per line."
+            }
+          },
+          "application/x-sqlite3" => %{
+            schema: %{type: :string, format: :binary, description: "SQLite database file."}
+          }
+        }
+      ],
+      unauthorized: Refs.unauthorized(),
+      forbidden: Refs.forbidden(),
+      not_found: Refs.not_found(),
+      too_many_requests: Refs.rate_limited()
     ]
 
   def show(conn, %{"org" => org_slug, "store" => store_name} = params) do

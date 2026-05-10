@@ -3,27 +3,36 @@ defmodule DustWeb.FileController do
   use Oaskit.Controller
 
   alias Dust.{Files, Stores, Sync}
+  alias DustWeb.Api.Refs
 
   operation :show,
+    operation_id: "files.download",
     summary: "Download a blob by content hash",
     description:
-      "Authenticates via Bearer token. Returns raw file content. Only serves blobs referenced by the token's store.",
+      "Returns the raw blob bytes with the original `Content-Type` (and `Content-Disposition` if a filename was set). Only serves blobs referenced by the token's store.",
     tags: ["Files"],
     parameters: [
-      hash: [in: :path, schema: %{type: :string}, required: true]
+      hash: [
+        in: :path,
+        schema: %{type: :string},
+        required: true,
+        description: "SHA-256 content hash."
+      ],
+      _: Refs.parameter("RequestId")
     ],
     responses: [
       ok: [
-        description: "Blob content (raw bytes)",
-        content: %{"application/octet-stream" => %{schema: %{type: :string, format: :binary}}}
+        description: "Blob content (raw bytes).",
+        content: %{
+          "application/octet-stream" => %{
+            schema: %{type: :string, format: :binary}
+          }
+        }
       ],
-      unauthorized:
-        {%{type: :object, properties: %{error: %{type: :string}}}, description: "Invalid token"},
-      forbidden:
-        {%{type: :object, properties: %{error: %{type: :string}}},
-         description: "Token cannot read this blob"},
-      not_found:
-        {%{type: :object, properties: %{error: %{type: :string}}}, description: "Blob not found"}
+      unauthorized: Refs.unauthorized(),
+      forbidden: Refs.forbidden(),
+      not_found: Refs.not_found(),
+      too_many_requests: Refs.rate_limited()
     ]
 
   def show(conn, %{"hash" => hash}) do
