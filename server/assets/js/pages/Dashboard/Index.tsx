@@ -7,8 +7,9 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/Card";
+import { Button } from "@/components/ui/Button";
 import type { SharedProps } from "@/types";
-import { Database, Key, FileText } from "lucide-react";
+import { Database, Key, FileText, Plus } from "lucide-react";
 
 interface DashboardProps extends SharedProps {
   stats: {
@@ -24,6 +25,7 @@ export default function DashboardIndex() {
 
   const orgSlug = current_organization?.slug || "";
   const displayName = current_user?.name || current_user?.email || "there";
+  const isEmpty = stats.stores === 0;
 
   return (
     <>
@@ -37,6 +39,29 @@ export default function DashboardIndex() {
             Welcome back, {displayName}
           </p>
         </div>
+
+        {isEmpty && (
+          <Card className="border-dashed">
+            <CardHeader>
+              <CardTitle className="text-xl">
+                Create your first store
+              </CardTitle>
+              <CardDescription>
+                A store is a named, reactive map of keys and values. Every
+                connected client subscribes to it and reacts to changes in
+                real time.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Link href={`/${orgSlug}/stores/new`}>
+                <Button size="lg" className="gap-2">
+                  <Plus className="w-4 h-4" />
+                  New store
+                </Button>
+              </Link>
+            </CardContent>
+          </Card>
+        )}
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <Link href={`/${orgSlug}/stores`} className="block">

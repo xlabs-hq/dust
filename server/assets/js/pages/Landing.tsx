@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/Button";
 function Landing() {
   return (
     <>
-      <Head title="Dust — Reactive Global Map" />
+      <Head title="Dust — Reactive state for AI agents" />
       <div className="min-h-screen bg-background text-foreground">
         {/* Nav */}
         <header className="flex items-center justify-between px-6 py-4 max-w-4xl mx-auto">
@@ -52,7 +52,7 @@ function Landing() {
             Dust
           </h1>
           <p className="mt-4 text-xl sm:text-2xl text-muted-foreground font-medium">
-            The reactive global map
+            Reactive state for AI agents
           </p>
           <p className="mt-6 max-w-2xl mx-auto text-base text-muted-foreground leading-relaxed">
             Create a store, write data, subscribe to changes — every connected

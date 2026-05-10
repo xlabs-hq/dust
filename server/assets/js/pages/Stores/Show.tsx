@@ -12,8 +12,9 @@ import {
   TableRow,
 } from "@/components/ui/Table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
+import GettingStartedSnippets from "@/components/GettingStartedSnippets";
 import type { SharedProps } from "@/types";
-import { ArrowLeft, Database, FileText, ScrollText, Webhook } from "lucide-react";
+import { ArrowLeft, FileText, ScrollText, Webhook } from "lucide-react";
 
 interface Entry {
   path: string;
@@ -119,15 +120,10 @@ export default function StoreShow() {
 
           <TabsContent value="data">
             {entries.length === 0 ? (
-              <div className="flex flex-col items-center justify-center rounded-lg border border-dashed p-12 text-center">
-                <Database className="w-10 h-10 text-muted-foreground mb-4" />
-                <h3 className="text-lg font-medium text-foreground">
-                  No entries yet
-                </h3>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Connect a client to start writing data to this store.
-                </p>
-              </div>
+              <GettingStartedSnippets
+                storeFullName={store.full_name}
+                orgSlug={orgSlug}
+              />
             ) : (
               <div className="rounded-lg border">
                 <Table>

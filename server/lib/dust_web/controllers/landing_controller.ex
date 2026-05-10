@@ -8,7 +8,7 @@ defmodule DustWeb.LandingController do
       redirect(conn, to: ~p"/#{org.slug}")
     else
       conn
-      |> assign(:page_title, "Dust — Reactive Global Map")
+      |> assign(:page_title, "Dust — Reactive state for AI agents")
       |> render_inertia("Landing")
     end
   end

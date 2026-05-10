@@ -30,7 +30,8 @@ if (csrfToken) {
 createInertiaApp({
   title: (title) => {
     if (!title) return "Dust";
-    if (title === "Dust" || title.includes("— Dust")) return title;
+    if (title === "Dust") return title;
+    if (title.startsWith("Dust ") || title.includes("— Dust")) return title;
     return `${title} — Dust`;
   },
   resolve: async (name) => {

@@ -136,7 +136,7 @@ function Login({ dev_bypass }: LoginProps) {
             <p className="mt-2 text-sm text-muted-foreground">
               {step === "verify"
                 ? "Check your email for a verification code"
-                : "Reactive state management for AI agents"}
+                : "Reactive state for AI agents"}
             </p>
           </div>
 
