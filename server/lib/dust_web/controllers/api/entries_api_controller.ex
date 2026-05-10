@@ -29,11 +29,21 @@ defmodule DustWeb.Api.EntriesApiController do
 
   operation :show,
     operation_id: "entries.get",
-    summary: "Read a single entry by path",
+    summary: "Read a single entry by path (or probe existence with HEAD)",
+    description: """
+    `GET` returns the entry value, type, and revision. `HEAD` is the
+    cheap S3-style existence probe — same headers (including `ETag`),
+    no body. Returns 200 if the path resolves to a leaf entry or any
+    descendant under a subtree; 404 otherwise.
+
+    `ETag` carries the entry's current `revision` — for leaf paths
+    this is the entry's seq, for subtree paths it is the max seq
+    across descendants.
+    """,
     tags: ["Entries"],
     parameters: @org_store_params ++ @entry_path_param ++ @request_id_param,
     responses: [
-      ok: {@entry_ref, description: "Entry"},
+      ok: {@entry_ref, description: "Entry (HEAD: same headers, no body)"},
       bad_request: @bad_request,
       unauthorized: @unauthorized,
       forbidden: @forbidden,
@@ -51,7 +61,9 @@ defmodule DustWeb.Api.EntriesApiController do
          :ok <- verify_token_scope(store_token, store),
          :ok <- verify_read_permission(store_token),
          {:ok, entry} <- fetch_entry(store.id, path) do
-      json(conn, render_entry(entry))
+      conn
+      |> put_resp_header("etag", ~s("#{entry.seq}"))
+      |> json(render_entry(entry))
     end
   end
 

@@ -633,6 +633,79 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
     end
   end
 
+  describe "HEAD /api/stores/:org/:store/entries/*path" do
+    test "returns 200 + ETag for an existing leaf", %{conn: conn, token: token, store: store} do
+      %{seq: seq} = Sync.get_entry(store.id, "users.alice.name")
+
+      resp =
+        conn
+        |> api_conn(token)
+        |> head("/api/stores/entriesorg/mystore/entries/users/alice/name")
+
+      assert resp.status == 200
+      assert resp.resp_body == ""
+      assert get_resp_header(resp, "etag") == [~s("#{seq}")]
+    end
+
+    test "returns 200 for a subtree path (existence probe)", %{conn: conn, token: token} do
+      resp =
+        conn
+        |> api_conn(token)
+        |> head("/api/stores/entriesorg/mystore/entries/users/alice")
+
+      assert resp.status == 200
+      assert resp.resp_body == ""
+      # ETag carries the max seq across descendants
+      [etag] = get_resp_header(resp, "etag")
+      assert etag =~ ~r/^"\d+"$/
+    end
+
+    test "returns 404 with empty body for missing path", %{conn: conn, token: token} do
+      resp =
+        conn
+        |> api_conn(token)
+        |> head("/api/stores/entriesorg/mystore/entries/no/such/path")
+
+      assert resp.status == 404
+      assert resp.resp_body == ""
+    end
+
+    test "returns 401 without Bearer token", %{conn: conn} do
+      resp =
+        conn
+        |> put_req_header("accept", "application/json")
+        |> head("/api/stores/entriesorg/mystore/entries/users/alice/name")
+
+      assert resp.status == 401
+    end
+
+    test "returns 403 without read permission", %{conn: conn, store: store, user: user} do
+      {:ok, no_read_token} =
+        Stores.create_store_token(store, %{
+          name: "no-read-tok",
+          read: false,
+          write: true,
+          created_by_id: user.id
+        })
+
+      resp =
+        conn
+        |> api_conn(no_read_token)
+        |> head("/api/stores/entriesorg/mystore/entries/users/alice/name")
+
+      assert resp.status == 403
+    end
+
+    test "returns 400 for '.' in URL segment", %{conn: conn, token: token} do
+      resp =
+        conn
+        |> api_conn(token)
+        |> head("/api/stores/entriesorg/mystore/entries/foo.bar/baz")
+
+      assert resp.status == 400
+    end
+  end
+
   describe "DELETE /api/stores/:org/:store/entries/*path" do
     test "removes a leaf entry", %{conn: conn, token: token, store: store} do
       assert %{value: "Alice"} = Sync.get_entry(store.id, "users.alice.name")
