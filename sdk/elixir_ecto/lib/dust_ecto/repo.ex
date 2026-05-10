@@ -252,6 +252,101 @@ defmodule DustEcto.Repo do
   end
 
   # ------------------------------------------------------------------
+  # Subscribe
+  # ------------------------------------------------------------------
+
+  @doc """
+  Subscribes the given callback to record-level changes for `schema`.
+  Callback receives `{:upserted, struct}` or `{:deleted, slug}` events
+  in the dust SDK's `:committed` mode — exactly one delivery per write,
+  including for the writer's own changes, with `store_seq` durably
+  attached.
+
+  HTTP mode: returns `{:error, %DustEcto.Error{kind: :not_supported}}`.
+
+  The returned ref can be passed to `unsubscribe/1`.
+  """
+  @spec subscribe(module(), (term() -> any())) ::
+          {:ok, reference()} | {:error, Error.t()}
+  def subscribe(schema, callback) when is_atom(schema) and is_function(callback, 1) do
+    prefix = schema.__dust_prefix__()
+    pattern = "#{prefix}.**"
+    {transport, _} = Transport.pick()
+    store = Transport.store!()
+
+    wrapper = fn event ->
+      case ecto_event(schema, prefix, event, transport, store) do
+        nil -> :ok
+        translated -> callback.(translated)
+      end
+    end
+
+    transport.subscribe(store, pattern, wrapper)
+  end
+
+  @doc """
+  Subscribes to the raw underlying op events for `schema` — no
+  reassembly into structs. Callback receives the SDK's event map
+  `%{op:, path:, value:, store_seq:, ...}` exactly.
+
+  Useful for users who need per-leaf provenance or want to run their
+  own assembly. HTTP mode: same `:not_supported` as `subscribe/2`.
+  """
+  @spec subscribe_raw(module(), (map() -> any())) ::
+          {:ok, reference()} | {:error, Error.t()}
+  def subscribe_raw(schema, callback) when is_atom(schema) and is_function(callback, 1) do
+    prefix = schema.__dust_prefix__()
+    pattern = "#{prefix}.**"
+    {transport, _} = Transport.pick()
+    store = Transport.store!()
+
+    transport.subscribe(store, pattern, callback)
+  end
+
+  @doc "Removes a subscription previously registered via subscribe/2 or subscribe_raw/2."
+  @spec unsubscribe(reference()) :: :ok
+  def unsubscribe(ref) when is_reference(ref) do
+    {transport, _} = Transport.pick()
+    store = Transport.store!()
+    transport.unsubscribe(store, ref)
+  end
+
+  defp ecto_event(_schema, prefix, %{op: :delete, path: path}, _t, _s) do
+    case slug_from_path(path, prefix) do
+      {:ok, slug} -> {:deleted, slug}
+      :error -> nil
+    end
+  end
+
+  defp ecto_event(schema, prefix, %{path: path} = _event, transport, store) do
+    with {:ok, slug} <- slug_from_path(path, prefix),
+         {:ok, %{value: value}} <- transport.get(store, "#{prefix}.#{slug}"),
+         {:ok, struct} <- load_record_for_event(schema, slug, value) do
+      {:upserted, struct}
+    else
+      _ -> nil
+    end
+  end
+
+  defp ecto_event(_schema, _prefix, _event, _t, _s), do: nil
+
+  defp slug_from_path(path, prefix) when is_binary(path) and is_binary(prefix) do
+    case String.split(path, ".") do
+      [^prefix, slug | _] when slug != "" -> {:ok, slug}
+      _ -> :error
+    end
+  end
+
+  defp load_record_for_event(schema, slug, value) when is_map(value) do
+    case load_record(schema, slug, value) do
+      {:ok, struct} -> {:ok, struct}
+      :missing_required -> :error
+    end
+  end
+
+  defp load_record_for_event(_schema, _slug, _other), do: :error
+
+  # ------------------------------------------------------------------
   # Internals
   # ------------------------------------------------------------------
 

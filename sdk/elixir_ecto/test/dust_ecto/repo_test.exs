@@ -1,7 +1,7 @@
 defmodule DustEcto.RepoTest do
   use ExUnit.Case, async: false
 
-  alias DustEcto.Repo
+  alias DustEcto.{Error, Repo}
   alias DustEcto.Test.{Link, FlatNote}
 
   @store "myorg/mystore"
@@ -203,6 +203,13 @@ defmodule DustEcto.RepoTest do
       catch
         :error, :badarg -> :ok
       end
+    end
+  end
+
+  describe "subscribe/2 (HTTP mode)" do
+    test "returns {:error, :not_supported} from the HTTP transport" do
+      assert {:error, %Error{kind: :not_supported}} =
+               Repo.subscribe(Link, fn _ -> :ok end)
     end
   end
 
