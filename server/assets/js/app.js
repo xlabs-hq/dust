@@ -40,7 +40,7 @@ createInertiaApp({
     // Pages without an explicit layout get the Shell layout
     if (!component.layout) {
       const { Shell } = await import("./layouts/Shell");
-      component.layout = (page) => React.createElement(Shell, null, page);
+      component.layout = [(page) => React.createElement(Shell, null, page)];
     }
 
     return component;

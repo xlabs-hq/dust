@@ -132,6 +132,6 @@ function ResetPassword({ token }: ResetPasswordProps) {
   );
 }
 
-ResetPassword.layout = (page: React.ReactNode) => page;
+ResetPassword.layout = [(page: React.ReactNode) => page];
 
 export default ResetPassword;
