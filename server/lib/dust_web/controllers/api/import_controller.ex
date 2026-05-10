@@ -31,8 +31,20 @@ defmodule DustWeb.Api.ImportController do
       ok:
         {%{
            type: :object,
+           description: """
+           Import was processed. Inspect the response body to learn
+           the outcome of each line — partial success is signalled by
+           `ok: false` with non-empty `failed` and/or non-zero
+           `unparseable`, **not** by the status code. Writes are not
+           transactional: any line that imported is permanent
+           regardless of whether later lines fail.
+           """,
            properties: %{
-             ok: %{type: :boolean, description: "True iff every line either imported or was a header/blank."},
+             ok: %{
+               type: :boolean,
+               description:
+                 "`true` iff every line either imported or was an intentionally-ignored header/blank."
+             },
              imported: %{type: :integer, description: "Number of writes that returned :ok."},
              skipped: %{
                type: :integer,
@@ -44,7 +56,7 @@ defmodule DustWeb.Api.ImportController do
              },
              failed: %{
                type: :array,
-               description: "Per-line failures. Empty when ok=true.",
+               description: "Per-line failures. Empty when `ok=true`.",
                items: %{
                  type: :object,
                  properties: %{
@@ -57,13 +69,7 @@ defmodule DustWeb.Api.ImportController do
              }
            },
            required: [:ok, :imported, :skipped, :unparseable, :failed]
-         }, description: "Import summary — `ok=true` and `failed=[]`."},
-      multi_status:
-        {%{
-           type: :object,
-           description:
-             "Some lines failed. Same shape as 200; `ok=false` and `failed`/`unparseable` populated."
-         }, description: "Partial success"},
+         }, description: "Import processed (may be partial — see body)"},
       bad_request: Refs.bad_request(),
       unauthorized: Refs.unauthorized(),
       forbidden: Refs.forbidden(),
@@ -91,9 +97,11 @@ defmodule DustWeb.Api.ImportController do
         failed: Enum.map(summary.failed, &serialize_failure/1)
       }
 
-      status = if response.ok, do: 200, else: 207
-
-      conn |> put_status(status) |> json(response)
+      # Partial-success-of-included-items is a body concern, not a
+      # status concern. The request was accepted and processed; the
+      # body describes per-line outcomes. Consumers should always
+      # check `ok` and `failed` regardless of status code.
+      json(conn, response)
     end
   end
 
