@@ -51,7 +51,7 @@ defmodule Dust.MixProject do
 
       # Vite + Inertia
       {:phoenix_vite, "~> 0.4"},
-      {:bun, "~> 1.5 and >= 1.5.1", runtime: Mix.env() == :dev},
+      {:bun, "~> 1.6", runtime: Mix.env() == :dev},
       {:inertia, "~> 2.0"},
 
       # Auth
@@ -59,13 +59,13 @@ defmodule Dust.MixProject do
       {:req, "~> 0.5"},
 
       # Authorization
-      {:let_me, "~> 1.2"},
+      {:let_me, "~> 2.0"},
 
       # Background jobs
       {:oban, "~> 2.18"},
 
       # Rate limiting
-      {:hammer, "~> 6.2"},
+      {:hammer, "~> 7.3"},
 
       # Per-store SQLite
       {:exqlite, "~> 0.27"},
@@ -102,7 +102,8 @@ defmodule Dust.MixProject do
       {:telemetry_poller, "~> 1.0"},
       {:gettext, "~> 1.0"},
       {:jason, "~> 1.2"},
-      {:dns_cluster, "~> 0.2.0"}
+      {:dns_cluster, "~> 0.2.0"},
+      {:oaskit, "~> 0.12.0"}
     ]
   end
 

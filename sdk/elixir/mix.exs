@@ -32,7 +32,7 @@ defmodule Dust.MixProject do
       {:slipstream, "~> 1.2"},
       {:msgpax, "~> 2.4"},
       {:jason, "~> 1.4"},
-      {:decimal, "~> 2.0"},
+      {:decimal, "~> 3.1"},
       {:req, "~> 0.5"},
 
       # Optional integrations

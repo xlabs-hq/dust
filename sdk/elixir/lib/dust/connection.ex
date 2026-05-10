@@ -255,6 +255,7 @@ defmodule Dust.Connection do
   end
 
   # Note: Slipstream processes support handle_call via GenServer
+  @impl Slipstream
   def handle_call(:info, _from, socket) do
     now = DateTime.utc_now()
     connected_at = socket.assigns.connected_at

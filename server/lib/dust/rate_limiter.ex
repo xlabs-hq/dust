@@ -6,6 +6,8 @@ defmodule Dust.RateLimiter do
   a token share the same rate limit.
   """
 
+  use Hammer, backend: :ets
+
   @write_limit Application.compile_env(:dust, :rate_limit_writes_per_min, 100)
   @read_limit Application.compile_env(:dust, :rate_limit_reads_per_min, 1000)
 
@@ -18,11 +20,11 @@ defmodule Dust.RateLimiter do
   end
 
   defp check_rate(key, limit, window_ms) do
-    case Hammer.check_rate(key, window_ms, limit) do
+    case hit(key, window_ms, limit) do
       {:allow, _count} ->
         :ok
 
-      {:deny, _limit} ->
+      {:deny, _retry_after_ms} ->
         {:error, :rate_limited, %{retry_after_ms: window_ms}}
     end
   end

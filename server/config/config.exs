@@ -15,9 +15,6 @@ config :dust,
 
 config :dust, :store_data_dir, "priv/stores"
 
-config :hammer,
-  backend: {Hammer.Backend.ETS, [expiry_ms: 120_000, cleanup_interval_ms: 60_000]}
-
 # Configure the endpoint
 config :dust, DustWeb.Endpoint,
   url: [host: "localhost"],
