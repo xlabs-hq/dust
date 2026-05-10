@@ -106,10 +106,9 @@ defmodule DustWeb.Api.EntriesApiController do
         [
           pattern: [
             in: :query,
-            schema: %{type: :string, default: "**"},
+            schema: %{type: :string, default: "**", example: "projects/alpha/*"},
             required: false,
-            description: "Glob pattern. Mutually exclusive with `from`/`to`.",
-            example: "projects/alpha/*"
+            description: "Glob pattern. Mutually exclusive with `from`/`to`."
           ],
           from: [
             in: :query,
@@ -158,7 +157,7 @@ defmodule DustWeb.Api.EntriesApiController do
                description:
                  "Array of entries (default), keys (`select=keys`), or prefix strings (`select=prefixes`)."
              },
-             next_cursor: %{type: :string, nullable: true}
+             next_cursor: %{type: ["string", "null"]}
            },
            required: [:items, :next_cursor]
          }, description: "Page of entries (or keys/prefixes)"},
@@ -226,7 +225,7 @@ defmodule DustWeb.Api.EntriesApiController do
            type: :object,
            properties: %{
              error: %{type: :string, enum: ["conflict"]},
-             current_revision: %{type: :integer, nullable: true}
+             current_revision: %{type: ["integer", "null"]}
            },
            required: [:error]
          }, description: "If-Match revision mismatch"},

@@ -81,6 +81,69 @@ defmodule DustWeb.ApiSpecTest do
     assert is_map(decoded["components"]["schemas"])
   end
 
+  test "no parameter ships malformed `examples: [...]` (use schema.example or examples object)" do
+    decoded = DustWeb.ApiSpec |> Oaskit.to_json!() |> Jason.decode!()
+
+    bad =
+      for {path, methods} <- decoded["paths"],
+          {verb, op} <- methods,
+          is_map(op),
+          param <- op["parameters"] || [],
+          is_list(param["examples"]) do
+        "#{verb} #{path} param #{inspect(param["name"])}: examples is a list"
+      end
+
+    assert bad == [],
+           "OpenAPI 3.1 requires `examples` to be a Map (or use schema.example). Found list-shaped examples on:\n" <>
+             Enum.join(bad, "\n")
+  end
+
+  test "no schema uses OpenAPI 3.0's `nullable: true` (use type: [..., \"null\"] in 3.1)" do
+    json = Oaskit.to_json!(DustWeb.ApiSpec)
+
+    refute json =~ "\"nullable\":true",
+           "Found `nullable: true` in the spec. OpenAPI 3.1 uses `type: [\"x\", \"null\"]` instead."
+  end
+
+  test "shared rate-limit response declares Retry-After + X-RateLimit-* headers" do
+    decoded = DustWeb.ApiSpec |> Oaskit.to_json!() |> Jason.decode!()
+
+    headers = decoded["components"]["responses"]["RateLimited"]["headers"] || %{}
+    assert Map.has_key?(headers, "Retry-After")
+    assert Map.has_key?(headers, "X-RateLimit-Limit")
+    assert Map.has_key?(headers, "X-RateLimit-Remaining")
+    assert Map.has_key?(headers, "X-RateLimit-Reset")
+  end
+
+  test "every inline success response declares X-Request-Id (injected by spec post-pass)" do
+    decoded = DustWeb.ApiSpec |> Oaskit.to_json!() |> Jason.decode!()
+
+    missing =
+      for {path, methods} <- decoded["paths"],
+          {verb, op} <- methods,
+          is_map(op),
+          {status, response} <- op["responses"] || %{},
+          String.starts_with?(status, "2"),
+          is_map(response),
+          # skip Reference responses — they get headers via the component
+          response["$ref"] == nil,
+          not Map.has_key?(response["headers"] || %{}, "X-Request-Id") do
+        "#{verb} #{path} -> #{status}"
+      end
+
+    assert missing == [],
+           "Success responses missing X-Request-Id header:\n" <> Enum.join(missing, "\n")
+  end
+
+  test "webhook event names match what the server actually emits" do
+    decoded = DustWeb.ApiSpec |> Oaskit.to_json!() |> Jason.decode!()
+
+    enum = decoded["components"]["schemas"]["WebhookEvent"]["properties"]["event"]["enum"]
+    assert "entry.changed" in enum, "Server emits entry.changed; spec must list it"
+    assert "ping" in enum
+    refute "change" in enum, "Spec still references retired `change` event name"
+  end
+
   # --- helpers ---
 
   defp path_param_names(path) do

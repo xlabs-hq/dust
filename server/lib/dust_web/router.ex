@@ -102,6 +102,7 @@ defmodule DustWeb.Router do
   pipeline :api_auth do
     plug :accepts, ["json"]
     plug DustWeb.Plugs.ApiTokenAuth
+    plug DustWeb.Plugs.ApiRateLimit
   end
 
   # Org-scoped REST API (authenticated via Bearer token)

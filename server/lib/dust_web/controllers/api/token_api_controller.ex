@@ -41,7 +41,7 @@ defmodule DustWeb.Api.TokenApiController do
     operation_id: "tokens.create",
     summary: "Create a new API token",
     description:
-      "The plaintext `raw_token` is returned **only on creation** — store it immediately. The server keeps a hashed copy and cannot recover it later.",
+      "The `raw_token` is returned **only on creation** — store it immediately. The server keeps a one-way hash and cannot recover the plaintext later (unlike the webhook secret, which the server retains in order to sign deliveries).",
     tags: ["Tokens"],
     request_body:
       {%{

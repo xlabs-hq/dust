@@ -20,7 +20,6 @@ defmodule DustWeb.ApiSpec do
   use Oaskit
 
   alias Oaskit.Spec.Paths
-  alias Oaskit.Spec.Server
 
   @impl true
   def spec do
@@ -28,6 +27,7 @@ defmodule DustWeb.ApiSpec do
       DustWeb.Router
       |> Paths.from_router(filter: &String.starts_with?(&1.path, "/api/"))
       |> normalize_glob_paths()
+      |> inject_common_response_headers()
 
     %{
       openapi: "3.1.1",
@@ -75,9 +75,12 @@ defmodule DustWeb.ApiSpec do
           name: "Dust",
           url: "https://github.com/xlabs-hq/dust"
         },
-        license: %{name: "MIT"}
+        license: %{
+          name: "MIT",
+          identifier: "MIT"
+        }
       },
-      servers: [Server.from_config(:dust, DustWeb.Endpoint)],
+      servers: [%{url: "https://dustlayer.io", description: "Production"}],
       paths: paths,
       webhooks: webhooks(),
       components: %{
@@ -108,6 +111,53 @@ defmodule DustWeb.ApiSpec do
       {new_key, value}
     end)
   end
+
+  @common_response_headers %{
+    "X-Request-Id" => %Oaskit.Spec.Reference{
+      :"$ref" => "#/components/headers/X-Request-Id"
+    },
+    "X-RateLimit-Limit" => %Oaskit.Spec.Reference{
+      :"$ref" => "#/components/headers/X-RateLimit-Limit"
+    },
+    "X-RateLimit-Remaining" => %Oaskit.Spec.Reference{
+      :"$ref" => "#/components/headers/X-RateLimit-Remaining"
+    },
+    "X-RateLimit-Reset" => %Oaskit.Spec.Reference{
+      :"$ref" => "#/components/headers/X-RateLimit-Reset"
+    }
+  }
+
+  # Walk each per-operation inline response and add the common headers.
+  # Skips Reference responses (those are shared and have headers added
+  # at the component level instead).
+  defp inject_common_response_headers(paths) do
+    Map.new(paths, fn {path, methods} ->
+      methods =
+        Map.new(methods, fn {verb, op} ->
+          {verb, inject_into_op(op)}
+        end)
+
+      {path, methods}
+    end)
+  end
+
+  defp inject_into_op(%Oaskit.Spec.Operation{responses: responses} = op)
+       when is_map(responses) do
+    new_responses =
+      Map.new(responses, fn {status, resp} -> {status, add_headers(resp)} end)
+
+    %{op | responses: new_responses}
+  end
+
+  defp inject_into_op(op), do: op
+
+  defp add_headers(%Oaskit.Spec.Reference{} = ref), do: ref
+
+  defp add_headers(%Oaskit.Spec.Response{headers: existing} = resp) do
+    %{resp | headers: Map.merge(@common_response_headers, existing || %{})}
+  end
+
+  defp add_headers(other), do: other
 
   # --- Shared schemas ---
 
@@ -194,7 +244,7 @@ defmodule DustWeb.ApiSpec do
           },
           status: %{type: :string, enum: ["active", "archived"]},
           inserted_at: %{type: :string, format: "date-time"},
-          expires_at: %{type: :string, format: "date-time", nullable: true}
+          expires_at: %{type: ["string", "null"], format: "date-time"}
         },
         required: [:id, :name, :full_name, :status, :inserted_at]
       },
@@ -212,8 +262,8 @@ defmodule DustWeb.ApiSpec do
             },
             required: [:read, :write]
           },
-          expires_at: %{type: :string, format: "date-time", nullable: true},
-          last_used_at: %{type: :string, format: "date-time", nullable: true},
+          expires_at: %{type: ["string", "null"], format: "date-time"},
+          last_used_at: %{type: ["string", "null"], format: "date-time"},
           inserted_at: %{type: :string, format: "date-time"}
         },
         required: [:id, :name, :store_name, :permissions, :inserted_at]
@@ -225,7 +275,7 @@ defmodule DustWeb.ApiSpec do
           url: %{type: :string, format: :uri},
           active: %{type: :boolean},
           failure_count: %{type: :integer},
-          last_delivered_seq: %{type: :integer, nullable: true},
+          last_delivered_seq: %{type: ["integer", "null"]},
           inserted_at: %{type: :string, format: "date-time"}
         },
         required: [:id, :url, :active, :failure_count, :inserted_at]
@@ -235,9 +285,9 @@ defmodule DustWeb.ApiSpec do
         properties: %{
           id: %{type: :string, format: :uuid},
           store_seq: %{type: :integer},
-          status_code: %{type: :integer, nullable: true},
-          response_ms: %{type: :integer, nullable: true},
-          error: %{type: :string, nullable: true},
+          status_code: %{type: ["integer", "null"]},
+          response_ms: %{type: ["integer", "null"]},
+          error: %{type: ["string", "null"]},
           attempted_at: %{type: :string, format: "date-time"}
         },
         required: [:id, :store_seq, :attempted_at]
@@ -263,13 +313,14 @@ defmodule DustWeb.ApiSpec do
         properties: %{
           event: %{
             type: :string,
-            enum: ["change", "ping"],
-            description: "`change` for entry updates; `ping` from the test endpoint."
+            enum: ["entry.changed", "ping"],
+            description: "`entry.changed` for store mutations; `ping` from the test endpoint."
           },
           store: %{type: :string, description: "`org_slug/store_name`."},
           store_seq: %{
             type: :integer,
-            description: "Monotonic sequence at the time of delivery."
+            description:
+              "Monotonic store sequence at the time of the change. Use as the dedup key — delivery is at-least-once."
           },
           path: %{type: :string, description: "Path of the changed entry (omitted for `ping`)."},
           op: %{
@@ -277,7 +328,14 @@ defmodule DustWeb.ApiSpec do
             enum: ["set", "delete", "merge", "increment", "add", "remove"],
             description: "Operation that produced the change (omitted for `ping`)."
           },
-          value: %{description: "New value (omitted for `delete` and `ping`)."},
+          value: %{
+            description:
+              "Materialised post-write value at `path`. Omitted for `delete` and `ping`."
+          },
+          device_id: %{
+            type: :string,
+            description: "Identifier of the client that originated the write (omitted for `ping`)."
+          },
           timestamp: %{type: :string, format: "date-time"}
         },
         required: [:event, :store, :timestamp]
@@ -329,7 +387,8 @@ defmodule DustWeb.ApiSpec do
         }
       },
       "RateLimited" => %{
-        description: "Too many requests — see `Retry-After` header for back-off.",
+        description:
+          "Too many requests for this token + bucket (read or write). See `Retry-After` and `X-RateLimit-Reset`.",
         content: %{
           "application/json" => %{
             schema: %{"$ref": "#/components/schemas/Error"},
@@ -340,7 +399,11 @@ defmodule DustWeb.ApiSpec do
           "Retry-After" => %{
             description: "Seconds to wait before retrying.",
             schema: %{type: :integer}
-          }
+          },
+          "X-Request-Id" => %{"$ref": "#/components/headers/X-Request-Id"},
+          "X-RateLimit-Limit" => %{"$ref": "#/components/headers/X-RateLimit-Limit"},
+          "X-RateLimit-Remaining" => %{"$ref": "#/components/headers/X-RateLimit-Remaining"},
+          "X-RateLimit-Reset" => %{"$ref": "#/components/headers/X-RateLimit-Reset"}
         }
       }
     }
@@ -368,10 +431,17 @@ defmodule DustWeb.ApiSpec do
         name: "path",
         in: :path,
         required: true,
-        description:
-          "Dot- or slash-separated entry path. Slashes are normalised to dots; segments cannot contain `.`.",
-        schema: %{type: :string},
-        example: "projects/alpha/title"
+        description: """
+        Dot- or slash-separated entry path. Slashes are normalised to
+        dots server-side; segments themselves cannot contain `.`.
+
+        **Important for SDK clients:** the path travels as literal
+        slashes — do *not* URL-encode `/` to `%2F`. Phoenix splits
+        the trailing path segments and our server rejoins them. Some
+        OpenAPI client generators URL-encode path parameters by
+        default; you may need to configure them not to.
+        """,
+        schema: %{type: :string, example: "projects/alpha/title"}
       },
       "RequestId" => %{
         name: "X-Request-Id",
@@ -397,6 +467,18 @@ defmodule DustWeb.ApiSpec do
       "X-Request-Id" => %{
         description: "Echoed correlation ID. Generated server-side if not supplied.",
         schema: %{type: :string}
+      },
+      "X-RateLimit-Limit" => %{
+        description: "Maximum requests per window for this token + bucket.",
+        schema: %{type: :integer}
+      },
+      "X-RateLimit-Remaining" => %{
+        description: "Requests remaining in the current window.",
+        schema: %{type: :integer}
+      },
+      "X-RateLimit-Reset" => %{
+        description: "Seconds until the current window resets.",
+        schema: %{type: :integer}
       }
     }
   end
@@ -405,7 +487,7 @@ defmodule DustWeb.ApiSpec do
 
   defp webhooks do
     %{
-      "change" => %{
+      "entry.changed" => %{
         description: """
         Delivered to every active webhook subscriber when a store entry
         changes. Signed with HMAC-SHA256 over the raw body using the
@@ -413,22 +495,25 @@ defmodule DustWeb.ApiSpec do
         `x-dust-signature` header as `sha256=<hex>`.
 
         Delivery is at-least-once; subscribers should be idempotent
-        keyed on `store_seq`.
+        keyed on `store_seq`. Failed deliveries are retried with
+        exponential backoff.
         """,
         post: %{
-          operationId: "webhooks.change",
+          summary: "An entry in a subscribed store was created, updated, or deleted",
+          operationId: "webhooks.entry_changed",
           requestBody: %{
             description: "Outbound delivery payload.",
             content: %{
               "application/json" => %{
                 schema: %{"$ref": "#/components/schemas/WebhookEvent"},
                 example: %{
-                  event: "change",
+                  event: "entry.changed",
                   store: "acme/config",
                   store_seq: 42,
                   path: "settings.theme",
                   op: "set",
                   value: "dark",
+                  device_id: "web:abc123",
                   timestamp: "2026-05-10T12:34:56Z"
                 }
               }
@@ -441,8 +526,7 @@ defmodule DustWeb.ApiSpec do
               in: :header,
               required: true,
               description: "`sha256=<hex>` HMAC of the raw body using the webhook secret.",
-              schema: %{type: :string},
-              example: "sha256=fce4b0..."
+              schema: %{type: :string, example: "sha256=fce4b0..."}
             }
           ],
           responses: %{

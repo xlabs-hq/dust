@@ -63,7 +63,7 @@ defmodule DustWeb.Api.WebhookController do
     operation_id: "webhooks.create",
     summary: "Register a new webhook",
     description:
-      "The HMAC-SHA256 signing `secret` is returned **only on creation** — store it and use it to verify incoming `x-dust-signature` headers on delivery. Server keeps a hashed copy.",
+      "The HMAC-SHA256 signing `secret` is returned on creation — store it and use it to verify incoming `x-dust-signature` headers. The server retains the secret in order to sign deliveries; treat the returned value as the canonical copy.",
     tags: ["Webhooks"],
     parameters: @org_store_params ++ @request_id_param,
     request_body:
@@ -80,7 +80,11 @@ defmodule DustWeb.Api.WebhookController do
            properties: %{
              id: %{type: :string, format: :uuid},
              url: %{type: :string},
-             secret: %{type: :string, description: "HMAC secret. Only returned on create."},
+             secret: %{
+               type: :string,
+               description:
+                 "HMAC-SHA256 signing secret. Returned on creation. Capture this value to verify incoming `x-dust-signature` headers."
+             },
              active: %{type: :boolean},
              inserted_at: %{type: :string, format: "date-time"}
            },

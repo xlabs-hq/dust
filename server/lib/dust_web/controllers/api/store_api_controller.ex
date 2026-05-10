@@ -30,7 +30,7 @@ defmodule DustWeb.Api.StoreApiController do
              org: "acme",
              stores: [
                %{
-                 id: "01HX...",
+                 id: "0192e7f8-7c00-7000-8000-000000000001",
                  name: "config",
                  full_name: "acme/config",
                  status: "active",
@@ -65,8 +65,7 @@ defmodule DustWeb.Api.StoreApiController do
          properties: %{
            name: %{
              type: :string,
-             description: "Store name. Cannot contain `/`.",
-             example: "config"
+             description: "Store name. Cannot contain `/`."
            },
            ttl: %{
              type: :integer,
