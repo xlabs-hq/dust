@@ -774,6 +774,113 @@ defmodule Dust.SyncEngineTest do
     end
   end
 
+  describe "Dust.on/4 :mode opt" do
+    setup do
+      Process.register(self(), Dust.Connection)
+      :ok
+    end
+
+    test ":all (default) fires once per own write — the optimistic event" do
+      test_pid = self()
+      handler = fn event -> send(test_pid, {:event, event}) end
+
+      _ref = SyncEngine.on("test/store", "k", handler)
+      :ok = SyncEngine.put("test/store", "k", 1)
+
+      assert_receive {:event, %{committed: false, source: :local}}, 200
+
+      # Simulate the server echo. With :all (default), the echo of own
+      # writes is suppressed.
+      assert_receive {:send_write, "test/store", %{client_op_id: id}}, 200
+
+      SyncEngine.handle_server_event("test/store", %{
+        "store_seq" => 5,
+        "op" => "set",
+        "path" => "k",
+        "value" => 1,
+        "device_id" => "self",
+        "client_op_id" => id
+      })
+
+      refute_receive {:event, %{committed: true}}, 100
+    end
+
+    test ":committed delivers the server echo (with store_seq) for own writes" do
+      test_pid = self()
+      handler = fn event -> send(test_pid, {:event, event}) end
+
+      _ref = SyncEngine.on("test/store", "k", handler, mode: :committed)
+      :ok = SyncEngine.put("test/store", "k", 1)
+
+      # Optimistic event suppressed in :committed mode.
+      refute_receive {:event, %{committed: false}}, 100
+
+      assert_receive {:send_write, "test/store", %{client_op_id: id}}, 200
+
+      SyncEngine.handle_server_event("test/store", %{
+        "store_seq" => 7,
+        "op" => "set",
+        "path" => "k",
+        "value" => 1,
+        "device_id" => "self",
+        "client_op_id" => id
+      })
+
+      assert_receive {:event,
+                      %{committed: true, store_seq: 7, was_own: true, source: :server}},
+                     200
+    end
+
+    test ":optimistic only delivers the local event, not the server echo" do
+      test_pid = self()
+      handler = fn event -> send(test_pid, {:event, event}) end
+
+      _ref = SyncEngine.on("test/store", "k", handler, mode: :optimistic)
+      :ok = SyncEngine.put("test/store", "k", 1)
+
+      assert_receive {:event, %{committed: false, source: :local}}, 200
+
+      assert_receive {:send_write, "test/store", %{client_op_id: id}}, 200
+
+      SyncEngine.handle_server_event("test/store", %{
+        "store_seq" => 9,
+        "op" => "set",
+        "path" => "k",
+        "value" => 1,
+        "device_id" => "self",
+        "client_op_id" => id
+      })
+
+      refute_receive {:event, %{committed: true}}, 100
+    end
+
+    test ":committed sees others' writes" do
+      test_pid = self()
+      handler = fn event -> send(test_pid, {:event, event}) end
+
+      _ref = SyncEngine.on("test/store", "k", handler, mode: :committed)
+
+      # No local write; just receive a server event from another device.
+      SyncEngine.handle_server_event("test/store", %{
+        "store_seq" => 11,
+        "op" => "set",
+        "path" => "k",
+        "value" => "from-elsewhere",
+        "device_id" => "other-dev",
+        "client_op_id" => "external-op-id"
+      })
+
+      assert_receive {:event,
+                      %{
+                        committed: true,
+                        store_seq: 11,
+                        was_own: false,
+                        value: "from-elsewhere"
+                      }},
+                     200
+    end
+  end
+
   defp drain_events(timeout_ms) do
     receive do
       {:event, event} -> [event | drain_events(timeout_ms)]

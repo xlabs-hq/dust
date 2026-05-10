@@ -629,14 +629,17 @@ defmodule Dust.SyncEngine do
       })
     end
 
-    # If this was our own write accepted as-is, don't fire callback again
-    unless was_pending do
-      dispatch_callbacks(state, path, %{
-        store: state.store, path: path, op: op, value: value,
-        store_seq: store_seq, committed: true, source: :server,
-        device_id: event["device_id"], client_op_id: client_op_id
-      })
-    end
+    # Always dispatch the committed event with was_own carrying whether
+    # this was our own write being echoed. Subscriptions filter by mode:
+    # `:all` (the default) skips the echo of own writes (preserving the
+    # historical single-fire semantics); `:committed` keeps it; `:optimistic`
+    # ignores committed events entirely.
+    dispatch_callbacks(state, path, %{
+      store: state.store, path: path, op: op, value: value,
+      store_seq: store_seq, committed: true, was_own: was_pending,
+      source: :server, device_id: event["device_id"],
+      client_op_id: client_op_id
+    })
 
     state = %{state | pending_ops: pending, last_store_seq: store_seq}
     {:noreply, state}
@@ -651,20 +654,42 @@ defmodule Dust.SyncEngine do
   # fire on_resync on overflow, otherwise enqueue via CallbackWorker.dispatch.
   # Used by both live dispatch (dispatch_callbacks/3) and bootstrap
   # (emit_bootstrap_events/4) so the semantics are identical.
-  defp dispatch_to_subscription(state, {worker_pid, ref, max_queue_size, on_resync}, event) do
-    queue_len = Dust.CallbackWorker.queue_len(worker_pid)
+  defp dispatch_to_subscription(
+         state,
+         {worker_pid, ref, max_queue_size, on_resync, mode},
+         event
+       ) do
+    if event_matches_mode?(mode, event) do
+      queue_len = Dust.CallbackWorker.queue_len(worker_pid)
 
-    if queue_len >= max_queue_size do
-      # Subscription has fallen behind — drop it and notify
-      Dust.CallbackRegistry.unregister(state.callbacks, ref)
+      if queue_len >= max_queue_size do
+        # Subscription has fallen behind — drop it and notify
+        Dust.CallbackRegistry.unregister(state.callbacks, ref)
 
-      if is_function(on_resync, 1) do
-        on_resync.(%{error: :resync_required, ref: ref})
+        if is_function(on_resync, 1) do
+          on_resync.(%{error: :resync_required, ref: ref})
+        end
+      else
+        Dust.CallbackWorker.dispatch(worker_pid, event)
       end
-    else
-      Dust.CallbackWorker.dispatch(worker_pid, event)
     end
   end
+
+  # `:all` preserves historical behaviour: optimistic for own writes (one
+  # fire, no store_seq) and committed for others' writes (one fire, with
+  # store_seq). `:committed` always wants the post-server event with
+  # store_seq, including for own writes. `:optimistic` ignores committed
+  # events entirely. Bootstrap events (`type: :present`) flow to every mode.
+  defp event_matches_mode?(_mode, %{type: :present}), do: true
+
+  defp event_matches_mode?(:all, %{committed: true, was_own: true}), do: false
+  defp event_matches_mode?(:all, _), do: true
+
+  defp event_matches_mode?(:committed, %{committed: true}), do: true
+  defp event_matches_mode?(:committed, _), do: false
+
+  defp event_matches_mode?(:optimistic, %{committed: false}), do: true
+  defp event_matches_mode?(:optimistic, _), do: false
 
   defp emit_bootstrap_events(state, pattern, ref, opts) do
     limit = opts |> Keyword.get(:limit, 50) |> min(1000)
@@ -683,8 +708,8 @@ defmodule Dust.SyncEngine do
       nil ->
         :ok
 
-      {worker_pid, max_queue_size, on_resync} ->
-        subscription = {worker_pid, ref, max_queue_size, on_resync}
+      {worker_pid, max_queue_size, on_resync, mode} ->
+        subscription = {worker_pid, ref, max_queue_size, on_resync, mode}
 
         Enum.reduce_while(items, subscription, fn {path, value, type, seq}, sub ->
           event = %{
