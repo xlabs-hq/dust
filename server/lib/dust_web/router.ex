@@ -124,6 +124,7 @@ defmodule DustWeb.Router do
 
     get "/stores/:org/:store/entries", EntriesApiController, :index
     post "/stores/:org/:store/entries/batch", EntriesApiController, :batch
+    post "/stores/:org/:store/entries/batch_write", EntriesApiController, :batch_write
     put "/stores/:org/:store/entries/*path", EntriesApiController, :put
     get "/stores/:org/:store/entries/*path", EntriesApiController, :show
     delete "/stores/:org/:store/entries/*path", EntriesApiController, :delete

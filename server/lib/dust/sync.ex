@@ -17,6 +17,60 @@ defmodule Dust.Sync do
     :exit, reason -> {:error, {:writer_unavailable, reason}}
   end
 
+  @doc """
+  Atomic multi-key write. Validates every op's `if_match` precondition
+  up front, then commits all ops in a single sqlite transaction. Either
+  every op is applied (each with its own `store_seq`) or none are.
+
+  Returns `{:ok, [op_result, ...]}` on success — one element per input
+  op, in the same order. Returns `{:error, reason}` on validation
+  failure (no ops applied), or
+  `{:error, {:conflict, %{op_index: i, path: p, current_revision: r}}}`
+  if any op's `If-Match` precondition fails inside the transaction.
+  """
+  def batch_write(store_id, ops_attrs) when is_list(ops_attrs) do
+    with :ok <- validate_batch_attrs(ops_attrs) do
+      case Writer.batch_write(store_id, ops_attrs) do
+        {:ok, ops} ->
+          Enum.each(ops, &notify_webhooks(store_id, &1))
+          {:ok, ops}
+
+        {:error, {:conflict, op_index, path}} ->
+          {:error,
+           {:conflict,
+            %{op_index: op_index, path: path, current_revision: get_revision(store_id, path)}}}
+
+        {:error, {reason, op_index, path}} ->
+          {:error, {reason, %{op_index: op_index, path: path}}}
+
+        error ->
+          error
+      end
+    end
+  catch
+    :exit, reason -> {:error, {:writer_unavailable, reason}}
+  end
+
+  defp validate_batch_attrs(ops_attrs) do
+    Enum.reduce_while(ops_attrs, {:ok, 0}, fn attrs, {:ok, index} ->
+      case validate_if_match_attrs(attrs) do
+        :ok -> {:cont, {:ok, index + 1}}
+        {:error, reason} -> {:halt, {:error, {reason, %{op_index: index, path: attrs[:path]}}}}
+      end
+    end)
+    |> case do
+      {:ok, _} -> :ok
+      err -> err
+    end
+  end
+
+  defp get_revision(store_id, path) do
+    case get_entry(store_id, path) do
+      %{seq: seq} -> seq
+      _ -> nil
+    end
+  end
+
   # Transport-agnostic CAS preconditions. Both the Phoenix channel and the
   # HTTP controller route writes through `Sync.write/2`, so these two gates
   # (unsupported op, multi-leaf dict value) must live here to preserve a

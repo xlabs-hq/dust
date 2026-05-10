@@ -14,6 +14,11 @@ defmodule Dust.Sync.Writer do
     GenServer.call(pid, {:write, op_attrs})
   end
 
+  def batch_write(store_id, ops_attrs) when is_list(ops_attrs) do
+    pid = ensure_started(store_id)
+    GenServer.call(pid, {:batch_write, ops_attrs})
+  end
+
   def stop(store_id) do
     case Registry.lookup(Dust.Sync.WriterRegistry, store_id) do
       [{pid, _}] -> GenServer.stop(pid, :normal)
@@ -66,6 +71,12 @@ defmodule Dust.Sync.Writer do
   end
 
   @impl true
+  def handle_call({:batch_write, ops_attrs}, _from, state) do
+    result = do_batch_write(state, ops_attrs)
+    {:reply, result, state, @idle_timeout}
+  end
+
+  @impl true
   def handle_call(:compact, _from, state) do
     result = do_compact(state.db)
     {:reply, result, state, @idle_timeout}
@@ -104,6 +115,51 @@ defmodule Dust.Sync.Writer do
         {:ok, op} ->
           update_store_metadata(store_id, op.store_seq, db)
           {result, metadata}
+
+        _ ->
+          {result, metadata}
+      end
+    end)
+  end
+
+  defp do_batch_write(state, ops_attrs) do
+    %{store_id: store_id, db: db} = state
+    metadata = %{store_id: store_id, batch_size: length(ops_attrs)}
+
+    :telemetry.span([:dust, :batch_write], metadata, fn ->
+      result =
+        sqlite_transaction(db, fn ->
+          ops_seq = query_one_int(db, "SELECT max(store_seq) FROM store_ops")
+          snap_seq = query_one_int(db, "SELECT max(snapshot_seq) FROM store_snapshots")
+          start_seq = max(ops_seq, snap_seq)
+
+          ops_attrs
+          |> Enum.with_index()
+          |> Enum.reduce_while({:ok, []}, fn {attrs, index}, {:ok, acc} ->
+            next_seq = start_seq + index + 1
+
+            case maybe_validate_if_match(db, attrs.path, attrs) do
+              :ok ->
+                op = insert_and_apply(db, next_seq, attrs, store_id)
+                {:cont, {:ok, [op | acc]}}
+
+              {:error, reason} ->
+                # Annotate the failure with which op in the batch caused
+                # it so the caller can render a precise error.
+                {:halt, {:error, {reason, index, attrs.path}}}
+            end
+          end)
+          |> case do
+            {:ok, ops} -> Enum.reverse(ops)
+            err -> err
+          end
+        end)
+
+      case result do
+        {:ok, ops} when is_list(ops) ->
+          last = List.last(ops)
+          if last, do: update_store_metadata(store_id, last.store_seq, db)
+          {{:ok, ops}, Map.put(metadata, :ops_committed, length(ops))}
 
         _ ->
           {result, metadata}

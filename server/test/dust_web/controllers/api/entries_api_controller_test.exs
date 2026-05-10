@@ -633,6 +633,158 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
     end
   end
 
+  describe "POST /api/stores/:org/:store/entries/batch_write" do
+    defp batch_write_post(conn, token, body) do
+      conn
+      |> api_conn(token)
+      |> put_req_header("content-type", "application/json")
+      |> post("/api/stores/entriesorg/mystore/entries/batch_write", body)
+    end
+
+    test "applies all ops atomically", %{conn: conn, token: token, store: store} do
+      body = %{
+        ops: [
+          %{op: "set", path: "links/foo/title", value: "Foo"},
+          %{op: "set", path: "links/foo/url", value: "https://foo"},
+          %{op: "delete", path: "users/bob/name"}
+        ]
+      }
+
+      resp = batch_write_post(conn, token, Jason.encode!(body))
+      result = json_response(resp, 200)
+
+      assert length(result["ops"]) == 3
+      assert is_integer(result["store_seq"])
+
+      # All three writes landed.
+      assert %{value: "Foo"} = Sync.get_entry(store.id, "links.foo.title")
+      assert %{value: "https://foo"} = Sync.get_entry(store.id, "links.foo.url")
+      assert Sync.get_entry(store.id, "users.bob.name") == nil
+
+      # store_seq is monotonic across the batch.
+      [op1, op2, op3] = result["ops"]
+      assert op1["store_seq"] < op2["store_seq"]
+      assert op2["store_seq"] < op3["store_seq"]
+    end
+
+    test "rolls back the whole batch on a CAS conflict", %{
+      conn: conn,
+      token: token,
+      store: store
+    } do
+      seed_entry(store, "cas.counter", 1)
+
+      body = %{
+        ops: [
+          %{op: "set", path: "batch/a", value: "a"},
+          %{op: "set", path: "cas/counter", value: 999, if_match: 999_999},
+          %{op: "set", path: "batch/b", value: "b"}
+        ]
+      }
+
+      resp = batch_write_post(conn, token, Jason.encode!(body))
+      err = json_response(resp, 412)
+
+      assert err["error"] == "conflict"
+      assert err["op_index"] == 1
+      assert err["path"] == "cas.counter"
+      assert is_integer(err["current_revision"])
+
+      # No ops applied — first and third writes did not land.
+      assert Sync.get_entry(store.id, "batch.a") == nil
+      assert Sync.get_entry(store.id, "batch.b") == nil
+      assert %{value: 1} = Sync.get_entry(store.id, "cas.counter")
+    end
+
+    test "returns 400 if_match_multi_leaf for a multi-key map with If-Match", %{
+      conn: conn,
+      token: token,
+      store: store
+    } do
+      body = %{
+        ops: [
+          %{op: "set", path: "batch/a", value: "a"},
+          %{op: "set", path: "batch/multi", value: %{x: 1, y: 2}, if_match: 5}
+        ]
+      }
+
+      resp = batch_write_post(conn, token, Jason.encode!(body))
+      err = json_response(resp, 400)
+      assert err["error"] == "if_match_multi_leaf"
+      assert err["op_index"] == 1
+
+      # No ops applied.
+      assert Sync.get_entry(store.id, "batch.a") == nil
+    end
+
+    test "rejects empty ops list", %{conn: conn, token: token} do
+      resp = batch_write_post(conn, token, Jason.encode!(%{ops: []}))
+      err = json_response(resp, 400)
+      assert err["error"] == "invalid_params"
+      assert err["detail"] =~ "empty"
+    end
+
+    test "rejects > 1000 ops", %{conn: conn, token: token} do
+      ops = for i <- 1..1001, do: %{op: "set", path: "batch/k#{i}", value: i}
+      resp = batch_write_post(conn, token, Jason.encode!(%{ops: ops}))
+      err = json_response(resp, 400)
+      assert err["error"] == "invalid_params"
+      assert err["detail"] =~ "1000"
+    end
+
+    test "rejects unknown op kind", %{conn: conn, token: token} do
+      body = %{ops: [%{op: "merge", path: "x", value: %{}}]}
+      resp = batch_write_post(conn, token, Jason.encode!(body))
+      err = json_response(resp, 400)
+      assert err["error"] == "invalid_params"
+      assert err["detail"] =~ "merge"
+    end
+
+    test "rejects set op without value", %{conn: conn, token: token} do
+      body = %{ops: [%{op: "set", path: "x"}]}
+      resp = batch_write_post(conn, token, Jason.encode!(body))
+      err = json_response(resp, 400)
+      assert err["error"] == "invalid_params"
+      assert err["detail"] =~ "value"
+    end
+
+    test "normalizes slashed paths", %{conn: conn, token: token, store: store} do
+      body = %{ops: [%{op: "set", path: "users/charlie/name", value: "Charlie"}]}
+      resp = batch_write_post(conn, token, Jason.encode!(body))
+      result = json_response(resp, 200)
+
+      assert hd(result["ops"])["path"] == "users.charlie.name"
+      assert %{value: "Charlie"} = Sync.get_entry(store.id, "users.charlie.name")
+    end
+
+    test "returns 403 without write permission", %{conn: conn, store: store, user: user} do
+      {:ok, ro_token} =
+        Stores.create_store_token(store, %{
+          name: "ro-batch",
+          read: true,
+          write: false,
+          created_by_id: user.id
+        })
+
+      body = %{ops: [%{op: "set", path: "x", value: 1}]}
+      resp = batch_write_post(conn, ro_token, Jason.encode!(body))
+      assert resp.status == 403
+    end
+
+    test "returns 401 without bearer", %{conn: conn} do
+      resp =
+        conn
+        |> put_req_header("accept", "application/json")
+        |> put_req_header("content-type", "application/json")
+        |> post(
+          "/api/stores/entriesorg/mystore/entries/batch_write",
+          Jason.encode!(%{ops: [%{op: "set", path: "x", value: 1}]})
+        )
+
+      assert resp.status == 401
+    end
+  end
+
   describe "HEAD /api/stores/:org/:store/entries/*path" do
     test "returns 200 + ETag for an existing leaf", %{conn: conn, token: token, store: store} do
       %{seq: seq} = Sync.get_entry(store.id, "users.alice.name")

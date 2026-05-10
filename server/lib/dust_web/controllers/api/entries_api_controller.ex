@@ -538,6 +538,241 @@ defmodule DustWeb.Api.EntriesApiController do
     end)
   end
 
+  operation :batch_write,
+    operation_id: "entries.batch_write",
+    summary: "Atomic multi-key write — all-or-nothing",
+    description: """
+    Apply up to 1000 writes (set + delete) in a single sqlite
+    transaction. Either every op is committed (each with its own
+    monotonic `store_seq`), or none are — there is no partial
+    application.
+
+    Each op may carry an `if_match` precondition; if any op's CAS
+    check fails, the whole batch aborts with `412` and zero ops are
+    applied. CAS rules match `entries.put` and `entries.delete`:
+    leaf-only, supported on `set` and `delete` ops.
+
+    Subscribers receive one event per op, in order.
+    """,
+    tags: ["Entries"],
+    parameters: @org_store_params ++ @request_id_param,
+    request_body:
+      {%{
+         type: :object,
+         properties: %{
+           ops: %{
+             type: :array,
+             maxItems: 1000,
+             items: %{
+               type: :object,
+               properties: %{
+                 op: %{type: :string, enum: ["set", "delete"]},
+                 path: %{type: :string, description: "Slashes accepted; canonical is dotted."},
+                 value: %{description: "Required for set; ignored for delete."},
+                 if_match: %{type: :integer, description: "Optional leaf-only CAS precondition."}
+               },
+               required: [:op, :path]
+             }
+           }
+         },
+         required: [:ops],
+         example: %{
+           ops: [
+             %{op: "set", path: "projects/alpha/title", value: "Alpha"},
+             %{op: "set", path: "projects/alpha/owner", value: "alice"},
+             %{op: "delete", path: "projects/legacy"}
+           ]
+         }
+       }, description: "Batch write request"},
+    responses: [
+      ok:
+        {%{
+           type: :object,
+           properties: %{
+             ops: %{
+               type: :array,
+               items: %{
+                 type: :object,
+                 properties: %{
+                   path: %{type: :string},
+                   revision: %{type: :integer},
+                   store_seq: %{type: :integer}
+                 },
+                 required: [:path, :revision, :store_seq]
+               }
+             },
+             store_seq: %{
+               type: :integer,
+               description: "Last store_seq assigned in the batch."
+             }
+           },
+           required: [:ops, :store_seq]
+         }, description: "All ops committed"},
+      bad_request: @bad_request,
+      unauthorized: @unauthorized,
+      forbidden: @forbidden,
+      precondition_failed:
+        {%{
+           type: :object,
+           properties: %{
+             error: %{type: :string, enum: ["conflict"]},
+             op_index: %{type: :integer},
+             path: %{type: :string},
+             current_revision: %{type: ["integer", "null"]}
+           },
+           required: [:error, :op_index, :path]
+         }, description: "An op's If-Match precondition failed; no ops applied."},
+      too_many_requests: @rate_limited
+    ]
+
+  def batch_write(conn, %{"org" => org_slug, "store" => store_name} = params) do
+    organization = conn.assigns.organization
+    store_token = conn.assigns.store_token
+
+    with {:ok, ops} <- parse_batch_write_ops(conn, params, store_token),
+         :ok <- verify_org(organization, org_slug),
+         {:ok, store} <- find_store(organization, store_name),
+         :ok <- verify_token_scope(store_token, store),
+         :ok <- verify_write_permission(store_token) do
+      case Sync.batch_write(store.id, ops) do
+        {:ok, results} ->
+          last_seq = results |> List.last() |> case do
+            %{store_seq: s} -> s
+            _ -> 0
+          end
+
+          json(conn, %{
+            ops:
+              Enum.map(results, fn %{store_seq: s, path: p} ->
+                %{path: p, revision: s, store_seq: s}
+              end),
+            store_seq: last_seq
+          })
+
+        {:error, {:conflict, %{op_index: i, path: p, current_revision: rev}}} ->
+          conn
+          |> put_status(412)
+          |> json(%{error: "conflict", op_index: i, path: p, current_revision: rev})
+
+        {:error, {:if_match_unsupported_op, %{op_index: i, path: p}}} ->
+          conn
+          |> put_status(400)
+          |> json(%{
+            error: "if_match_unsupported_op",
+            op_index: i,
+            path: p,
+            detail: "If-Match is only supported for set and delete ops"
+          })
+
+        {:error, {:if_match_multi_leaf, %{op_index: i, path: p}}} ->
+          conn
+          |> put_status(400)
+          |> json(%{
+            error: "if_match_multi_leaf",
+            op_index: i,
+            path: p,
+            detail: "If-Match requires a leaf value, not a map/dict"
+          })
+
+        {:error, reason} ->
+          conn
+          |> put_status(400)
+          |> json(%{error: "invalid_params", detail: inspect(reason)})
+      end
+    end
+  end
+
+  defp parse_batch_write_ops(conn, %{"ops" => ops}, store_token) when is_list(ops) do
+    cond do
+      length(ops) == 0 ->
+        {:error, {:invalid_params, "ops cannot be empty"}}
+
+      length(ops) > 1000 ->
+        {:error, {:invalid_params, "maximum 1000 ops per batch"}}
+
+      true ->
+        ops
+        |> Enum.with_index()
+        |> Enum.reduce_while({:ok, []}, fn {raw, index}, {:ok, acc} ->
+          case parse_single_batch_op(conn, raw, store_token, index) do
+            {:ok, attrs} -> {:cont, {:ok, [attrs | acc]}}
+            err -> {:halt, err}
+          end
+        end)
+        |> case do
+          {:ok, list} -> {:ok, Enum.reverse(list)}
+          err -> err
+        end
+    end
+  end
+
+  defp parse_batch_write_ops(_conn, _params, _store_token),
+    do: {:error, {:invalid_params, "ops array required"}}
+
+  defp parse_single_batch_op(conn, raw, store_token, index) when is_map(raw) do
+    with {:ok, op} <- parse_batch_op_kind(raw, index),
+         {:ok, path} <- parse_batch_op_path(raw, index),
+         {:ok, attrs} <- build_batch_op_attrs(conn, op, path, raw, store_token, index) do
+      {:ok, attrs}
+    end
+  end
+
+  defp parse_single_batch_op(_conn, _other, _token, index),
+    do: {:error, {:invalid_params, "op #{index} must be an object"}}
+
+  defp parse_batch_op_kind(%{"op" => "set"}, _), do: {:ok, :set}
+  defp parse_batch_op_kind(%{"op" => "delete"}, _), do: {:ok, :delete}
+
+  defp parse_batch_op_kind(%{"op" => other}, index),
+    do: {:error, {:invalid_params, "op #{index}: unknown op #{inspect(other)}"}}
+
+  defp parse_batch_op_kind(_, index),
+    do: {:error, {:invalid_params, "op #{index}: missing 'op' field"}}
+
+  defp parse_batch_op_path(%{"path" => path}, index) when is_binary(path) do
+    case DustProtocol.Path.normalize(path) do
+      {:ok, normalized} -> {:ok, normalized}
+      {:error, reason} -> {:error, {:invalid_params, "op #{index}: invalid path (#{reason})"}}
+    end
+  end
+
+  defp parse_batch_op_path(_, index),
+    do: {:error, {:invalid_params, "op #{index}: 'path' required and must be a string"}}
+
+  defp build_batch_op_attrs(conn, :set, path, raw, store_token, index) do
+    case Map.fetch(raw, "value") do
+      {:ok, value} ->
+        attrs = %{
+          op: :set,
+          path: path,
+          value: value,
+          device_id: "http:" <> to_string(store_token.id),
+          client_op_id: "#{request_op_id(conn)}:#{index}"
+        }
+
+        {:ok, maybe_attach_if_match(attrs, raw, index)}
+
+      :error ->
+        {:error, {:invalid_params, "op #{index}: 'value' required for set"}}
+    end
+  end
+
+  defp build_batch_op_attrs(conn, :delete, path, raw, store_token, index) do
+    attrs = %{
+      op: :delete,
+      path: path,
+      device_id: "http:" <> to_string(store_token.id),
+      client_op_id: "#{request_op_id(conn)}:#{index}"
+    }
+
+    {:ok, maybe_attach_if_match(attrs, raw, index)}
+  end
+
+  defp maybe_attach_if_match(attrs, %{"if_match" => n}, _index) when is_integer(n) and n > 0,
+    do: Map.put(attrs, :if_match, n)
+
+  defp maybe_attach_if_match(attrs, _raw, _index), do: attrs
+
   defp validate_mutually_exclusive(params) do
     cond do
       Map.has_key?(params, "pattern") and
