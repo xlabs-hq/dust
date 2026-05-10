@@ -112,6 +112,15 @@ defmodule Dust.SyncEngine do
     GenServer.call(via(store), {:on, norm_pattern!(pattern), callback, opts})
   end
 
+  @doc """
+  Remove a subscription previously registered with `on/4`. Returns `:ok`
+  whether or not a subscription with that ref existed (idempotent). After
+  this call returns, the subscription's callback will not fire again.
+  """
+  def off(store, ref) when is_reference(ref) do
+    GenServer.call(via(store), {:off, ref})
+  end
+
   def handle_server_event(store, event) do
     GenServer.cast(via(store), {:server_event, event})
   end
@@ -489,6 +498,12 @@ defmodule Dust.SyncEngine do
   @impl true
   def handle_call(:cache_info, _from, state) do
     {:reply, {state.cache, state.cache_target}, state}
+  end
+
+  @impl true
+  def handle_call({:off, ref}, _from, state) do
+    Dust.CallbackRegistry.unregister(state.callbacks, ref)
+    {:reply, :ok, state}
   end
 
   @impl true

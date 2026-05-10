@@ -29,6 +29,8 @@ defmodule Dust do
   defdelegate put_file(store, path, source_path, opts), to: Dust.SyncEngine
   defdelegate on(store, pattern, callback, opts \\ []), to: Dust.SyncEngine
   defdelegate watch(store, pattern, callback, opts \\ []), to: Dust.SyncEngine, as: :on
+  defdelegate off(store, ref), to: Dust.SyncEngine
+  defdelegate unsubscribe(store, ref), to: Dust.SyncEngine, as: :off
   defdelegate enum(store, pattern), to: Dust.SyncEngine
   defdelegate enum(store, pattern, opts), to: Dust.SyncEngine
   defdelegate range(store, from, to, opts \\ []), to: Dust.SyncEngine

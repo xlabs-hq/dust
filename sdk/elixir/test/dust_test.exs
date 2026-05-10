@@ -67,4 +67,36 @@ defmodule DustTest do
     assert is_reference(ref)
     assert_receive {:event, %{type: :present, path: "a"}}, 200
   end
+
+  test "Dust.off/2 stops further callback invocations" do
+    store = "test/store"
+    test_pid = self()
+    callback = fn event -> send(test_pid, {:event, event}) end
+
+    ref = Dust.on(store, "**", callback)
+    assert is_reference(ref)
+
+    :ok = Dust.SyncEngine.put(store, "before", 1)
+    assert_receive {:event, %{path: "before"}}, 200
+
+    assert :ok = Dust.off(store, ref)
+
+    :ok = Dust.SyncEngine.put(store, "after", 2)
+    refute_receive {:event, %{path: "after"}}, 100
+  end
+
+  test "Dust.unsubscribe/2 is an alias for Dust.off/2" do
+    store = "test/store"
+    test_pid = self()
+    ref = Dust.on(store, "**", fn event -> send(test_pid, {:event, event}) end)
+
+    assert :ok = Dust.unsubscribe(store, ref)
+
+    :ok = Dust.SyncEngine.put(store, "x", 1)
+    refute_receive {:event, _}, 100
+  end
+
+  test "Dust.off/2 is idempotent — unknown ref returns :ok" do
+    assert :ok = Dust.off("test/store", make_ref())
+  end
 end
