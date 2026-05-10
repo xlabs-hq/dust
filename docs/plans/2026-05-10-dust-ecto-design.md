@@ -7,6 +7,20 @@
 
 ## Revision history
 
+- **r2 (2026-05-11).** Implementing the SDK pre-work surfaced that **B
+  (ETS-backed outbox) is not actually blocking v1**. Pre-work A made all
+  write ops sync; that means the `Repo.insert(cs)` user blocks on a
+  GenServer.call until ack. SyncEngine's `pending_ops` map is populated
+  *before* `send_to_connection` runs, and on the next `:connected`
+  transition it resends every pending op (`sync_engine.ex:499–503`).
+  So a Connection process restart loses its outbox but SyncEngine
+  re-asks via the resend mechanism, and the user's blocked call sees
+  the eventual ack normally. ETS-backed durability would only matter
+  if SyncEngine *itself* crashes — much rarer than a Slipstream
+  reconnect. Demoted to deferred enhancement; revisit if a real
+  "writes lost" report comes in. Six SDK pre-work items remain
+  blocking: A, C, D, E, F, G.
+
 - **r1 (2026-05-10).** External review surfaced ten substantive corrections —
   most importantly that several items the design treated as straightforward
   in the SDK (subtree reads, subtree cache invalidation, public unsubscribe,
@@ -469,14 +483,15 @@ PR against the SDK, mostly ~50–150 LOC.
 | # | Item | Why |
 |---|---|---|
 | A | **Sync write semantics for all write ops.** Today only `Dust.put/4` (4-arg variant) defers reply until server ack. `delete`, `merge`, `increment`, `add`, `remove` all reply `:ok` immediately. Add the deferred-reply path to all of them, gated on an `opts` arg the same way. | `Repo.delete(struct)` returning `{:ok, _}` must mean server-acked, not "queued in the optimistic cache." |
-| B | **ETS-backed outbox** keyed by `client_op_id`, persisted across `Dust.Connection` process restarts, with on-startup replay. | "I wrote it" stays true even through a connection-process crash. The current outbox lives in process state and dies with the process. |
+| ~~B~~ | ~~ETS-backed outbox~~ — **deferred** (see r2 revision note). SyncEngine's `pending_ops` already provides Connection-restart durability via the resend on `:connected`; full ETS durability only matters if SyncEngine itself crashes, which is much rarer. Revisit if real "writes lost" reports come in. | (deferred) |
 | C | **Connection observability** — `Dust.Connection.connected?/0` plus `:telemetry.execute([:dust, :connection, :state_change], %{}, %{from:, to:})` on every transition. | LiveView users need to react to disconnects; dust_ecto needs a clean probe for HTTP-fallback decisions. |
 | D | **SDK subtree-aware reads + cache canonicalization on map writes.** Two paired changes: (1) `Dust.get/2` and `Dust.entry/2` are exact-path-only today (`sync_engine.ex:191`, `sync_engine.ex:457`); the server does subtree assembly server-side (`sync.ex:111` `assemble_subtree`), the SDK doesn't, so map-mode `<prefix>.<slug>` reads must fall back to assembling from descendants. (2) The SDK's optimistic write path (`sync_engine.ex:753`) and server-event apply path (`sync_engine.ex:632`) both write a plain-map value at the exact path verbatim. The server flattens to leaves, so cache-after-own-write has the root-map row, and cache-after-event-echo *adds* the leaf rows on top — divergent shapes. SDK must canonicalize plain-map `set` ops the same way the server does: clear descendants, write flattened leaves, no exact root leaf. Without this, `get`/`all`/`subscribe` results differ depending on whether data came from a live write, catch-up, or snapshot. | dust_ecto `Repo.get(Link, "foo")` in SDK mode would return `:not_found` without (1) and would return inconsistent shapes depending on data path without (2). Map mode fundamentally requires both. |
 | E | **SDK subtree cache invalidation.** Today `cache.delete(target, store, path)` removes only the exact path (`cache/memory.ex:135`, `cache/ecto.ex:123`). The server's DELETE endpoint clears descendants, but the SDK cache and the server-event handler at `sync_engine.ex:633` both call exact-path delete. After `Repo.delete(record)` the descendants would linger in cache, returning stale data. | dust_ecto `Repo.delete` and `Repo.delete_all` both clear subtrees; the local view has to follow. |
 | F | **Public unsubscribe API.** `Dust.on/4` returns a ref but the SDK has no `Dust.off/1` or `Dust.unsubscribe/1`. dust_ecto exposes `Repo.unsubscribe/1`; without an SDK-side counterpart, the underlying registration leaks. | Subscriptions are first-class in the dust_ecto API; we can't ship them without a removal path. |
 | G | **`mode:` opt on `Dust.on/4`** — `:committed | :all | :optimistic`. Today the SDK fires optimistic `committed: false` events for own writes (`sync_engine.ex:752`) and *suppresses* the committed echo of own writes (`sync_engine.ex:666`). dust_ecto's `:upserted`/`:deleted` events need exactly one delivery per write, with `store_seq`, even for own writes. Default `:all` preserves today's behavior. | Without it, dust_ecto can't deliver `{:upserted, %Link{}}` reliably with a `store_seq` for own writes. |
 
-A–C are the original three; D–G surfaced from the r1 review.
+A and C are the original blocking items; B was demoted in r2 (see
+revision note); D–G surfaced from the r1 review and are all blocking.
 
 **Facade delegations.** `Dust.Instance` (the `use Dust` facade module
 generator at `sdk/elixir/lib/dust/instance.ex`) currently delegates

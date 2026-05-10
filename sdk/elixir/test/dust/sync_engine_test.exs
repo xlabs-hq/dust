@@ -774,6 +774,41 @@ defmodule Dust.SyncEngineTest do
     end
   end
 
+  describe "pending_ops durability across Connection restart" do
+    setup do
+      Process.register(self(), Dust.Connection)
+      :ok
+    end
+
+    test "set_status(:connected) resends every pending op so a Connection restart loses nothing" do
+      # User fires a sync write. SyncEngine stashes it in pending_ops and
+      # asks Connection to push.
+      task = Task.async(fn -> SyncEngine.put("test/store", "k", "v", []) end)
+
+      assert_receive {:send_write, "test/store",
+                      %{op: :set, path: "k", client_op_id: client_op_id}},
+                     500
+
+      # Simulate a Connection process crash + restart. Pending_refs and
+      # outbox in the dead Connection are gone; the SyncEngine still has
+      # the op in pending_ops.
+      assert SyncEngine.status("test/store").pending_ops == 1
+
+      # Restart-equivalent: status goes :reconnecting then :connected.
+      SyncEngine.set_status("test/store", :reconnecting)
+      SyncEngine.set_status("test/store", :connected)
+
+      # The resend fires for every op in pending_ops.
+      assert_receive {:send_write, "test/store",
+                      %{op: :set, path: "k", client_op_id: ^client_op_id}},
+                     500
+
+      # Once the (resent) op is acked, the user's call unblocks normally.
+      SyncEngine.handle_write_accepted("test/store", client_op_id, 99)
+      assert Task.await(task, 500) == {:ok, 99}
+    end
+  end
+
   describe "subtree reads (assemble_subtree fallback)" do
     test "get/2 on a subtree path assembles a nested map from descendants" do
       :ok = SyncEngine.seed_entry("test/store", "links.foo.title", "Foo", "string")
