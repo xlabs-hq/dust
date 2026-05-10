@@ -671,6 +671,109 @@ defmodule Dust.SyncEngineTest do
     end
   end
 
+  describe "sync variants for delete/merge/increment/add/remove" do
+    setup do
+      Process.register(self(), Dust.Connection)
+      :ok
+    end
+
+    test "delete/3 with opts blocks until ack and returns {:ok, store_seq}" do
+      task = Task.async(fn -> SyncEngine.delete("test/store", "k", []) end)
+
+      assert_receive {:send_write, "test/store",
+                      %{op: :delete, path: "k", client_op_id: client_op_id}},
+                     500
+
+      SyncEngine.handle_write_accepted("test/store", client_op_id, 11)
+      assert Task.await(task, 500) == {:ok, 11}
+    end
+
+    test "delete/2 (no opts) still returns :ok without blocking" do
+      assert :ok = SyncEngine.delete("test/store", "k")
+      assert_receive {:send_write, "test/store", _}, 500
+    end
+
+    test "delete/3 with opts surfaces server rejection" do
+      task = Task.async(fn -> SyncEngine.delete("test/store", "k", []) end)
+
+      assert_receive {:send_write, "test/store", %{client_op_id: client_op_id}}, 500
+
+      SyncEngine.handle_write_rejected("test/store", client_op_id, "rate_limited")
+      assert Task.await(task, 500) == {:error, :rate_limited}
+    end
+
+    test "merge/4 with opts blocks until ack" do
+      task = Task.async(fn -> SyncEngine.merge("test/store", "k", %{a: 1}, []) end)
+
+      assert_receive {:send_write, "test/store",
+                      %{op: :merge, path: "k", value: %{a: 1}, client_op_id: client_op_id}},
+                     500
+
+      SyncEngine.handle_write_accepted("test/store", client_op_id, 12)
+      assert Task.await(task, 500) == {:ok, 12}
+    end
+
+    test "merge/3 (no opts) returns :ok without blocking" do
+      assert :ok = SyncEngine.merge("test/store", "k", %{a: 1})
+      assert_receive {:send_write, "test/store", _}, 500
+    end
+
+    test "increment/4 with opts blocks until ack" do
+      task = Task.async(fn -> SyncEngine.increment("test/store", "k", 5, []) end)
+
+      assert_receive {:send_write, "test/store",
+                      %{op: :increment, path: "k", value: 5, client_op_id: client_op_id}},
+                     500
+
+      SyncEngine.handle_write_accepted("test/store", client_op_id, 13)
+      assert Task.await(task, 500) == {:ok, 13}
+    end
+
+    test "increment/3 (no opts) returns :ok without blocking" do
+      assert :ok = SyncEngine.increment("test/store", "k", 1)
+      assert_receive {:send_write, "test/store", _}, 500
+    end
+
+    test "add/4 with opts blocks until ack" do
+      task = Task.async(fn -> SyncEngine.add("test/store", "k", "x", []) end)
+
+      assert_receive {:send_write, "test/store",
+                      %{op: :add, path: "k", value: "x", client_op_id: client_op_id}},
+                     500
+
+      SyncEngine.handle_write_accepted("test/store", client_op_id, 14)
+      assert Task.await(task, 500) == {:ok, 14}
+    end
+
+    test "add/3 (no opts) returns :ok without blocking" do
+      assert :ok = SyncEngine.add("test/store", "k", "x")
+      assert_receive {:send_write, "test/store", _}, 500
+    end
+
+    test "remove/4 with opts blocks until ack" do
+      task = Task.async(fn -> SyncEngine.remove("test/store", "k", "x", []) end)
+
+      assert_receive {:send_write, "test/store",
+                      %{op: :remove, path: "k", value: "x", client_op_id: client_op_id}},
+                     500
+
+      SyncEngine.handle_write_accepted("test/store", client_op_id, 15)
+      assert Task.await(task, 500) == {:ok, 15}
+    end
+
+    test "remove/3 (no opts) returns :ok without blocking" do
+      assert :ok = SyncEngine.remove("test/store", "k", "x")
+      assert_receive {:send_write, "test/store", _}, 500
+    end
+
+    test "Dust.delete/3 delegates to SyncEngine" do
+      task = Task.async(fn -> Dust.delete("test/store", "k", []) end)
+      assert_receive {:send_write, "test/store", %{client_op_id: id}}, 500
+      SyncEngine.handle_write_accepted("test/store", id, 99)
+      assert Task.await(task, 500) == {:ok, 99}
+    end
+  end
+
   defp drain_events(timeout_ms) do
     receive do
       {:event, event} -> [event | drain_events(timeout_ms)]

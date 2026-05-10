@@ -68,20 +68,40 @@ defmodule Dust.SyncEngine do
     GenServer.call(via(store), {:delete, norm!(path)})
   end
 
+  def delete(store, path, opts) when is_list(opts) do
+    GenServer.call(via(store), {:delete, norm!(path), opts})
+  end
+
   def merge(store, path, map) do
     GenServer.call(via(store), {:merge, norm!(path), map})
+  end
+
+  def merge(store, path, map, opts) when is_list(opts) do
+    GenServer.call(via(store), {:merge, norm!(path), map, opts})
   end
 
   def increment(store, path, delta \\ 1) do
     GenServer.call(via(store), {:increment, norm!(path), delta})
   end
 
+  def increment(store, path, delta, opts) when is_list(opts) do
+    GenServer.call(via(store), {:increment, norm!(path), delta, opts})
+  end
+
   def add(store, path, member) do
     GenServer.call(via(store), {:add, norm!(path), member})
   end
 
+  def add(store, path, member, opts) when is_list(opts) do
+    GenServer.call(via(store), {:add, norm!(path), member, opts})
+  end
+
   def remove(store, path, member) do
     GenServer.call(via(store), {:remove, norm!(path), member})
+  end
+
+  def remove(store, path, member, opts) when is_list(opts) do
+    GenServer.call(via(store), {:remove, norm!(path), member, opts})
   end
 
   def put_file(store, path, source_path, opts \\ []) do
@@ -235,130 +255,62 @@ defmodule Dust.SyncEngine do
 
   @impl true
   def handle_call({:delete, path}, _from, state) do
-    client_op_id = generate_op_id()
-
-    state.cache.delete(state.cache_target, state.store, path)
-
-    dispatch_callbacks(state, path, %{
-      store: state.store, path: path, op: :delete, value: nil,
-      committed: false, source: :local, client_op_id: client_op_id
-    })
-
-    op_msg = %{op: :delete, path: path, client_op_id: client_op_id}
-    pending = Map.put(state.pending_ops, client_op_id, op_msg)
-    state = %{state | pending_ops: pending}
-
-    send_to_connection(state.store, op_msg)
-
+    state = do_delete(path, nil, state)
     {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_call({:delete, path, _opts}, from, state) do
+    state = do_delete(path, from, state)
+    {:noreply, state}
   end
 
   @impl true
   def handle_call({:merge, path, map}, _from, state) do
-    client_op_id = generate_op_id()
-
-    # Optimistic: write each child
-    Enum.each(map, fn {key, value} ->
-      child_path = "#{path}.#{key}"
-      state.cache.write(state.cache_target, state.store, child_path, value, detect_type(value), 0)
-    end)
-
-    dispatch_callbacks(state, path, %{
-      store: state.store, path: path, op: :merge, value: map,
-      committed: false, source: :local, client_op_id: client_op_id
-    })
-
-    op_msg = %{op: :merge, path: path, value: map, client_op_id: client_op_id}
-    pending = Map.put(state.pending_ops, client_op_id, op_msg)
-    state = %{state | pending_ops: pending}
-
-    send_to_connection(state.store, op_msg)
-
+    state = do_merge(path, map, nil, state)
     {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_call({:merge, path, map, _opts}, from, state) do
+    state = do_merge(path, map, from, state)
+    {:noreply, state}
   end
 
   @impl true
   def handle_call({:increment, path, delta}, _from, state) do
-    client_op_id = generate_op_id()
-
-    # Optimistic: read current value and add delta
-    current =
-      case state.cache.read(state.cache_target, state.store, path) do
-        {:ok, val} when is_number(val) -> val
-        _ -> 0
-      end
-
-    new_value = current + delta
-    :ok = state.cache.write(state.cache_target, state.store, path, new_value, "counter", 0)
-
-    dispatch_callbacks(state, path, %{
-      store: state.store, path: path, op: :increment, value: delta,
-      committed: false, source: :local, client_op_id: client_op_id
-    })
-
-    op_msg = %{op: :increment, path: path, value: delta, client_op_id: client_op_id}
-    pending = Map.put(state.pending_ops, client_op_id, op_msg)
-    state = %{state | pending_ops: pending}
-
-    send_to_connection(state.store, op_msg)
-
+    state = do_increment(path, delta, nil, state)
     {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_call({:increment, path, delta, _opts}, from, state) do
+    state = do_increment(path, delta, from, state)
+    {:noreply, state}
   end
 
   @impl true
   def handle_call({:add, path, member}, _from, state) do
-    client_op_id = generate_op_id()
-
-    # Optimistic: read current set and add member
-    current_set =
-      case state.cache.read(state.cache_target, state.store, path) do
-        {:ok, list} when is_list(list) -> list
-        _ -> []
-      end
-
-    new_set = Enum.uniq([member | current_set])
-    :ok = state.cache.write(state.cache_target, state.store, path, new_set, "set", 0)
-
-    dispatch_callbacks(state, path, %{
-      store: state.store, path: path, op: :add, value: member,
-      committed: false, source: :local, client_op_id: client_op_id
-    })
-
-    op_msg = %{op: :add, path: path, value: member, client_op_id: client_op_id}
-    pending = Map.put(state.pending_ops, client_op_id, op_msg)
-    state = %{state | pending_ops: pending}
-
-    send_to_connection(state.store, op_msg)
-
+    state = do_set_op(:add, path, member, nil, state)
     {:reply, :ok, state}
   end
 
   @impl true
+  def handle_call({:add, path, member, _opts}, from, state) do
+    state = do_set_op(:add, path, member, from, state)
+    {:noreply, state}
+  end
+
+  @impl true
   def handle_call({:remove, path, member}, _from, state) do
-    client_op_id = generate_op_id()
-
-    # Optimistic: read current set and remove member
-    current_set =
-      case state.cache.read(state.cache_target, state.store, path) do
-        {:ok, list} when is_list(list) -> list
-        _ -> []
-      end
-
-    new_set = List.delete(current_set, member)
-    :ok = state.cache.write(state.cache_target, state.store, path, new_set, "set", 0)
-
-    dispatch_callbacks(state, path, %{
-      store: state.store, path: path, op: :remove, value: member,
-      committed: false, source: :local, client_op_id: client_op_id
-    })
-
-    op_msg = %{op: :remove, path: path, value: member, client_op_id: client_op_id}
-    pending = Map.put(state.pending_ops, client_op_id, op_msg)
-    state = %{state | pending_ops: pending}
-
-    send_to_connection(state.store, op_msg)
-
+    state = do_set_op(:remove, path, member, nil, state)
     {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_call({:remove, path, member, _opts}, from, state) do
+    state = do_set_op(:remove, path, member, from, state)
+    {:noreply, state}
   end
 
   @impl true
@@ -791,6 +743,104 @@ defmodule Dust.SyncEngine do
 
   defp maybe_put_from(op_msg, nil), do: op_msg
   defp maybe_put_from(op_msg, from), do: Map.put(op_msg, :from, from)
+
+  defp do_delete(path, from, state) do
+    client_op_id = generate_op_id()
+
+    state.cache.delete(state.cache_target, state.store, path)
+
+    dispatch_callbacks(state, path, %{
+      store: state.store, path: path, op: :delete, value: nil,
+      committed: false, source: :local, client_op_id: client_op_id
+    })
+
+    op_msg =
+      %{op: :delete, path: path, client_op_id: client_op_id}
+      |> maybe_put_from(from)
+
+    pending = Map.put(state.pending_ops, client_op_id, op_msg)
+    send_to_connection(state.store, op_msg)
+    %{state | pending_ops: pending}
+  end
+
+  defp do_merge(path, map, from, state) do
+    client_op_id = generate_op_id()
+
+    Enum.each(map, fn {key, value} ->
+      child_path = "#{path}.#{key}"
+      state.cache.write(state.cache_target, state.store, child_path, value, detect_type(value), 0)
+    end)
+
+    dispatch_callbacks(state, path, %{
+      store: state.store, path: path, op: :merge, value: map,
+      committed: false, source: :local, client_op_id: client_op_id
+    })
+
+    op_msg =
+      %{op: :merge, path: path, value: map, client_op_id: client_op_id}
+      |> maybe_put_from(from)
+
+    pending = Map.put(state.pending_ops, client_op_id, op_msg)
+    send_to_connection(state.store, op_msg)
+    %{state | pending_ops: pending}
+  end
+
+  defp do_increment(path, delta, from, state) do
+    client_op_id = generate_op_id()
+
+    current =
+      case state.cache.read(state.cache_target, state.store, path) do
+        {:ok, val} when is_number(val) -> val
+        _ -> 0
+      end
+
+    new_value = current + delta
+    :ok = state.cache.write(state.cache_target, state.store, path, new_value, "counter", 0)
+
+    dispatch_callbacks(state, path, %{
+      store: state.store, path: path, op: :increment, value: delta,
+      committed: false, source: :local, client_op_id: client_op_id
+    })
+
+    op_msg =
+      %{op: :increment, path: path, value: delta, client_op_id: client_op_id}
+      |> maybe_put_from(from)
+
+    pending = Map.put(state.pending_ops, client_op_id, op_msg)
+    send_to_connection(state.store, op_msg)
+    %{state | pending_ops: pending}
+  end
+
+  defp do_set_op(op, path, member, from, state) when op in [:add, :remove] do
+    client_op_id = generate_op_id()
+
+    current_set =
+      case state.cache.read(state.cache_target, state.store, path) do
+        {:ok, list} when is_list(list) -> list
+        _ -> []
+      end
+
+    new_set =
+      case op do
+        :add -> Enum.uniq([member | current_set])
+        :remove -> List.delete(current_set, member)
+      end
+
+    :ok = state.cache.write(state.cache_target, state.store, path, new_set, "set", 0)
+
+    dispatch_callbacks(state, path, %{
+      store: state.store, path: path, op: op, value: member,
+      committed: false, source: :local, client_op_id: client_op_id
+    })
+
+    op_msg =
+      %{op: op, path: path, value: member, client_op_id: client_op_id}
+      |> maybe_put_from(from)
+
+    pending = Map.put(state.pending_ops, client_op_id, op_msg)
+    send_to_connection(state.store, op_msg)
+    %{state | pending_ops: pending}
+  end
 
   defp reason_to_atom(reason) when is_atom(reason), do: reason
   defp reason_to_atom("conflict"), do: :conflict
