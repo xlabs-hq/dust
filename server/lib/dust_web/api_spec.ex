@@ -55,19 +55,19 @@ defmodule DustWeb.ApiSpec do
         All endpoints require a Bearer token in the `Authorization`
         header. Create tokens at `/:org/tokens` in the dashboard.
 
-        Tokens have a `store` (the store they primarily belong to)
-        and `read`/`write` permissions:
+        Tokens are scoped to a single store and carry `read` and/or
+        `write` permissions:
 
-        * **`read` tokens** can read entries, list webhooks/audit
-          log, export — limited to their store.
-        * **`write` tokens** additionally have **organization-level
-          management capability**: they can create stores in the
-          token's organization, and create or revoke any token
-          within that organization. Treat write tokens as org-admin
-          credentials and scope them accordingly.
+        * **`read`** — read entries, list webhooks/audit log, export.
+        * **`read+write`** — additionally write entries, register
+          webhooks, run import/clone/diff, and manage tokens **for
+          the same store**.
 
-        Granular per-store admin permissions are on the roadmap but
-        not in this version.
+        Cross-store operations are not available with API tokens in
+        this version: `tokens.create` and `tokens.revoke` only work
+        for the calling token's own store, and `stores.create` is
+        disabled entirely (dashboard-only). Granular org-admin
+        tokens, which will re-enable these flows, are on the roadmap.
 
         ### CORS
 

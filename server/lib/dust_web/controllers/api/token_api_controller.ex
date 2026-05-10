@@ -41,11 +41,10 @@ defmodule DustWeb.Api.TokenApiController do
     operation_id: "tokens.create",
     summary: "Create a new API token",
     description: """
-    Creates a token for **any store in the calling token's
-    organization** — `store_name` does not have to match the calling
-    token's store. Requires `write` permission, which in this version
-    grants org-management capability (see the `Authentication`
-    section in the spec preamble).
+    Creates a token for **the calling token's store** only —
+    `store_name` must match the calling token's store, or the request
+    is rejected with `403`. Cross-store token creation requires
+    dashboard access; granular org-admin tokens are on the roadmap.
 
     The `raw_token` is returned **only on creation** — store it
     immediately. The server keeps a one-way hash and cannot recover
@@ -99,8 +98,18 @@ defmodule DustWeb.Api.TokenApiController do
     store_token = conn.assigns.store_token
 
     with :ok <- verify_write_permission(store_token),
+         :ok <- verify_same_store(store_token, store_name),
          {:ok, store} <- find_store(org, store_name) do
       create_token(conn, store, store_token, store_name, name, params)
+    end
+  end
+
+  # Restrict cross-store token creation. The calling token must be
+  # scoped to the same store as the one it's creating tokens for.
+  defp verify_same_store(store_token, target_store_name) do
+    case store_token.store && store_token.store.name do
+      ^target_store_name -> :ok
+      _ -> {:error, :forbidden}
     end
   end
 
@@ -142,7 +151,7 @@ defmodule DustWeb.Api.TokenApiController do
     operation_id: "tokens.revoke",
     summary: "Revoke an API token",
     description:
-      "Revokes any token in **the calling token's organization** by id, regardless of which store the target token is scoped to. Requires `write` permission (see the `Authentication` section in the spec preamble).",
+      "Revokes a token scoped to **the calling token's store**. Returns `403` if the target token belongs to a different store, even within the same organization. Cross-store revocation requires dashboard access.",
     tags: ["Tokens"],
     parameters: [
       id: [in: :path, schema: %{type: :string, format: :uuid}, required: true]
@@ -162,10 +171,9 @@ defmodule DustWeb.Api.TokenApiController do
 
   def delete(conn, %{"id" => id}) do
     store_token = conn.assigns.store_token
-    org = conn.assigns.organization
 
     with :ok <- verify_write_permission(store_token),
-         {:ok, _} <- Stores.revoke_token_in_org(id, org) do
+         {:ok, _} <- Stores.revoke_token_in_store(id, store_token.store_id) do
       json(conn, %{ok: true})
     end
   end

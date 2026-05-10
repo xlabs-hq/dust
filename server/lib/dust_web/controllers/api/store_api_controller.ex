@@ -57,10 +57,19 @@ defmodule DustWeb.Api.StoreApiController do
 
   operation :create,
     operation_id: "stores.create",
-    summary: "Create a new store",
-    description:
-      "Creates a store in **the calling token's organization**, regardless of which store the token is otherwise scoped to. Requires `write` permission, which in this version grants org-management capability — see the `Authentication` section in the spec preamble.",
+    summary: "Create a new store (deprecated for store-scoped tokens)",
+    description: """
+    **Not available with store-scoped tokens.** Returns `403` —
+    store creation is dashboard-only in v0.1, since store-scoped
+    tokens have no authority to operate outside their own store.
+    Granular org-admin tokens (which will re-enable this endpoint
+    over the API) are on the roadmap.
+
+    The endpoint stays in the spec so the contract is explicit, but
+    every call returns `403 forbidden` until org-admin tokens ship.
+    """,
     tags: ["Stores"],
+    deprecated: true,
     request_body:
       {%{
          type: :object,
@@ -97,39 +106,11 @@ defmodule DustWeb.Api.StoreApiController do
       too_many_requests: @rate_limited
     ]
 
-  def create(conn, %{"name" => name} = params) do
-    org = conn.assigns.organization
-    store_token = conn.assigns.store_token
-
-    with :ok <- verify_write_permission(store_token) do
-      handle_create(conn, org, name, params)
-    end
-  end
-
   def create(_conn, _params) do
-    {:error, {:invalid_params, "name is required"}}
-  end
-
-  defp handle_create(conn, org, name, params) do
-    attrs = %{name: name}
-    attrs = if params["ttl"], do: Map.put(attrs, :ttl, params["ttl"]), else: attrs
-
-    case Stores.create_store(org, attrs) do
-      {:ok, store} ->
-        conn
-        |> put_status(201)
-        |> json(serialize_store(org, store))
-
-      {:error, :limit_exceeded, info} ->
-        conn
-        |> put_status(402)
-        |> json(%{error: "limit_exceeded"} |> Map.merge(info))
-
-      {:error, changeset} ->
-        conn
-        |> put_status(422)
-        |> json(%{error: format_errors(changeset)})
-    end
+    # Store-scoped tokens have no authority to create new stores. Until
+    # org-admin tokens ship, this endpoint always returns 403 — store
+    # creation is dashboard-only.
+    {:error, :forbidden}
   end
 
   defp serialize_store(org, store) do
@@ -141,17 +122,5 @@ defmodule DustWeb.Api.StoreApiController do
       inserted_at: store.inserted_at,
       expires_at: store.expires_at
     }
-  end
-
-  defp verify_write_permission(store_token) do
-    if Stores.StoreToken.can_write?(store_token), do: :ok, else: {:error, :forbidden}
-  end
-
-  defp format_errors(changeset) do
-    Ecto.Changeset.traverse_errors(changeset, fn {msg, opts} ->
-      Regex.replace(~r"%{(\w+)}", msg, fn _, key ->
-        opts |> Keyword.get(String.to_existing_atom(key), key) |> to_string()
-      end)
-    end)
   end
 end

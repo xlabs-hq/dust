@@ -178,6 +178,19 @@ defmodule Dust.Stores do
     end
   end
 
+  @doc """
+  Revoke a token, but only if it belongs to the given store. Returns
+  `{:error, :forbidden}` if the token exists in the same org but a
+  different store, and `{:error, :not_found}` if the id is unknown.
+  """
+  def revoke_token_in_store(token_id, store_id) do
+    case Repo.get(StoreToken, token_id) do
+      nil -> {:error, :not_found}
+      %StoreToken{store_id: ^store_id} = token -> Repo.delete(token)
+      _other -> {:error, :forbidden}
+    end
+  end
+
   defp generate_token do
     @token_prefix <> Base.url_encode64(:crypto.strong_rand_bytes(32), padding: false)
   end

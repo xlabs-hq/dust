@@ -58,41 +58,19 @@ defmodule DustWeb.Api.StoreApiControllerTest do
   end
 
   describe "POST /api/stores" do
-    test "creates a store with write token on pro plan", %{conn: conn, org: org, rw_token: token} do
-      # Upgrade to pro so we can create more than 1 store
-      org |> Ecto.Changeset.change(plan: "pro") |> Dust.Repo.update!()
-
+    test "always returns 403 — store creation is dashboard-only in v0.1",
+         %{conn: conn, rw_token: token} do
       conn = conn |> api_conn(token) |> post("/api/stores", %{name: "new-store"})
-
-      assert conn.status == 201
-      body = json_response(conn, 201)
-      assert body["name"] == "new-store"
-      assert body["full_name"] == "apitest/new-store"
+      assert conn.status == 403
     end
 
-    test "creates an ephemeral store with TTL", %{conn: conn, org: org, rw_token: token} do
-      org |> Ecto.Changeset.change(plan: "pro") |> Dust.Repo.update!()
-
+    test "still 403 with TTL", %{conn: conn, rw_token: token} do
       conn = conn |> api_conn(token) |> post("/api/stores", %{name: "ephemeral", ttl: 3600})
-
-      assert conn.status == 201
-      body = json_response(conn, 201)
-      assert body["name"] == "ephemeral"
-      assert body["expires_at"] != nil
+      assert conn.status == 403
     end
 
-    test "rejects create when store limit reached on free plan", %{conn: conn, rw_token: token} do
-      conn = conn |> api_conn(token) |> post("/api/stores", %{name: "second-store"})
-
-      assert conn.status == 402
-      body = json_response(conn, 402)
-      assert body["error"] == "limit_exceeded"
-      assert body["dimension"] == "stores"
-    end
-
-    test "rejects create with read-only token", %{conn: conn, ro_token: token} do
-      conn = conn |> api_conn(token) |> post("/api/stores", %{name: "forbidden"})
-
+    test "still 403 for read-only tokens", %{conn: conn, ro_token: token} do
+      conn = conn |> api_conn(token) |> post("/api/stores", %{name: "anything"})
       assert conn.status == 403
     end
   end
@@ -135,11 +113,24 @@ defmodule DustWeb.Api.StoreApiControllerTest do
       assert conn.status == 404
     end
 
-    test "delete scoped to org — cannot delete tokens from other orgs", %{
-      conn: conn,
-      rw_token: token
-    } do
-      # Create another org with its own token
+    test "delete scoped to caller's store — cannot delete tokens from other stores in same org",
+         %{conn: conn, rw_token: token, org: org} do
+      # Pro plan to allow a second store in the org
+      org = org |> Ecto.Changeset.change(plan: "pro") |> Dust.Repo.update!()
+      {:ok, sibling_store} = Stores.create_store(org, %{name: "sibling"})
+
+      {:ok, sibling_token} =
+        Stores.create_store_token(sibling_store, %{
+          name: "sibling-tok",
+          read: true,
+          created_by_id: token.created_by_id
+        })
+
+      conn = conn |> api_conn(token) |> delete("/api/tokens/#{sibling_token.id}")
+      assert conn.status == 403
+    end
+
+    test "delete scoped — cannot delete tokens from other orgs", %{conn: conn, rw_token: token} do
       {:ok, user2} = Accounts.create_user(%{email: "other@example.com"})
 
       {:ok, org2} =
@@ -150,9 +141,26 @@ defmodule DustWeb.Api.StoreApiControllerTest do
       {:ok, other_token} =
         Stores.create_store_token(store2, %{name: "other", read: true, created_by_id: user2.id})
 
-      # Try to delete the other org's token — should get 404 (not found in our org)
+      # Different store entirely → 403, not 404, since the row exists.
       conn = conn |> api_conn(token) |> delete("/api/tokens/#{other_token.id}")
-      assert conn.status == 404
+      assert conn.status == 403
+    end
+
+    test "create rejects cross-store with 403", %{conn: conn, rw_token: token, org: org} do
+      org = org |> Ecto.Changeset.change(plan: "pro") |> Dust.Repo.update!()
+      {:ok, sibling_store} = Stores.create_store(org, %{name: "sibling-create"})
+
+      conn =
+        conn
+        |> api_conn(token)
+        |> post("/api/tokens", %{
+          store_name: sibling_store.name,
+          name: "x-store",
+          read: true,
+          write: true
+        })
+
+      assert conn.status == 403
     end
 
     test "deletes a token", %{conn: conn, rw_token: token, store: store} do
