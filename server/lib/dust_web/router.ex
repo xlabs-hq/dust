@@ -161,9 +161,11 @@ defmodule DustWeb.Router do
     get "/settings", SettingsController, :index
   end
 
-  # File download endpoint (has its own Bearer token auth inline)
+  # File download endpoint — runs through the same auth/rate-limit
+  # pipeline as the rest of /api so X-RateLimit-* headers and 429s
+  # apply uniformly.
   scope "/api/files", DustWeb do
-    pipe_through :api
+    pipe_through :api_auth
     get "/:hash", FileController, :show
   end
 

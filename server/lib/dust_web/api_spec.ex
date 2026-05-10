@@ -38,12 +38,44 @@ defmodule DustWeb.ApiSpec do
         HTTP API for [Dust](https://dustlayer.io) — reactive global state
         for AI agents.
 
+        ### Stability
+
+        **This is a pre-1.0 API.** Breaking changes are possible
+        between minor versions. The current version is published in
+        `info.version`; consumers should pin to that and watch
+        [GitHub releases](https://github.com/xlabs-hq/dust/releases)
+        for migration notes.
+
+        Versioned URLs (`/v1/...`), `Deprecation`/`Sunset` headers
+        (RFC 9745), and a written deprecation policy will arrive at
+        1.0. Until then: treat this as a beta contract.
+
         ### Authentication
 
         All endpoints require a Bearer token in the `Authorization`
-        header. Tokens are scoped to a single store and have either
-        `read` or `read+write` permissions. Create tokens at
-        `/:org/tokens` in the dashboard.
+        header. Create tokens at `/:org/tokens` in the dashboard.
+
+        Tokens have a `store` (the store they primarily belong to)
+        and `read`/`write` permissions:
+
+        * **`read` tokens** can read entries, list webhooks/audit
+          log, export — limited to their store.
+        * **`write` tokens** additionally have **organization-level
+          management capability**: they can create stores in the
+          token's organization, and create or revoke any token
+          within that organization. Treat write tokens as org-admin
+          credentials and scope them accordingly.
+
+        Granular per-store admin permissions are on the roadmap but
+        not in this version.
+
+        ### CORS
+
+        The REST API is intended for **server-to-server use** in
+        v0.1. Browser-origin requests are not in scope and CORS is
+        not enabled for arbitrary origins. SDKs that need
+        browser-side access should connect via WebSocket (which
+        accepts cross-origin connections).
 
         ### Paths
 
@@ -61,6 +93,14 @@ defmodule DustWeb.ApiSpec do
         operation responses below document the operation-specific
         codes (404, 400, 412, etc.) — assume the four common codes
         always apply.
+
+        ### Rate limits
+
+        Per-token rate limits are enforced per minute on two buckets:
+        reads (1000/min) and writes (100/min). The `X-RateLimit-Limit`,
+        `X-RateLimit-Remaining`, and `X-RateLimit-Reset` headers are
+        returned on every successful response. 429 responses include
+        `Retry-After` (seconds).
 
         ### Request IDs
 

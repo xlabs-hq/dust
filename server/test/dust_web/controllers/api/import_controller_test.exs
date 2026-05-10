@@ -49,7 +49,11 @@ defmodule DustWeb.Api.ImportControllerTest do
         |> api_conn(token)
         |> post("/api/stores/importorg/mystore/import", body)
 
-      assert json_response(resp, 200) == %{"ok" => true, "entries_imported" => 2}
+      body = json_response(resp, 200)
+      assert body["ok"] == true
+      assert body["imported"] == 2
+      assert body["failed"] == []
+      assert body["unparseable"] == 0
 
       assert Sync.get_entry(store.id, "key1").value == "val1"
       assert Sync.get_entry(store.id, "key2").value == 42

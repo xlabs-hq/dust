@@ -40,8 +40,18 @@ defmodule DustWeb.Api.TokenApiController do
   operation :create,
     operation_id: "tokens.create",
     summary: "Create a new API token",
-    description:
-      "The `raw_token` is returned **only on creation** — store it immediately. The server keeps a one-way hash and cannot recover the plaintext later (unlike the webhook secret, which the server retains in order to sign deliveries).",
+    description: """
+    Creates a token for **any store in the calling token's
+    organization** — `store_name` does not have to match the calling
+    token's store. Requires `write` permission, which in this version
+    grants org-management capability (see the `Authentication`
+    section in the spec preamble).
+
+    The `raw_token` is returned **only on creation** — store it
+    immediately. The server keeps a one-way hash and cannot recover
+    the plaintext later (unlike the webhook secret, which the server
+    retains in order to sign deliveries).
+    """,
     tags: ["Tokens"],
     request_body:
       {%{
@@ -131,6 +141,8 @@ defmodule DustWeb.Api.TokenApiController do
   operation :delete,
     operation_id: "tokens.revoke",
     summary: "Revoke an API token",
+    description:
+      "Revokes any token in **the calling token's organization** by id, regardless of which store the target token is scoped to. Requires `write` permission (see the `Authentication` section in the spec preamble).",
     tags: ["Tokens"],
     parameters: [
       id: [in: :path, schema: %{type: :string, format: :uuid}, required: true]

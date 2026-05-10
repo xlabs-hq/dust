@@ -31,9 +31,39 @@ defmodule DustWeb.Api.ImportController do
       ok:
         {%{
            type: :object,
-           properties: %{ok: %{type: :boolean}, entries_imported: %{type: :integer}},
-           required: [:ok, :entries_imported]
-         }, description: "Import summary"},
+           properties: %{
+             ok: %{type: :boolean, description: "True iff every line either imported or was a header/blank."},
+             imported: %{type: :integer, description: "Number of writes that returned :ok."},
+             skipped: %{
+               type: :integer,
+               description: "Header rows + blank lines that were intentionally ignored."
+             },
+             unparseable: %{
+               type: :integer,
+               description: "Malformed JSON or rows missing a `path` field."
+             },
+             failed: %{
+               type: :array,
+               description: "Per-line failures. Empty when ok=true.",
+               items: %{
+                 type: :object,
+                 properties: %{
+                   line: %{type: :integer, description: "1-indexed source line number."},
+                   path: %{type: ["string", "null"]},
+                   reason: %{type: :string}
+                 },
+                 required: [:line, :reason]
+               }
+             }
+           },
+           required: [:ok, :imported, :skipped, :unparseable, :failed]
+         }, description: "Import summary — `ok=true` and `failed=[]`."},
+      multi_status:
+        {%{
+           type: :object,
+           description:
+             "Some lines failed. Same shape as 200; `ok=false` and `failed`/`unparseable` populated."
+         }, description: "Partial success"},
       bad_request: Refs.bad_request(),
       unauthorized: Refs.unauthorized(),
       forbidden: Refs.forbidden(),
@@ -51,10 +81,29 @@ defmodule DustWeb.Api.ImportController do
          :ok <- verify_write_permission(store_token),
          {:ok, body, conn} <- Plug.Conn.read_body(conn) do
       lines = String.split(body, "\n")
-      {:ok, count} = Sync.Import.from_jsonl(store.id, lines, "system:import")
-      json(conn, %{ok: true, entries_imported: count})
+      {:ok, summary} = Sync.Import.from_jsonl(store.id, lines, "system:import")
+
+      response = %{
+        ok: summary.failed == [] and summary.unparseable == 0,
+        imported: summary.imported,
+        skipped: summary.skipped,
+        unparseable: summary.unparseable,
+        failed: Enum.map(summary.failed, &serialize_failure/1)
+      }
+
+      status = if response.ok, do: 200, else: 207
+
+      conn |> put_status(status) |> json(response)
     end
   end
+
+  defp serialize_failure(%{line: line, path: path, reason: reason}) do
+    %{line: line, path: path, reason: serialize_reason(reason)}
+  end
+
+  defp serialize_reason(reason) when is_atom(reason), do: Atom.to_string(reason)
+  defp serialize_reason({tag, _}) when is_atom(tag), do: Atom.to_string(tag)
+  defp serialize_reason(reason), do: inspect(reason)
 
   defp verify_org(organization, org_slug) do
     if organization.slug == org_slug do

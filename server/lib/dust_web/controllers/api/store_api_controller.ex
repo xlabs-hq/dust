@@ -58,6 +58,8 @@ defmodule DustWeb.Api.StoreApiController do
   operation :create,
     operation_id: "stores.create",
     summary: "Create a new store",
+    description:
+      "Creates a store in **the calling token's organization**, regardless of which store the token is otherwise scoped to. Requires `write` permission, which in this version grants org-management capability — see the `Authentication` section in the spec preamble.",
     tags: ["Stores"],
     request_body:
       {%{

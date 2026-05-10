@@ -33,10 +33,16 @@ defmodule Dust.MCP.Tools.DustImport do
       true ->
         with {:ok, store} <- Authz.authorize_store(principal, full_name, :write),
              lines = String.split(payload, ~r/\r?\n/),
-             {:ok, count} <- Sync.Import.from_jsonl(store.id, lines, device_id(principal)) do
-          {:result,
-           MCP.call_tool_result(text: Jason.encode!(%{ok: true, entries_imported: count})),
-           channel}
+             {:ok, summary} <- Sync.Import.from_jsonl(store.id, lines, device_id(principal)) do
+          response = %{
+            ok: summary.failed == [] and summary.unparseable == 0,
+            entries_imported: summary.imported,
+            skipped: summary.skipped,
+            unparseable: summary.unparseable,
+            failed: length(summary.failed)
+          }
+
+          {:result, MCP.call_tool_result(text: Jason.encode!(response)), channel}
         else
           {:error, reason} when is_binary(reason) -> {:error, reason, channel}
           {:error, reason} -> {:error, inspect(reason), channel}

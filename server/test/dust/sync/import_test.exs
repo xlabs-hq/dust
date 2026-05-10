@@ -21,7 +21,8 @@ defmodule Dust.Sync.ImportTest do
         ~s({"path": "b.c", "value": 42, "type": "integer"})
       ]
 
-      assert {:ok, 2} = Sync.Import.from_jsonl(store.id, lines, "system:import")
+      assert {:ok, %{imported: 2, failed: [], unparseable: 0, skipped: 1}} =
+               Sync.Import.from_jsonl(store.id, lines, "system:import")
 
       assert Sync.get_entry(store.id, "a").value == "hello"
       assert Sync.get_entry(store.id, "b.c").value == 42
@@ -41,7 +42,9 @@ defmodule Dust.Sync.ImportTest do
         ~s({"path": "a", "value": "new", "type": "string"})
       ]
 
-      assert {:ok, 1} = Sync.Import.from_jsonl(store.id, lines, "system:import")
+      assert {:ok, %{imported: 1, failed: []}} =
+               Sync.Import.from_jsonl(store.id, lines, "system:import")
+
       assert Sync.get_entry(store.id, "a").value == "new"
     end
 
@@ -53,7 +56,8 @@ defmodule Dust.Sync.ImportTest do
         ""
       ]
 
-      assert {:ok, 1} = Sync.Import.from_jsonl(store.id, lines, "system:import")
+      assert {:ok, %{imported: 1, skipped: 3, failed: []}} =
+               Sync.Import.from_jsonl(store.id, lines, "system:import")
     end
 
     test "preserves type from JSONL on import", %{store: store} do
@@ -64,7 +68,8 @@ defmodule Dust.Sync.ImportTest do
         ~s({"path": "views", "value": 42, "type": "counter"})
       ]
 
-      assert {:ok, 2} = Sync.Import.from_jsonl(store.id, lines, "system:import")
+      assert {:ok, %{imported: 2, failed: []}} =
+               Sync.Import.from_jsonl(store.id, lines, "system:import")
 
       avatar = Sync.get_entry(store.id, "avatar")
       assert avatar != nil

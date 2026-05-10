@@ -36,8 +36,9 @@ defmodule DustWeb.FileController do
     ]
 
   def show(conn, %{"hash" => hash}) do
-    with {:ok, store_token} <- authenticate(conn),
-         true <- Stores.StoreToken.can_read?(store_token),
+    store_token = conn.assigns.store_token
+
+    with true <- Stores.StoreToken.can_read?(store_token),
          true <- Sync.has_file_ref?(store_token.store_id, hash),
          {:ok, content} <- Files.download(hash) do
       blob = Files.get_blob(hash)
@@ -49,21 +50,11 @@ defmodule DustWeb.FileController do
       |> maybe_put_filename(filename)
       |> send_resp(200, content)
     else
-      {:error, :invalid_token} ->
-        conn |> put_status(401) |> json(%{error: "unauthorized"})
-
       {:error, :not_found} ->
         conn |> put_status(404) |> json(%{error: "not_found"})
 
       false ->
         conn |> put_status(403) |> json(%{error: "forbidden"})
-    end
-  end
-
-  defp authenticate(conn) do
-    case Plug.Conn.get_req_header(conn, "authorization") do
-      ["Bearer " <> raw_token] -> Stores.authenticate_token(raw_token)
-      _ -> {:error, :invalid_token}
     end
   end
 
