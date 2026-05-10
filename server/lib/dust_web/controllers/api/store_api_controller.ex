@@ -1,9 +1,36 @@
 defmodule DustWeb.Api.StoreApiController do
   use DustWeb, :controller
+  use Oaskit.Controller
 
   alias Dust.Stores
 
   action_fallback DustWeb.Api.FallbackController
+
+  @store_schema %{
+    type: :object,
+    properties: %{
+      id: %{type: :string, format: :uuid},
+      name: %{type: :string},
+      full_name: %{type: :string, description: "org_slug/store_name"},
+      status: %{type: :string, enum: ["active", "expired"]},
+      inserted_at: %{type: :string, format: "date-time"},
+      expires_at: %{type: :string, format: "date-time", nullable: true}
+    }
+  }
+
+  operation :index,
+    summary: "List stores in the current organization",
+    tags: ["Stores"],
+    responses: [
+      ok:
+        {%{
+           type: :object,
+           properties: %{
+             org: %{type: :string},
+             stores: %{type: :array, items: @store_schema}
+           }
+         }, description: "List of stores"}
+    ]
 
   def index(conn, _params) do
     org = conn.assigns.organization
@@ -14,6 +41,30 @@ defmodule DustWeb.Api.StoreApiController do
       stores: Enum.map(stores, &serialize_store(org, &1))
     })
   end
+
+  operation :create,
+    summary: "Create a new store",
+    tags: ["Stores"],
+    request_body:
+      {%{
+         type: :object,
+         properties: %{
+           name: %{type: :string, description: "Store name (slash-separated paths supported)"},
+           ttl: %{type: :integer, description: "Optional TTL in seconds"}
+         },
+         required: [:name]
+       }, description: "Store creation payload"},
+    responses: [
+      created: {@store_schema, description: "Store created"},
+      payment_required:
+        {%{
+           type: :object,
+           properties: %{error: %{type: :string, enum: ["limit_exceeded"]}}
+         }, description: "Plan limit exceeded"},
+      unprocessable_entity:
+        {%{type: :object, properties: %{error: %{type: :object}}},
+         description: "Validation error"}
+    ]
 
   def create(conn, %{"name" => name} = params) do
     org = conn.assigns.organization

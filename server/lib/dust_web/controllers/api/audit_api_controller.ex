@@ -1,9 +1,55 @@
 defmodule DustWeb.Api.AuditApiController do
   use DustWeb, :controller
+  use Oaskit.Controller
 
   alias Dust.{Stores, Sync.Audit}
 
   action_fallback DustWeb.Api.FallbackController
+
+  operation :index,
+    summary: "List audit log entries for a store",
+    tags: ["Audit"],
+    parameters: [
+      org: [in: :path, schema: %{type: :string}, required: true],
+      store: [in: :path, schema: %{type: :string}, required: true],
+      path: [in: :query, schema: %{type: :string}, required: false],
+      device_id: [in: :query, schema: %{type: :string}, required: false],
+      op: [in: :query, schema: %{type: :string}, required: false],
+      since: [in: :query, schema: %{type: :string, format: "date-time"}, required: false],
+      limit: [in: :query, schema: %{type: :integer, default: 50}, required: false],
+      page: [in: :query, schema: %{type: :integer, default: 1}, required: false]
+    ],
+    responses: [
+      ok:
+        {%{
+           type: :object,
+           properties: %{
+             ops: %{
+               type: :array,
+               items: %{
+                 type: :object,
+                 properties: %{
+                   store_seq: %{type: :integer},
+                   op: %{type: :string},
+                   path: %{type: :string},
+                   value: %{},
+                   device_id: %{type: :string},
+                   inserted_at: %{type: :string, format: "date-time"}
+                 }
+               }
+             },
+             pagination: %{
+               type: :object,
+               properties: %{
+                 page: %{type: :integer},
+                 limit: %{type: :integer},
+                 total: %{type: :integer},
+                 total_pages: %{type: :integer}
+               }
+             }
+           }
+         }, description: "Paginated audit log"}
+    ]
 
   def index(conn, %{"org" => org_slug, "store" => store_name} = params) do
     organization = conn.assigns.organization

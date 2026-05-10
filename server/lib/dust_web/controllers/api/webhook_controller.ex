@@ -1,5 +1,6 @@
 defmodule DustWeb.Api.WebhookController do
   use DustWeb, :controller
+  use Oaskit.Controller
 
   alias Dust.{Stores, Webhooks}
   alias Dust.Webhooks.DeliveryWorker
@@ -7,6 +8,33 @@ defmodule DustWeb.Api.WebhookController do
   action_fallback DustWeb.Api.FallbackController
 
   @ping_timeout 5_000
+
+  @webhook_schema %{
+    type: :object,
+    properties: %{
+      id: %{type: :string, format: :uuid},
+      url: %{type: :string, format: :uri},
+      active: %{type: :boolean},
+      failure_count: %{type: :integer},
+      last_delivered_seq: %{type: :integer, nullable: true},
+      inserted_at: %{type: :string, format: "date-time"}
+    }
+  }
+
+  @org_store_params [
+    org: [in: :path, schema: %{type: :string}, required: true],
+    store: [in: :path, schema: %{type: :string}, required: true]
+  ]
+
+  operation :index,
+    summary: "List webhooks for a store",
+    tags: ["Webhooks"],
+    parameters: @org_store_params,
+    responses: [
+      ok:
+        {%{type: :object, properties: %{webhooks: %{type: :array, items: @webhook_schema}}},
+         description: "List of webhooks"}
+    ]
 
   def index(conn, %{"org" => org_slug, "store" => store_name}) do
     with :ok <- verify_org(conn, org_slug),
@@ -20,6 +48,32 @@ defmodule DustWeb.Api.WebhookController do
       json(conn, %{webhooks: webhooks})
     end
   end
+
+  operation :create,
+    summary: "Register a new webhook",
+    tags: ["Webhooks"],
+    parameters: @org_store_params,
+    request_body:
+      {%{
+         type: :object,
+         properties: %{url: %{type: :string, format: :uri}},
+         required: [:url]
+       }, description: "Webhook URL"},
+    responses: [
+      created:
+        {%{
+           type: :object,
+           properties: %{
+             id: %{type: :string, format: :uuid},
+             url: %{type: :string},
+             secret: %{type: :string, description: "HMAC signing secret. Only returned on create."},
+             active: %{type: :boolean},
+             inserted_at: %{type: :string, format: "date-time"}
+           }
+         }, description: "Webhook created"},
+      unprocessable_entity:
+        {%{type: :object, properties: %{error: %{type: :string}}}, description: "Invalid params"}
+    ]
 
   def create(conn, %{"org" => org_slug, "store" => store_name} = params) do
     with :ok <- verify_org(conn, org_slug),
@@ -42,6 +96,16 @@ defmodule DustWeb.Api.WebhookController do
     end
   end
 
+  operation :delete,
+    summary: "Delete a webhook",
+    tags: ["Webhooks"],
+    parameters:
+      @org_store_params ++
+        [id: [in: :path, schema: %{type: :string, format: :uuid}, required: true]],
+    responses: [
+      ok: {%{type: :object, properties: %{ok: %{type: :boolean}}}, description: "Webhook deleted"}
+    ]
+
   def delete(conn, %{"org" => org_slug, "store" => store_name, "id" => webhook_id}) do
     with :ok <- verify_org(conn, org_slug),
          {:ok, store} <- find_store(conn, store_name),
@@ -51,6 +115,27 @@ defmodule DustWeb.Api.WebhookController do
       json(conn, %{ok: true})
     end
   end
+
+  operation :ping,
+    summary: "Send a test ping to a webhook",
+    tags: ["Webhooks"],
+    parameters:
+      @org_store_params ++
+        [id: [in: :path, schema: %{type: :string, format: :uuid}, required: true]],
+    responses: [
+      ok:
+        {%{
+           type: :object,
+           properties: %{
+             ok: %{type: :boolean},
+             status_code: %{type: :integer},
+             response_ms: %{type: :integer}
+           }
+         }, description: "Ping result"},
+      bad_gateway:
+        {%{type: :object, properties: %{ok: %{type: :boolean}, error: %{type: :string}}},
+         description: "Webhook endpoint unreachable"}
+    ]
 
   def ping(conn, %{"org" => org_slug, "store" => store_name, "id" => webhook_id}) do
     with :ok <- verify_org(conn, org_slug),
@@ -97,6 +182,42 @@ defmodule DustWeb.Api.WebhookController do
         |> json(%{ok: false, error: inspect(reason)})
     end
   end
+
+  operation :deliveries,
+    summary: "List recent webhook delivery attempts",
+    tags: ["Webhooks"],
+    parameters:
+      @org_store_params ++
+        [
+          id: [in: :path, schema: %{type: :string, format: :uuid}, required: true],
+          limit: [
+            in: :query,
+            schema: %{type: :integer, default: 20, maximum: 100},
+            required: false
+          ]
+        ],
+    responses: [
+      ok:
+        {%{
+           type: :object,
+           properties: %{
+             deliveries: %{
+               type: :array,
+               items: %{
+                 type: :object,
+                 properties: %{
+                   id: %{type: :string, format: :uuid},
+                   store_seq: %{type: :integer},
+                   status_code: %{type: :integer, nullable: true},
+                   response_ms: %{type: :integer, nullable: true},
+                   error: %{type: :string, nullable: true},
+                   attempted_at: %{type: :string, format: "date-time"}
+                 }
+               }
+             }
+           }
+         }, description: "Recent deliveries"}
+    ]
 
   def deliveries(conn, %{"org" => org_slug, "store" => store_name, "id" => webhook_id} = params) do
     with :ok <- verify_org(conn, org_slug),

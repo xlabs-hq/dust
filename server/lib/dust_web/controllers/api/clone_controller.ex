@@ -1,9 +1,46 @@
 defmodule DustWeb.Api.CloneController do
   use DustWeb, :controller
+  use Oaskit.Controller
 
   alias Dust.{Stores, Sync}
 
   action_fallback DustWeb.Api.FallbackController
+
+  operation :create,
+    summary: "Clone a store into a new store",
+    tags: ["Stores"],
+    parameters: [
+      org: [in: :path, schema: %{type: :string}, required: true],
+      store: [in: :path, schema: %{type: :string}, required: true]
+    ],
+    request_body:
+      {%{
+         type: :object,
+         properties: %{name: %{type: :string, description: "Target store name"}},
+         required: [:name]
+       }, description: "Clone target"},
+    responses: [
+      created:
+        {%{
+           type: :object,
+           properties: %{
+             ok: %{type: :boolean},
+             store: %{
+               type: :object,
+               properties: %{
+                 id: %{type: :string, format: :uuid},
+                 name: %{type: :string},
+                 full_name: %{type: :string}
+               }
+             }
+           }
+         }, description: "Cloned store"},
+      payment_required:
+        {%{type: :object, properties: %{error: %{type: :string}}},
+         description: "Plan limit exceeded"},
+      unprocessable_entity:
+        {%{type: :object, properties: %{error: %{type: :string}}}, description: "Name taken"}
+    ]
 
   def create(conn, %{"org" => org_slug, "store" => store_name, "name" => target_name}) do
     organization = conn.assigns.organization

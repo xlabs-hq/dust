@@ -1,10 +1,45 @@
 defmodule DustWeb.Api.EntriesApiController do
   use DustWeb, :controller
+  use Oaskit.Controller
 
   alias Dust.Stores
   alias Dust.Sync
 
   action_fallback DustWeb.Api.FallbackController
+
+  @entry_schema %{
+    type: :object,
+    properties: %{
+      path: %{type: :string},
+      value: %{description: "Entry value (any JSON type)"},
+      type: %{type: :string, enum: ["string", "integer", "float", "boolean", "map", "list", "decimal", "datetime", "file"]},
+      revision: %{type: :integer, description: "Per-entry sequence number"}
+    }
+  }
+
+  @org_store_params [
+    org: [in: :path, schema: %{type: :string}, required: true],
+    store: [in: :path, schema: %{type: :string}, required: true]
+  ]
+
+  operation :show,
+    summary: "Read a single entry by path",
+    tags: ["Entries"],
+    parameters:
+      @org_store_params ++
+        [
+          path: [
+            in: :path,
+            schema: %{type: :string},
+            required: true,
+            description: "Dot-separated path"
+          ]
+        ],
+    responses: [
+      ok: {@entry_schema, description: "Entry"},
+      not_found:
+        {%{type: :object, properties: %{error: %{type: :string}}}, description: "No such entry"}
+    ]
 
   def show(conn, %{"org" => org_slug, "store" => store_name, "path" => path_segments}) do
     organization = conn.assigns.organization
@@ -31,6 +66,65 @@ defmodule DustWeb.Api.EntriesApiController do
     %{path: p, value: v, type: t, revision: s}
   end
 
+  operation :index,
+    summary: "List entries by glob pattern or key range",
+    description:
+      "Use `pattern` for glob matching (default `**`), or `from`+`to` for a key range. The two modes are mutually exclusive.",
+    tags: ["Entries"],
+    parameters:
+      @org_store_params ++
+        [
+          pattern: [in: :query, schema: %{type: :string, default: "**"}, required: false],
+          from: [
+            in: :query,
+            schema: %{type: :string},
+            required: false,
+            description: "Range start (inclusive)"
+          ],
+          to: [
+            in: :query,
+            schema: %{type: :string},
+            required: false,
+            description: "Range end (exclusive)"
+          ],
+          limit: [
+            in: :query,
+            schema: %{type: :integer, default: 50, maximum: 1000},
+            required: false
+          ],
+          order: [
+            in: :query,
+            schema: %{type: :string, enum: ["asc", "desc"], default: "asc"},
+            required: false
+          ],
+          select: [
+            in: :query,
+            schema: %{type: :string, enum: ["entries", "keys", "prefixes"], default: "entries"},
+            required: false
+          ],
+          after: [
+            in: :query,
+            schema: %{type: :string},
+            required: false,
+            description: "Pagination cursor"
+          ]
+        ],
+    responses: [
+      ok:
+        {%{
+           type: :object,
+           properties: %{
+             items: %{
+               oneOf: [
+                 %{type: :array, items: @entry_schema},
+                 %{type: :array, items: %{type: :string}}
+               ]
+             },
+             next_cursor: %{type: :string, nullable: true}
+           }
+         }, description: "Page of entries (or keys/prefixes)"}
+    ]
+
   def index(conn, %{"org" => org_slug, "store" => store_name} = params) do
     organization = conn.assigns.organization
     store_token = conn.assigns.store_token
@@ -46,6 +140,42 @@ defmodule DustWeb.Api.EntriesApiController do
       end
     end
   end
+
+  operation :put,
+    summary: "Write an entry at the given path",
+    description:
+      "Set the value at `path`. Pass `If-Match: <revision>` for compare-and-swap (CAS) writes. Body can be any JSON value.",
+    tags: ["Entries"],
+    parameters:
+      @org_store_params ++
+        [
+          path: [in: :path, schema: %{type: :string}, required: true]
+        ],
+    request_body:
+      {%{description: "Any JSON value (object, scalar, array)"}, description: "Entry value"},
+    responses: [
+      ok:
+        {%{
+           type: :object,
+           properties: %{
+             revision: %{type: :integer},
+             store_seq: %{type: :integer}
+           }
+         }, description: "Write accepted"},
+      bad_request:
+        {%{
+           type: :object,
+           properties: %{error: %{type: :string}, detail: %{type: :string}}
+         }, description: "Invalid request"},
+      precondition_failed:
+        {%{
+           type: :object,
+           properties: %{
+             error: %{type: :string, enum: ["conflict"]},
+             current_revision: %{type: :integer, nullable: true}
+           }
+         }, description: "If-Match revision mismatch"}
+    ]
 
   def put(conn, %{"org" => org_slug, "store" => store_name, "path" => path_segments}) do
     organization = conn.assigns.organization
@@ -152,6 +282,38 @@ defmodule DustWeb.Api.EntriesApiController do
   defp verify_write_permission(store_token) do
     if Stores.StoreToken.can_write?(store_token), do: :ok, else: {:error, :forbidden}
   end
+
+  operation :batch,
+    summary: "Read multiple entries in one request",
+    tags: ["Entries"],
+    parameters: @org_store_params,
+    request_body:
+      {%{
+         type: :object,
+         properties: %{
+           paths: %{
+             type: :array,
+             items: %{type: :string},
+             maxItems: 1000,
+             description: "Up to 1000 entry paths"
+           }
+         },
+         required: [:paths]
+       }, description: "Batch read request"},
+    responses: [
+      ok:
+        {%{
+           type: :object,
+           properties: %{
+             entries: %{
+               type: :object,
+               additionalProperties: @entry_schema,
+               description: "Map keyed by path"
+             },
+             missing: %{type: :array, items: %{type: :string}}
+           }
+         }, description: "Batch result"}
+    ]
 
   def batch(conn, %{"org" => org_slug, "store" => store_name} = params) do
     organization = conn.assigns.organization

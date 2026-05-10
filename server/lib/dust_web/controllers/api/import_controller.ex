@@ -1,9 +1,29 @@
 defmodule DustWeb.Api.ImportController do
   use DustWeb, :controller
+  use Oaskit.Controller
 
   alias Dust.{Stores, Sync}
 
   action_fallback DustWeb.Api.FallbackController
+
+  operation :create,
+    summary: "Import JSONL into a store",
+    tags: ["Sync"],
+    parameters: [
+      org: [in: :path, schema: %{type: :string}, required: true],
+      store: [in: :path, schema: %{type: :string}, required: true]
+    ],
+    request_body: [
+      description: "JSONL body — newline-delimited JSON entries",
+      content: %{"application/x-ndjson" => %{schema: %{type: :string}}}
+    ],
+    responses: [
+      ok:
+        {%{
+           type: :object,
+           properties: %{ok: %{type: :boolean}, entries_imported: %{type: :integer}}
+         }, description: "Import summary"}
+    ]
 
   def create(conn, %{"org" => org_slug, "store" => store_name}) do
     organization = conn.assigns.organization

@@ -11,6 +11,11 @@ function Landing() {
         <header className="flex items-center justify-between px-6 py-4 max-w-4xl mx-auto">
           <span className="text-lg font-semibold tracking-tight">Dust</span>
           <div className="flex items-center gap-1">
+            <a href="/api-docs">
+              <Button variant="ghost" size="sm">
+                API Docs
+              </Button>
+            </a>
             <a
               href="https://github.com/xlabs-hq/dust"
               target="_blank"
@@ -54,10 +59,15 @@ function Landing() {
             client reacts. Like Tailscale made networking disappear, Dust makes
             shared state disappear.
           </p>
-          <div className="mt-10">
+          <div className="mt-10 flex items-center justify-center gap-3">
             <a href="/auth/login">
               <Button size="lg" className="text-base px-8">
                 Get Started
+              </Button>
+            </a>
+            <a href="/api-docs">
+              <Button size="lg" variant="outline" className="text-base px-8">
+                Read the API docs
               </Button>
             </a>
           </div>
@@ -120,6 +130,56 @@ end)
           </div>
         </section>
 
+        {/* Docs & SDKs */}
+        <section className="max-w-4xl mx-auto px-6 py-20">
+          <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground text-center mb-12">
+            Docs & SDKs
+          </h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <ResourceCard
+              href="/api-docs"
+              title="HTTP API Reference"
+              description="OpenAPI spec with request/response samples for every endpoint."
+              cta="Browse →"
+            />
+            <ResourceCard
+              href="https://github.com/xlabs-hq/dust#readme"
+              title="Project README"
+              description="Architecture, design notes, and getting-started guide on GitHub."
+              cta="View on GitHub ↗"
+              external
+            />
+            <ResourceCard
+              href="https://github.com/xlabs-hq/dust/tree/master/sdk/typescript"
+              title="TypeScript SDK"
+              description="Browser & Node client with reactive subscriptions and offline-first writes."
+              cta="View source ↗"
+              external
+            />
+            <ResourceCard
+              href="https://github.com/xlabs-hq/dust/tree/master/sdk/elixir"
+              title="Elixir SDK"
+              description="Slipstream-backed client with Ecto cache and Phoenix PubSub bridge."
+              cta="View source ↗"
+              external
+            />
+            <ResourceCard
+              href="https://github.com/xlabs-hq/dust/tree/master/cli"
+              title="CLI"
+              description="dust get / put / watch / subscribe — scripting and ops from the terminal."
+              cta="View on GitHub ↗"
+              external
+            />
+            <ResourceCard
+              href="https://github.com/xlabs-hq/dust/tree/master/protocol"
+              title="Wire Protocol"
+              description="The MessagePack protocol shared by every SDK — version it, port it."
+              cta="View on GitHub ↗"
+              external
+            />
+          </div>
+        </section>
+
         {/* Footer */}
         <footer className="max-w-4xl mx-auto px-6 py-12 border-t border-border">
           <p className="text-sm text-muted-foreground text-center">
@@ -136,6 +196,37 @@ end)
         </footer>
       </div>
     </>
+  );
+}
+
+function ResourceCard({
+  href,
+  title,
+  description,
+  cta,
+  external,
+}: {
+  href: string;
+  title: string;
+  description: string;
+  cta: string;
+  external?: boolean;
+}) {
+  return (
+    <a
+      href={href}
+      target={external ? "_blank" : undefined}
+      rel={external ? "noopener noreferrer" : undefined}
+      className="group block rounded-lg border border-border bg-background p-6 transition-colors hover:bg-muted/40 hover:border-foreground/20"
+    >
+      <h3 className="font-semibold">{title}</h3>
+      <p className="mt-2 text-sm text-muted-foreground leading-relaxed">
+        {description}
+      </p>
+      <div className="mt-4 text-sm font-medium text-foreground/80 group-hover:text-foreground">
+        {cta}
+      </div>
+    </a>
   );
 }
 

@@ -79,6 +79,17 @@ defmodule DustWeb.Router do
     get "/readyz", HealthController, :readyz
   end
 
+  # OpenAPI spec + Redoc browser (public, no auth)
+  scope "/" do
+    pipe_through :api
+    get "/openapi.json", Oaskit.SpecController, spec: DustWeb.ApiSpec
+  end
+
+  scope "/" do
+    pipe_through :browser
+    get "/api-docs", Oaskit.SpecController, redoc: "/openapi.json"
+  end
+
   # Dev-only: client-side error reporting from the browser. Logged via
   # Logger.error so it surfaces in the dev console and tidewave.
   if Mix.env() == :dev do

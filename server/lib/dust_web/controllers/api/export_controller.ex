@@ -1,9 +1,30 @@
 defmodule DustWeb.Api.ExportController do
   use DustWeb, :controller
+  use Oaskit.Controller
 
   alias Dust.{Stores, Sync}
 
   action_fallback DustWeb.Api.FallbackController
+
+  operation :show,
+    summary: "Export a store as JSONL or SQLite",
+    tags: ["Sync"],
+    parameters: [
+      org: [in: :path, schema: %{type: :string}, required: true],
+      store: [in: :path, schema: %{type: :string}, required: true],
+      format: [
+        in: :query,
+        schema: %{type: :string, enum: ["jsonl", "sqlite"], default: "jsonl"},
+        required: false
+      ]
+    ],
+    responses: [
+      ok:
+        {%{
+           type: :string,
+           description: "JSONL stream (default) or binary SQLite file"
+         }, description: "Export payload"}
+    ]
 
   def show(conn, %{"org" => org_slug, "store" => store_name} = params) do
     organization = conn.assigns.organization

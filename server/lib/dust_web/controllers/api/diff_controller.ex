@@ -1,9 +1,49 @@
 defmodule DustWeb.Api.DiffController do
   use DustWeb, :controller
+  use Oaskit.Controller
 
   alias Dust.{Stores, Sync}
 
   action_fallback DustWeb.Api.FallbackController
+
+  operation :show,
+    summary: "Diff a store between two sequence numbers",
+    tags: ["Sync"],
+    parameters: [
+      org: [in: :path, schema: %{type: :string}, required: true],
+      store: [in: :path, schema: %{type: :string}, required: true],
+      from_seq: [in: :query, schema: %{type: :integer}, required: true],
+      to_seq: [in: :query, schema: %{type: :integer}, required: false]
+    ],
+    responses: [
+      ok:
+        {%{
+           type: :object,
+           properties: %{
+             from_seq: %{type: :integer},
+             to_seq: %{type: :integer},
+             changes: %{
+               type: :array,
+               items: %{
+                 type: :object,
+                 properties: %{
+                   path: %{type: :string},
+                   before: %{},
+                   after: %{}
+                 }
+               }
+             }
+           }
+         }, description: "Diff result"},
+      conflict:
+        {%{
+           type: :object,
+           properties: %{
+             error: %{type: :string, enum: ["compacted"]},
+             earliest_available: %{type: :integer}
+           }
+         }, description: "from_seq has been compacted away"}
+    ]
 
   def show(conn, %{"org" => org_slug, "store" => store_name} = params) do
     organization = conn.assigns.organization

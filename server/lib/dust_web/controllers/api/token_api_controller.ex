@@ -1,9 +1,40 @@
 defmodule DustWeb.Api.TokenApiController do
   use DustWeb, :controller
+  use Oaskit.Controller
 
   alias Dust.Stores
 
   action_fallback DustWeb.Api.FallbackController
+
+  @permissions_schema %{
+    type: :object,
+    properties: %{
+      read: %{type: :boolean},
+      write: %{type: :boolean}
+    }
+  }
+
+  @token_schema %{
+    type: :object,
+    properties: %{
+      id: %{type: :string, format: :uuid},
+      name: %{type: :string},
+      store_name: %{type: :string},
+      permissions: @permissions_schema,
+      expires_at: %{type: :string, format: "date-time", nullable: true},
+      last_used_at: %{type: :string, format: "date-time", nullable: true},
+      inserted_at: %{type: :string, format: "date-time"}
+    }
+  }
+
+  operation :index,
+    summary: "List API tokens for the current organization",
+    tags: ["Tokens"],
+    responses: [
+      ok:
+        {%{type: :object, properties: %{tokens: %{type: :array, items: @token_schema}}},
+         description: "List of tokens"}
+    ]
 
   def index(conn, _params) do
     org = conn.assigns.organization
@@ -11,6 +42,34 @@ defmodule DustWeb.Api.TokenApiController do
 
     json(conn, %{tokens: Enum.map(tokens, &serialize_token/1)})
   end
+
+  operation :create,
+    summary: "Create a new API token",
+    tags: ["Tokens"],
+    request_body:
+      {%{
+         type: :object,
+         properties: %{
+           store_name: %{type: :string},
+           name: %{type: :string, description: "Human-readable label for the token"},
+           read: %{type: :boolean, default: true},
+           write: %{type: :boolean, default: false}
+         },
+         required: [:store_name, :name]
+       }, description: "Token creation payload"},
+    responses: [
+      created:
+        {%{
+           type: :object,
+           properties: %{
+             id: %{type: :string, format: :uuid},
+             name: %{type: :string},
+             raw_token: %{type: :string, description: "Only returned on creation. Store this!"},
+             store_name: %{type: :string},
+             permissions: @permissions_schema
+           }
+         }, description: "Token created"}
+    ]
 
   def create(conn, %{"store_name" => store_name, "name" => name} = params) do
     org = conn.assigns.organization
@@ -55,6 +114,18 @@ defmodule DustWeb.Api.TokenApiController do
         |> json(%{error: format_errors(changeset)})
     end
   end
+
+  operation :delete,
+    summary: "Revoke an API token",
+    tags: ["Tokens"],
+    parameters: [
+      id: [in: :path, schema: %{type: :string, format: :uuid}, required: true]
+    ],
+    responses: [
+      ok:
+        {%{type: :object, properties: %{ok: %{type: :boolean}}}, description: "Token revoked"},
+      not_found: {%{type: :object}, description: "Token not found"}
+    ]
 
   def delete(conn, %{"id" => id}) do
     store_token = conn.assigns.store_token

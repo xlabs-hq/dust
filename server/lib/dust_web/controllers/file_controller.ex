@@ -1,15 +1,31 @@
 defmodule DustWeb.FileController do
   use DustWeb, :controller
+  use Oaskit.Controller
 
   alias Dust.{Files, Stores, Sync}
 
-  @doc """
-  Download a blob by its content hash.
+  operation :show,
+    summary: "Download a blob by content hash",
+    description:
+      "Authenticates via Bearer token. Returns raw file content. Only serves blobs referenced by the token's store.",
+    tags: ["Files"],
+    parameters: [
+      hash: [in: :path, schema: %{type: :string}, required: true]
+    ],
+    responses: [
+      ok: [
+        description: "Blob content (raw bytes)",
+        content: %{"application/octet-stream" => %{schema: %{type: :string, format: :binary}}}
+      ],
+      unauthorized:
+        {%{type: :object, properties: %{error: %{type: :string}}}, description: "Invalid token"},
+      forbidden:
+        {%{type: :object, properties: %{error: %{type: :string}}},
+         description: "Token cannot read this blob"},
+      not_found:
+        {%{type: :object, properties: %{error: %{type: :string}}}, description: "Blob not found"}
+    ]
 
-  Authenticates via Bearer token. Returns the raw file content with
-  the correct content_type header. Only serves files referenced by
-  the token's store.
-  """
   def show(conn, %{"hash" => hash}) do
     with {:ok, store_token} <- authenticate(conn),
          true <- Stores.StoreToken.can_read?(store_token),
