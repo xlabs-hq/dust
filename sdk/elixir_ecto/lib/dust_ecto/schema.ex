@@ -75,6 +75,13 @@ defmodule DustEcto.Schema do
       def __dust_prefix__, do: unquote(prefix)
       def __dust_mode__, do: unquote(mode)
       def __dust_required_fields__, do: unquote(required)
+
+      @doc """
+      All field names declared in `embedded_schema`, including the
+      `:slug` primary key. Used by `DustEcto.Repo` for read-time
+      validation and flat-mode writes.
+      """
+      def __dust_field_names__, do: __schema__(:fields)
     end
   end
 

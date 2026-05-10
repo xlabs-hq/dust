@@ -321,6 +321,15 @@ defmodule DustEcto.Transport.HTTP do
      )}
   end
 
+  defp translate_error({:ok, %{status: status, body: body}}) when status >= 400 and status < 500,
+    do: {:error, Error.new(:invalid_params, %{status: status, body: body}, retryable?: false)}
+
+  defp translate_error({:ok, %{status: status, body: body}}) when status >= 500,
+    do: {:error, Error.new(:http, %{status: status, body: body}, retryable?: true)}
+
+  defp translate_error({:error, exception}),
+    do: {:error, Error.new(:network, exception, retryable?: true)}
+
   # Req represents headers as either {k, v} tuples or {k, [v, ...]} lists
   # depending on version; pull a single scalar out either way.
   defp header_value(headers, name) when is_list(headers) do
@@ -346,13 +355,4 @@ defmodule DustEcto.Transport.HTTP do
   end
 
   defp header_value(_, _), do: nil
-
-  defp translate_error({:ok, %{status: status, body: body}}) when status >= 400 and status < 500,
-    do: {:error, Error.new(:invalid_params, %{status: status, body: body}, retryable?: false)}
-
-  defp translate_error({:ok, %{status: status, body: body}}) when status >= 500,
-    do: {:error, Error.new(:http, %{status: status, body: body}, retryable?: true)}
-
-  defp translate_error({:error, exception}),
-    do: {:error, Error.new(:network, exception, retryable?: true)}
 end
