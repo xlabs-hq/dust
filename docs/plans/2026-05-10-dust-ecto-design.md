@@ -1,9 +1,26 @@
 # dust_ecto — design
 
-**Status:** validated, pre-implementation
-**Date:** 2026-05-10
+**Status:** revised, pre-implementation
+**Date:** 2026-05-10 (revision 1)
 **Authors:** James Tippett (with Claude)
 **Related:** `docs/dust-trial-notes.md` (xlabs-io-phx) — the spec we built this from
+
+## Revision history
+
+- **r1 (2026-05-10).** External review surfaced ten substantive corrections —
+  most importantly that several items the design treated as straightforward
+  in the SDK (subtree reads, subtree cache invalidation, public unsubscribe,
+  committed-event delivery for own writes) don't yet exist. Pre-work list
+  expanded from 3 to 7 SDK items, all blocking v1. Schema macro grew an
+  explicit `required:` opt because Ecto's `validate_required` is a runtime
+  check with no introspectable metadata. Insert/update semantics
+  re-described as "validated upserts" — Dust writes are upserts at the
+  wire level and there's no honest way to fake `INSERT … ON CONFLICT FAIL`
+  without subtree CAS. Other corrections: transport detection via explicit
+  config (the `Process.whereis(Dust.Supervisor)` heuristic is wrong because
+  `use Dust` names the supervisor as the facade module), `delete_all`
+  returns `store_seq` not count, `embedded_dump` quirks documented, HEAD
+  endpoint demoted to optimization with a documented fallback.
 
 ## Why
 
@@ -37,7 +54,10 @@ This doc is the design for that package.
 - Separate hex package: `dust_ecto`
 - Lives at `sdk/elixir_ecto/` in this monorepo
 - Depends on `:dust`, `:ecto`, `:req`
-- No `:jason` dep — uses stdlib `JSON` (Elixir 1.18+)
+- Requires **Elixir `~> 1.18`** so it can use stdlib `JSON`. The `:dust`
+  SDK currently targets `~> 1.17` and will continue to use Jason until
+  the SDK itself bumps. dust_ecto's higher floor is acceptable because
+  it's a new package; users not on 1.18 can stay on the SDK alone.
 - Public modules: `DustEcto.Schema`, `DustEcto.Repo`, `DustEcto.Error`
 - Naming follows `phoenix_ecto` / `ecto_sql` convention
 
@@ -58,7 +78,10 @@ sdk/elixir_ecto/
 
 ```elixir
 defmodule MyApp.Reading.Link do
-  use DustEcto.Schema, prefix: "links"   # mode: :map (default)
+  use DustEcto.Schema,
+    prefix: "links",                # required
+    required: [:slug, :title, :url] # required-fields metadata
+    # mode: :map                    # default
 
   embedded_schema do
     field :title, :string
@@ -70,13 +93,13 @@ defmodule MyApp.Reading.Link do
   def changeset(link, attrs) do
     link
     |> cast(attrs, [:slug, :title, :url, :note, :added_at])
-    |> validate_required([:slug, :title, :url])
+    |> validate_required(__dust_required_fields__())
     |> validate_dust_slug(:slug)
   end
 end
 ```
 
-The `use DustEcto.Schema, prefix: "links"` macro:
+The `use DustEcto.Schema, ...` macro:
 
 1. Calls `use Ecto.Schema` + `import Ecto.Changeset`
 2. Sets `@primary_key {:slug, :string, autogenerate: false}`
@@ -84,9 +107,15 @@ The `use DustEcto.Schema, prefix: "links"` macro:
 4. Defines `__dust_mode__/0` returning `:map` or `:flat`
 5. Defines `__dust_field_names__/0` for fast field iteration without
    re-asking Ecto reflection
-6. Provides `validate_dust_slug/2` — rejects empty, dot-bearing, or
+6. Defines `__dust_required_fields__/0` from the `required:` opt.
+   **This is necessary** — Ecto's `validate_required` is a runtime
+   check with no introspectable metadata, so dust_ecto can't recover
+   the required-fields list from the schema otherwise. The same list
+   is used by the user's changeset *and* by `Repo.all`'s read-time
+   guard, so they stay in sync.
+7. Provides `validate_dust_slug/2` — rejects empty, dot-bearing, or
    slash-bearing slugs (closes trial gap #10)
-7. Reserves `__dust_store__/0` for v1.1+ multi-store support; v1
+8. Reserves `__dust_store__/0` for v1.1+ multi-store support; v1
    pulls store name from `Application.fetch_env!(:dust_ecto, :store)`
 
 Two opinionated exclusions:
@@ -114,6 +143,21 @@ Repo.update(cs)  # cs.changes = %{note: "new"}
   → PUT links.foo  body: {"title":"x","url":"y","note":"new"}
      (1 write, replaces whole subtree)
 ```
+
+**`Ecto.embedded_dump/2` quirks we explicitly handle:**
+
+- **`:slug` is always dropped from the body.** It's the primary key,
+  encoded in the URL path; never serialized in the value. Without
+  this filter, every record would have a redundant `"slug"` field
+  that gets flattened to `<prefix>.<slug>.slug`, polluting the
+  store.
+- **`nil` field values are emitted as JSON `null` in the body**,
+  not omitted. This matches JSON semantics and Phoenix changeset
+  behavior. Storing `null` is a deliberate value, not a deletion.
+  Users who want a field gone delete-and-recreate the record.
+- **Atom keys are fine.** Stdlib `JSON.encode!/1` handles
+  atom-keyed maps natively. (This is the failure mode that hit
+  xlabs's hand-rolled `write_struct` — gap #4.)
 
 Atomic. Simple. No orphans. **Trade-off:** subtree CAS isn't yet
 supported by the server (capver 2 is leaf-only), so two concurrent
@@ -152,14 +196,32 @@ DustEcto.Repo.exists?(Link, "slug")  # true | false
   No silent truncation (trial gap #8).
 - **`stream/1`** is `Stream.resource`-shaped, lazy.
 - **`exists?/2`** is the cheapest existence probe available:
-  - SDK mode: in-process cache lookup, sub-ms.
-  - HTTP mode: a `HEAD /api/.../entries/<prefix>/<slug>` round-trip.
-    No body. (Requires the upstream HEAD endpoint to ship — see
-    "Pre-work in :dust" below.)
-- **Required-fields guard on read.** A record missing required fields
-  is silently dropped from `all/1`, but a `Logger.warning` lists the
-  slug, missing fields, and unrecognized fields so devs can grep
-  their logs (trial gap #5).
+  - SDK mode: in-process cache lookup, sub-ms (after the SDK pre-work
+    item D — subtree-aware reads — lands).
+  - HTTP mode: tries `HEAD /api/.../entries/<prefix>/<slug>` first
+    (200 / 404 / 405). On 405 (no HEAD route on this server version),
+    falls back to
+    `GET /entries?pattern=<prefix>.<slug>.**&select=keys&limit=1`.
+    The HEAD route is a server-side polish item, not blocking — the
+    fallback works fine.
+- **Required-fields guard on read.** A record missing any field listed
+  in `__dust_required_fields__/0` is silently dropped from `all/1`,
+  but a `Logger.warning` lists the slug, missing fields, and unrecognized
+  fields so devs can grep their logs (trial gap #5). The required list
+  is the same one the user's changeset uses, so guard and validation
+  stay in sync.
+- **`Repo.get/2` in map mode** depends on SDK pre-work item D. After
+  the server flattens a map-mode write, the entries live at
+  `<prefix>.<slug>.<field>` — there is no exact-path leaf at
+  `<prefix>.<slug>`. The SDK's current `Dust.get/2` and `Dust.entry/2`
+  both do exact-path lookups only; in HTTP mode the server does
+  subtree assembly automatically (`sync.ex:111` `assemble_subtree`),
+  but the SDK doesn't. Without the SDK fix, SDK-mode reads of map-mode
+  records would always miss. Pre-work item D fixes this in the SDK.
+  Until it lands, dust_ecto's SDK transport can fall back to
+  `Dust.enum(store, "<prefix>.<slug>.**")` and assemble client-side,
+  but that's slower and has different cache-coherence properties — so
+  D is blocking, not just polish.
 - **No `get_by/2`.** Implies secondary indexes; Dust has none.
 
 ## Repo — writes
@@ -173,18 +235,38 @@ DustEcto.Repo.delete(Link, "slug")     # convenience
 DustEcto.Repo.delete_all(Link)         # nukes the whole prefix
 ```
 
-All return `{:ok, struct}` / `{:ok, count}` for `delete_all`, or
+All return `{:ok, struct}` / `{:ok, %{store_seq: n}}` for `delete_all`, or
 `{:error, %Ecto.Changeset{}}` / `{:error, %DustEcto.Error{}}`.
 
-- **Insert / update — map mode.** One PUT. `Ecto.embedded_dump(struct,
-  :json)` → atom-keyed map → `JSON.encode!/1` (which handles atoms).
-  Trial gap #4 closed by always counting writes; if zero,
-  `{:error, :nothing_to_write}`.
+**Honest contract: writes are upserts.** Dust has no
+"insert-only-if-absent" wire op, no subtree CAS for atomic
+read-modify-write, and no batch-write primitive yet. We don't paper
+over this — `Repo.insert` and `Repo.update` are both **validated upserts**:
+they run the changeset, then write. There is no "did the record
+already exist" check. If you want INSERT-or-fail semantics, do a
+`Repo.exists?/2` check before `Repo.insert` and accept that another
+writer can race you in between. If you need that race closed,
+`batch_write` upstream (server pre-work) plus subtree CAS upstream
+are the lever.
+
+- **Insert / update — map mode.** One PUT. Drop `:slug` from the
+  dumped struct (it's encoded in the URL path). `nil` fields emit
+  as JSON `null`. `Ecto.embedded_dump(struct, :json)` → atom-keyed
+  map → `JSON.encode!/1` (which handles atoms). Trial gap #4
+  closed by always counting writes; if zero, `{:error, :nothing_to_write}`.
 - **Insert / update — flat mode.** N PUTs, sequential, deterministic
-  ordering. Same zero-write guard.
-- **`delete/1`.** Single `DELETE /entries/<prefix>/<slug>` — the new
+  ordering. Same `:slug` exclusion. `nil` is written as JSON `null`
+  at the field's path (consistent with map mode); users wanting a
+  field gone delete-and-recreate the whole record. Same zero-write
+  guard.
+- **`delete/1`.** Single `DELETE /entries/<prefix>/<slug>` — the
   endpoint shipped at commit `ac47fbb` clears subtrees in one call.
-- **`delete_all/1`.** Single `DELETE /entries/<prefix>`.
+  In SDK mode, requires pre-work item E so the local cache also
+  drops descendants on the delete event.
+- **`delete_all/1`.** Single `DELETE /entries/<prefix>`. Returns
+  `{:ok, %{store_seq: n}}` — the server's DELETE endpoint reports
+  the post-delete `store_seq`, not a count of removed rows. Returning
+  a count would require a pre-list, which is expensive and race-prone.
 - **No `insert_all`.** Server's `entries.batch` endpoint is read-only;
   a write-batch primitive is upstream pre-work (see Section "Server
   pre-work").
@@ -212,8 +294,21 @@ per-subscriber persistent state. We don't.
 **Flat mode** emits one upsert event per leaf; predictable, faithful,
 and the user's idempotent handler doesn't care.
 
-**SDK mode** delegates to `Dust.on(store, "<prefix>.**", callback)`.
-Reassembly happens in our wrapper before calling the user's callback.
+**SDK mode** delegates to `Dust.on(store, "<prefix>.**", callback,
+mode: :committed)`. Reassembly happens in our wrapper before calling
+the user's callback. Two SDK pre-work items are blocking here:
+
+- **Pre-work F** — public `Dust.off/1` (or `Dust.unsubscribe/1`) so
+  `DustEcto.Repo.unsubscribe/1` can actually unhook a callback. The
+  current SDK has no public way to remove a subscription.
+- **Pre-work G** — a `mode: :committed | :all | :optimistic` opt on
+  `Dust.on/4`. Today the SDK fires optimistic `committed: false`
+  events for own writes (`sync_engine.ex:752`) and *suppresses* the
+  committed echo of own writes (`sync_engine.ex:666` —
+  `unless was_pending`). For dust_ecto's contract, the user wants
+  exactly one event per write that carries `store_seq`. Default of
+  `:all` preserves today's behavior; dust_ecto opts into
+  `:committed`.
 
 **HTTP mode** returns `{:error, :not_supported}`. We do not fake
 realtime via polling.
@@ -223,13 +318,39 @@ provenance — receives `%{op:, path:, value:, store_seq:}` exactly.
 
 ## Transport — auto-detect
 
-A behaviour with two implementations, picked at call time:
+A behaviour with two implementations. Picked at call time, but
+**not** by checking `Process.whereis(Dust.Supervisor)` — the
+recommended `use Dust, otp_app: ...` pattern names the supervisor
+as the **facade module** (e.g. `MyApp.Dust`), not `Dust.Supervisor`.
+A naive whereis check would always miss in real apps.
+
+Detection in priority order:
+
+1. **Explicit config** wins. `config :dust_ecto, dust_facade: MyApp.Dust`
+   tells dust_ecto exactly which facade to call into. This is the
+   recommended setup.
+2. **Registry probe** as fallback. dust_ecto looks up the configured
+   store in `Dust.SyncEngineRegistry`; if a SyncEngine is registered
+   for that store, SDK mode is in play.
+3. **Otherwise** fall through to HTTP mode.
 
 ```elixir
 defp transport do
-  if Process.whereis(Dust.Supervisor),
-    do: DustEcto.Transport.SDK,
-    else: DustEcto.Transport.HTTP
+  cond do
+    facade = Application.get_env(:dust_ecto, :dust_facade) ->
+      {DustEcto.Transport.SDK, facade}
+
+    sdk_running?() ->
+      {DustEcto.Transport.SDK, Dust}
+
+    true ->
+      {DustEcto.Transport.HTTP, nil}
+  end
+end
+
+defp sdk_running? do
+  store = Application.fetch_env!(:dust_ecto, :store)
+  Registry.lookup(Dust.SyncEngineRegistry, store) != []
 end
 ```
 
@@ -267,20 +388,36 @@ No supervisor child. dust_ecto is stateless in HTTP mode.
 ### SDK mode
 
 ```elixir
+# config/runtime.exs
+config :myapp, MyApp.Dust,
+  url: "wss://dustlayer.io/ws/sync",
+  token: System.get_env("DUST_TOKEN"),
+  stores: [System.get_env("DUST_STORE")],
+  cache: {Dust.Cache.Memory, []}
+
+config :dust_ecto,
+  store: System.get_env("DUST_STORE"),
+  dust_facade: MyApp.Dust
+
+# lib/myapp.ex
+defmodule MyApp.Dust do
+  use Dust, otp_app: :myapp
+end
+
 # lib/myapp/application.ex
 children = [
-  {Dust.Supervisor,
-    url: "wss://dustlayer.io/ws/sync",
-    token: System.get_env("DUST_TOKEN"),
-    stores: [System.get_env("DUST_STORE")],
-    cache: {Dust.Cache.Memory, []}},
+  MyApp.Dust,
   ...
 ]
 ```
 
-`config :dust_ecto, :store` still applies — that's the default store.
-v1 is single-store; v1.1+ adds `__dust_store__/0` reflection on the
+`config :dust_ecto, :store` is the default store name. v1 is
+single-store; v1.1+ adds `__dust_store__/0` reflection on the
 schema for multi-store. Token stays a single global value.
+
+`config :dust_ecto, :dust_facade` lets dust_ecto find the SDK at
+its actual registered name. Without this, dust_ecto falls back to
+the registry probe described above.
 
 ## Error model
 
@@ -317,17 +454,20 @@ Same shape as `Ecto.Repo` events so existing dashboards work.
 
 ## Pre-work in `:dust` (blocks dust_ecto v1)
 
-These three SDK changes land **before** dust_ecto v1, because the
-contract dust_ecto exposes (`{:ok, struct}` = durable) cannot hold
-without them:
+Seven SDK changes land **before** dust_ecto v1. Each is a focused
+PR against the SDK, mostly ~50–150 LOC.
 
 | # | Item | Why |
 |---|---|---|
-| A | Sync write semantics for all write ops — `delete/3+opts`, `merge/4`, `increment/4`, `add/4`, `remove/4` need the deferred-reply path that `put/4` already has | `Repo.delete(struct)` returning `{:ok, _}` must mean server-acked |
-| B | ETS-backed outbox keyed by `client_op_id`, persisted across `Dust.Connection` process restarts, with on-startup replay | "I wrote it" stays true even through a connection-process crash |
-| C | Connection observability — `Dust.Connection.connected?/0` and `:telemetry.execute([:dust, :connection, :state_change], ...)` | LiveView users need to react to disconnects |
+| A | **Sync write semantics for all write ops.** Today only `Dust.put/4` (4-arg variant) defers reply until server ack. `delete`, `merge`, `increment`, `add`, `remove` all reply `:ok` immediately. Add the deferred-reply path to all of them, gated on an `opts` arg the same way. | `Repo.delete(struct)` returning `{:ok, _}` must mean server-acked, not "queued in the optimistic cache." |
+| B | **ETS-backed outbox** keyed by `client_op_id`, persisted across `Dust.Connection` process restarts, with on-startup replay. | "I wrote it" stays true even through a connection-process crash. The current outbox lives in process state and dies with the process. |
+| C | **Connection observability** — `Dust.Connection.connected?/0` plus `:telemetry.execute([:dust, :connection, :state_change], %{}, %{from:, to:})` on every transition. | LiveView users need to react to disconnects; dust_ecto needs a clean probe for HTTP-fallback decisions. |
+| D | **SDK subtree-aware reads.** `Dust.get/2` and `Dust.entry/2` are exact-path-only today (`sync_engine.ex:191`, `sync_engine.ex:457`). The server already does subtree assembly server-side (`sync.ex:111` `assemble_subtree`); the SDK doesn't. After a map-mode write, the entries live at `<prefix>.<slug>.<field>` — no exact-path leaf at `<prefix>.<slug>`. SDK reads must fall back to assembling from descendants. | dust_ecto `Repo.get(Link, "foo")` in SDK mode would always return `:not_found` without this. Map mode fundamentally requires it. |
+| E | **SDK subtree cache invalidation.** Today `cache.delete(target, store, path)` removes only the exact path (`cache/memory.ex:135`, `cache/ecto.ex:123`). The server's DELETE endpoint clears descendants, but the SDK cache and the server-event handler at `sync_engine.ex:633` both call exact-path delete. After `Repo.delete(record)` the descendants would linger in cache, returning stale data. | dust_ecto `Repo.delete` and `Repo.delete_all` both clear subtrees; the local view has to follow. |
+| F | **Public unsubscribe API.** `Dust.on/4` returns a ref but the SDK has no `Dust.off/1` or `Dust.unsubscribe/1`. dust_ecto exposes `Repo.unsubscribe/1`; without an SDK-side counterpart, the underlying registration leaks. | Subscriptions are first-class in the dust_ecto API; we can't ship them without a removal path. |
+| G | **`mode:` opt on `Dust.on/4`** — `:committed | :all | :optimistic`. Today the SDK fires optimistic `committed: false` events for own writes (`sync_engine.ex:752`) and *suppresses* the committed echo of own writes (`sync_engine.ex:666`). dust_ecto's `:upserted`/`:deleted` events need exactly one delivery per write, with `store_seq`, even for own writes. Default `:all` preserves today's behavior. | Without it, dust_ecto can't deliver `{:upserted, %Link{}}` reliably with a `store_seq` for own writes. |
 
-Each is a focused PR against the SDK, ~50–150 LOC.
+A and B are the original three; D–G surfaced from the r1 review.
 
 ## Server pre-work (parallel; not blocking dust_ecto v1)
 
@@ -335,11 +475,12 @@ These improve the *raw* HTTP API for any client (not just dust_ecto).
 Tracked separately:
 
 - **HEAD /api/.../entries/{path}** — cheap exists probe. S3-shaped.
-  Removes the `select=keys&limit=1` workaround, makes
-  `Repo.exists?` cleaner. Bumped to "ship alongside dust_ecto."
+  Optional optimization for `Repo.exists?`; HTTP transport falls
+  back to `?pattern=…&select=keys&limit=1` when HEAD is unavailable.
+  Not blocking v1.
 - **POST /api/.../entries/batch_write** — atomic multi-key write.
   Closes trial gap #2 at the source. Would let dust_ecto add
-  `Repo.insert_all` and `Repo.transaction`.
+  `Repo.insert_all` and `Repo.transaction`. Not blocking v1.
 - Several smaller error-message and docs polish items
   (`select=prefixes` clarity, empty-body hint, `/subscribe` stub).
 
