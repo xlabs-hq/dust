@@ -44,6 +44,16 @@ defmodule Dust.Cache.Memory do
   end
 
   @impl Dust.Cache
+  def delete_subtree(pid, store, path) do
+    GenServer.call(pid, {:delete_subtree, store, path})
+  end
+
+  @impl Dust.Cache
+  def read_subtree(pid, store, path) do
+    GenServer.call(pid, {:read_subtree, store, path})
+  end
+
+  @impl Dust.Cache
   def last_seq(pid, store) do
     GenServer.call(pid, {:last_seq, store})
   end
@@ -135,6 +145,34 @@ defmodule Dust.Cache.Memory do
   def handle_call({:delete, store, path}, _from, state) do
     state = update_in(state.entries, &Map.delete(&1, {store, path}))
     {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_call({:delete_subtree, store, path}, _from, state) do
+    prefix = path <> "."
+
+    {removed, kept} =
+      Enum.split_with(state.entries, fn {{s, p}, _} ->
+        s == store and (p == path or String.starts_with?(p, prefix))
+      end)
+
+    state = %{state | entries: Map.new(kept)}
+    {:reply, length(removed), state}
+  end
+
+  @impl true
+  def handle_call({:read_subtree, store, path}, _from, state) do
+    prefix = path <> "."
+
+    rows =
+      state.entries
+      |> Enum.filter(fn {{s, p}, _} ->
+        s == store and (p == path or String.starts_with?(p, prefix))
+      end)
+      |> Enum.map(fn {{_s, p}, {value, type, seq}} -> {p, value, type, seq} end)
+      |> Enum.sort_by(fn {p, _, _, _} -> p end)
+
+    {:reply, rows, state}
   end
 
   @impl true

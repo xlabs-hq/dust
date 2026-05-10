@@ -131,6 +131,50 @@ if Code.ensure_loaded?(Ecto.Query) do
     end
 
     @impl Dust.Cache
+    def delete_subtree(repo, store, path) do
+      prefix_pattern = like_escape(path) <> ".%"
+
+      query =
+        from(c in CacheEntry,
+          where:
+            c.store == ^store and
+              (c.path == ^path or like(c.path, ^prefix_pattern)) and
+              c.path != ^@seq_sentinel_path
+        )
+
+      {removed, _} = repo.delete_all(query)
+      removed
+    end
+
+    @impl Dust.Cache
+    def read_subtree(repo, store, path) do
+      prefix_pattern = like_escape(path) <> ".%"
+
+      query =
+        from(c in CacheEntry,
+          where:
+            c.store == ^store and
+              (c.path == ^path or like(c.path, ^prefix_pattern)) and
+              c.path != ^@seq_sentinel_path,
+          order_by: c.path,
+          select: {c.path, c.value, c.type, c.seq}
+        )
+
+      repo.all(query)
+      |> Enum.map(fn {p, json, type, seq} -> {p, Jason.decode!(json), type, seq} end)
+    end
+
+    # Escape `\`, `%`, `_` so a literal path can be used safely as a LIKE
+    # prefix. SQLite uses backslash by default; ecto's like/2 also accepts
+    # the operator but escaping is the caller's job.
+    defp like_escape(path) do
+      path
+      |> String.replace("\\", "\\\\")
+      |> String.replace("%", "\\%")
+      |> String.replace("_", "\\_")
+    end
+
+    @impl Dust.Cache
     def last_seq(repo, store) do
       query =
         from(c in CacheEntry,

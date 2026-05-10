@@ -220,8 +220,14 @@ defmodule Dust.SyncEngine do
   def handle_call({:get, path}, _from, state) do
     result =
       case state.cache.read(state.cache_target, state.store, path) do
-        {:ok, value} -> {:ok, unwrap_value(value, state)}
-        other -> other
+        {:ok, value} ->
+          {:ok, unwrap_value(value, state)}
+
+        :miss ->
+          case assemble_subtree_value(state, path) do
+            nil -> :miss
+            value -> {:ok, value}
+          end
       end
 
     {:reply, result, state}
@@ -422,7 +428,10 @@ defmodule Dust.SyncEngine do
           {:ok, Dust.Entry.new(path: path, value: value, type: type, revision: seq)}
 
         :miss ->
-          {:error, :not_found}
+          case assemble_subtree_entry(state, path) do
+            nil -> {:error, :not_found}
+            entry -> {:ok, entry}
+          end
       end
 
     {:reply, reply, state}
@@ -593,24 +602,32 @@ defmodule Dust.SyncEngine do
     op = String.to_existing_atom(event["op"])
     value = event["value"]
 
-    # Update cache with canonical state
+    # Update cache with canonical state. Plain-map :set ops flatten to leaf
+    # entries (matching server storage); :delete clears the path AND every
+    # descendant so subtree deletes propagate to local subscribers.
     case op do
       :set ->
-        state.cache.write(state.cache_target, state.store, path, value, detect_type(value), store_seq)
+        apply_set_to_cache(state, path, value, detect_type(value), store_seq)
+
       :delete ->
-        state.cache.delete(state.cache_target, state.store, path)
+        _ = state.cache.delete_subtree(state.cache_target, state.store, path)
+
       :merge when is_map(value) ->
         Enum.each(value, fn {key, v} ->
           child_path = "#{path}.#{key}"
-          state.cache.write(state.cache_target, state.store, child_path, v, detect_type(v), store_seq)
+          apply_set_to_cache(state, child_path, v, detect_type(v), store_seq)
         end)
+
       :increment ->
         # Server sends the materialized value (not the delta) for cache reconciliation
         state.cache.write(state.cache_target, state.store, path, value, "counter", store_seq)
+
       :add ->
         state.cache.write(state.cache_target, state.store, path, value, "set", store_seq)
+
       :remove ->
         state.cache.write(state.cache_target, state.store, path, value, "set", store_seq)
+
       :put_file ->
         state.cache.write(state.cache_target, state.store, path, value, "file", store_seq)
     end
@@ -741,8 +758,9 @@ defmodule Dust.SyncEngine do
     # Save previous value for rollback on rejection
     prev = state.cache.read(state.cache_target, state.store, path)
 
-    # Optimistic local write
-    :ok = state.cache.write(state.cache_target, state.store, path, value, type, 0)
+    # Optimistic local write — canonicalized to match server shape: plain-map
+    # values get flattened to leaf entries, descendants cleared, no root leaf.
+    :ok = apply_set_to_cache(state, path, value, type, 0)
 
     # Fire local callbacks
     dispatch_callbacks(state, path, %{
@@ -772,7 +790,9 @@ defmodule Dust.SyncEngine do
   defp do_delete(path, from, state) do
     client_op_id = generate_op_id()
 
-    state.cache.delete(state.cache_target, state.store, path)
+    # Optimistic delete clears the leaf AND every descendant, matching the
+    # server's DELETE op semantics so the cache stays consistent.
+    _ = state.cache.delete_subtree(state.cache_target, state.store, path)
 
     dispatch_callbacks(state, path, %{
       store: state.store, path: path, op: :delete, value: nil,
@@ -931,6 +951,103 @@ defmodule Dust.SyncEngine do
       _ ->
         nil
     end
+  end
+
+  # --- Subtree assembly + canonicalization ---
+
+  # `Dust.get/2` and `Dust.entry/2` fall back to subtree assembly when the
+  # exact path has no leaf — matching the server's `assemble_subtree`
+  # behaviour. After a map-mode write, leaves live at `<path>.<field>` and
+  # nothing lives at `<path>` itself.
+  defp assemble_subtree_value(state, path) do
+    case state.cache.read_subtree(state.cache_target, state.store, path) do
+      [] ->
+        nil
+
+      rows ->
+        prefix = path <> "."
+
+        Enum.reduce(rows, %{}, fn {p, value, _type, _seq}, acc ->
+          relative = String.replace_prefix(p, prefix, "")
+          if relative == p do
+            # Exact-path row (shouldn't happen since :miss preceded us, but
+            # safe to skip if it does).
+            acc
+          else
+            keys = String.split(relative, ".")
+            put_nested(acc, keys, unwrap_value(value, state))
+          end
+        end)
+    end
+  end
+
+  defp assemble_subtree_entry(state, path) do
+    case state.cache.read_subtree(state.cache_target, state.store, path) do
+      [] ->
+        nil
+
+      rows ->
+        max_seq = rows |> Enum.map(fn {_, _, _, seq} -> seq end) |> Enum.max()
+        value = assemble_subtree_value(state, path)
+        Dust.Entry.new(path: path, value: value, type: "map", revision: max_seq)
+    end
+  end
+
+  defp put_nested(map, [key], value), do: Map.put(map, key, value)
+
+  defp put_nested(map, [key | rest], value) do
+    child = Map.get(map, key, %{})
+    Map.put(map, key, put_nested(child, rest, value))
+  end
+
+  # A typed-value map represents a single value (file ref, decimal,
+  # datetime, etc.), not a record-shaped object. Two cases:
+  #
+  # 1. Any struct (Decimal, DateTime, Dust.FileRef, ...). Structs are
+  #    explicitly typed and must not be flattened — `%Decimal{coef: 5}`
+  #    is one value, not a record.
+  # 2. Maps wearing the canonical `_typed` + `_type` wire shape (used for
+  #    typed values that have already been serialized to the wire).
+  #
+  # Plain object maps (no struct, no _typed/_type) are records and must
+  # flatten to leaves on write to match server canonical form.
+  defp typed_map?(value) when is_struct(value), do: true
+
+  # Mirrors Dust.Sync.ValueCodec.typed_value?/1 on the server. File refs
+  # are recognized by `_type: "file"` alone; other typed wrappers carry
+  # both `_typed` and `_type` keys.
+  defp typed_map?(%{"_type" => "file"}), do: true
+  defp typed_map?(%{_type: "file"}), do: true
+  defp typed_map?(%{"_typed" => _, "_type" => _}), do: true
+  defp typed_map?(%{_typed: _, _type: _}), do: true
+  defp typed_map?(_), do: false
+
+  # Apply a `:set` op to the cache canonically. Plain-map values get
+  # flattened: descendants under `path` are cleared first, then each leaf is
+  # written. Typed values and scalars write at the exact path. Mirrors the
+  # server's `Dust.Sync.Writer.apply_to_entries({:set, ...})` shape so the
+  # cache stays consistent regardless of whether the data arrived from a
+  # local optimistic write or a server event echo.
+  defp apply_set_to_cache(state, path, value, type, seq) do
+    if is_map(value) and not typed_map?(value) do
+      _ = state.cache.delete_subtree(state.cache_target, state.store, path)
+      flatten_into_cache(state, path, value, seq)
+    else
+      :ok = state.cache.write(state.cache_target, state.store, path, value, type, seq)
+    end
+  end
+
+  defp flatten_into_cache(state, base_path, map, seq) when is_map(map) do
+    Enum.each(map, fn {key, value} ->
+      child_path = "#{base_path}.#{key}"
+
+      if is_map(value) and not typed_map?(value) do
+        flatten_into_cache(state, child_path, value, seq)
+      else
+        leaf_type = detect_type(value)
+        :ok = state.cache.write(state.cache_target, state.store, child_path, value, leaf_type, seq)
+      end
+    end)
   end
 
   defp detect_type(%Decimal{}), do: "decimal"

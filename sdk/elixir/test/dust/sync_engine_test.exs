@@ -774,6 +774,114 @@ defmodule Dust.SyncEngineTest do
     end
   end
 
+  describe "subtree reads (assemble_subtree fallback)" do
+    test "get/2 on a subtree path assembles a nested map from descendants" do
+      :ok = SyncEngine.seed_entry("test/store", "links.foo.title", "Foo", "string")
+      :ok = SyncEngine.seed_entry("test/store", "links.foo.url", "https://foo", "string")
+
+      assert {:ok, %{"title" => "Foo", "url" => "https://foo"}} =
+               SyncEngine.get("test/store", "links.foo")
+    end
+
+    test "entry/2 on a subtree returns max-seq across descendants and type=map" do
+      :ok = SyncEngine.seed_entry("test/store", "links.foo.title", "Foo", "string")
+      :ok = SyncEngine.seed_entry("test/store", "links.foo.url", "https://foo", "string")
+      # Bump just one descendant's seq via re-seed.
+      :ok = SyncEngine.set_store_seq("test/store", 7)
+
+      assert {:ok, %Dust.Entry{path: "links.foo", value: %{"title" => "Foo"}, type: "map"}} =
+               SyncEngine.entry("test/store", "links.foo")
+    end
+
+    test "get/2 returns :miss for an empty path with no descendants" do
+      assert :miss = SyncEngine.get("test/store", "no.such.path")
+    end
+
+    test "entry/2 returns {:error, :not_found} for an empty path with no descendants" do
+      assert {:error, :not_found} = SyncEngine.entry("test/store", "no.such.path")
+    end
+
+    test "deeper subtrees nest correctly" do
+      :ok = SyncEngine.seed_entry("test/store", "a.b.c.x", 1, "integer")
+      :ok = SyncEngine.seed_entry("test/store", "a.b.c.y", 2, "integer")
+      :ok = SyncEngine.seed_entry("test/store", "a.b.d", "leaf", "string")
+
+      assert {:ok, %{"b" => %{"c" => %{"x" => 1, "y" => 2}, "d" => "leaf"}}} =
+               SyncEngine.get("test/store", "a")
+    end
+  end
+
+  describe "map-write canonicalization (matches server flatten)" do
+    test "put with a plain map flattens to leaf entries — no root row" do
+      :ok = SyncEngine.put("test/store", "links.foo", %{title: "Foo", url: "https://foo"})
+
+      # Leaves are present individually.
+      assert {:ok, "Foo"} = SyncEngine.get("test/store", "links.foo.title")
+      assert {:ok, "https://foo"} = SyncEngine.get("test/store", "links.foo.url")
+
+      # Reading the root reassembles via subtree fallback.
+      assert {:ok, %{"title" => "Foo", "url" => "https://foo"}} =
+               SyncEngine.get("test/store", "links.foo")
+    end
+
+    test "put replacing a record clears descendants then writes new leaves" do
+      :ok = SyncEngine.put("test/store", "links.foo", %{title: "Foo", note: "old"})
+      assert {:ok, "old"} = SyncEngine.get("test/store", "links.foo.note")
+
+      # Replace with a record that doesn't have :note. Subtree should be cleared.
+      :ok = SyncEngine.put("test/store", "links.foo", %{title: "Foo2", url: "u"})
+
+      assert :miss = SyncEngine.get("test/store", "links.foo.note")
+      assert {:ok, "Foo2"} = SyncEngine.get("test/store", "links.foo.title")
+      assert {:ok, "u"} = SyncEngine.get("test/store", "links.foo.url")
+    end
+
+    test "put with a struct value (typed) writes at the exact path, no flattening" do
+      dt = ~U[2026-05-11 00:00:00Z]
+      :ok = SyncEngine.put("test/store", "events.now", dt)
+
+      assert {:ok, ^dt} = SyncEngine.get("test/store", "events.now")
+      # No bogus descendants got created.
+      assert :miss = SyncEngine.get("test/store", "events.now.year")
+    end
+  end
+
+  describe "subtree cache invalidation" do
+    setup do
+      Process.register(self(), Dust.Connection)
+      :ok
+    end
+
+    test "delete clears the leaf and all descendants from local cache" do
+      :ok = SyncEngine.put("test/store", "links.foo", %{title: "Foo", url: "u"})
+      assert {:ok, "Foo"} = SyncEngine.get("test/store", "links.foo.title")
+
+      :ok = SyncEngine.delete("test/store", "links.foo")
+
+      assert :miss = SyncEngine.get("test/store", "links.foo")
+      assert :miss = SyncEngine.get("test/store", "links.foo.title")
+      assert :miss = SyncEngine.get("test/store", "links.foo.url")
+    end
+
+    test "server-event :delete also clears descendants" do
+      :ok = SyncEngine.put("test/store", "links.foo", %{title: "Foo", url: "u"})
+      # Drain the optimistic send so the assertions below aren't confused by it.
+      assert_receive {:send_write, "test/store", _}, 200
+
+      SyncEngine.handle_server_event("test/store", %{
+        "store_seq" => 99,
+        "op" => "delete",
+        "path" => "links.foo",
+        "value" => nil,
+        "device_id" => "other-dev",
+        "client_op_id" => "external"
+      })
+
+      assert :miss = SyncEngine.get("test/store", "links.foo.title")
+      assert :miss = SyncEngine.get("test/store", "links.foo.url")
+    end
+  end
+
   describe "Dust.on/4 :mode opt" do
     setup do
       Process.register(self(), Dust.Connection)
