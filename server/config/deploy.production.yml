@@ -44,11 +44,13 @@ env:
     ADMIN_PORT: "7766"
     STORE_DATA_DIR: "/app/data/stores"
     DB_SSL: "true"
+    AUTHKIT_BASE_URL: https://ideal-precipice-83.authkit.app
   secret:
     - SECRET_KEY_BASE
     - DATABASE_URL
     - WORKOS_API_KEY
     - WORKOS_CLIENT_ID
+    - WORKOS_MCP_CLIENT_ID
 
 ssh:
   user: root
