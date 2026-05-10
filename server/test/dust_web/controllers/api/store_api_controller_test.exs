@@ -76,12 +76,30 @@ defmodule DustWeb.Api.StoreApiControllerTest do
   end
 
   describe "token API" do
-    test "lists tokens", %{conn: conn, rw_token: token} do
+    test "lists tokens scoped to caller's store",
+         %{conn: conn, rw_token: token, store: store, org: org} do
+      # A token in a sibling store within the same org — must NOT appear
+      org = org |> Ecto.Changeset.change(plan: "pro") |> Dust.Repo.update!()
+      {:ok, sibling_store} = Stores.create_store(org, %{name: "sibling-list"})
+
+      {:ok, _sibling_token} =
+        Stores.create_store_token(sibling_store, %{
+          name: "sibling-tok",
+          read: true,
+          created_by_id: token.created_by_id
+        })
+
       conn = conn |> api_conn(token) |> get("/api/tokens")
 
       assert conn.status == 200
       body = json_response(conn, 200)
-      assert length(body["tokens"]) >= 1
+      store_names = Enum.map(body["tokens"], & &1["store_name"]) |> Enum.uniq()
+      assert store_names == [store.name]
+    end
+
+    test "list rejects read-only tokens with 403", %{conn: conn, ro_token: ro_token} do
+      conn = conn |> api_conn(ro_token) |> get("/api/tokens")
+      assert conn.status == 403
     end
 
     test "creates a token", %{conn: conn, rw_token: token, store: store} do

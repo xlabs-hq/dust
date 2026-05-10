@@ -16,7 +16,9 @@ defmodule DustWeb.Api.TokenApiController do
 
   operation :index,
     operation_id: "tokens.list",
-    summary: "List API tokens for the current organization",
+    summary: "List API tokens for the calling token's store",
+    description:
+      "Returns tokens scoped to **the calling token's store** only. Cross-store listing requires dashboard access. Requires `write` permission — read tokens cannot enumerate other tokens (an information-disclosure surface).",
     tags: ["Tokens"],
     responses: [
       ok:
@@ -24,17 +26,19 @@ defmodule DustWeb.Api.TokenApiController do
            type: :object,
            properties: %{tokens: %{type: :array, items: @token_ref}},
            required: [:tokens]
-         }, description: "List of tokens"},
+         }, description: "List of tokens scoped to the caller's store"},
       unauthorized: @unauthorized,
       forbidden: @forbidden,
       too_many_requests: @rate_limited
     ]
 
   def index(conn, _params) do
-    org = conn.assigns.organization
-    tokens = Stores.list_org_tokens(org)
+    store_token = conn.assigns.store_token
 
-    json(conn, %{tokens: Enum.map(tokens, &serialize_token/1)})
+    with :ok <- verify_write_permission(store_token) do
+      tokens = Stores.list_store_tokens(store_token.store_id)
+      json(conn, %{tokens: Enum.map(tokens, &serialize_token/1)})
+    end
   end
 
   operation :create,
@@ -104,6 +108,10 @@ defmodule DustWeb.Api.TokenApiController do
     end
   end
 
+  def create(_conn, _params) do
+    {:error, {:invalid_params, "store_name and name are required"}}
+  end
+
   # Restrict cross-store token creation. The calling token must be
   # scoped to the same store as the one it's creating tokens for.
   defp verify_same_store(store_token, target_store_name) do
@@ -111,10 +119,6 @@ defmodule DustWeb.Api.TokenApiController do
       ^target_store_name -> :ok
       _ -> {:error, :forbidden}
     end
-  end
-
-  def create(_conn, _params) do
-    {:error, {:invalid_params, "store_name and name are required"}}
   end
 
   defp create_token(conn, store, store_token, store_name, name, params) do

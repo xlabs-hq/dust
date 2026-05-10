@@ -10,7 +10,6 @@ defmodule DustWeb.Api.StoreApiController do
   @store_ref Refs.schema("Store")
   @unauthorized Refs.unauthorized()
   @forbidden Refs.forbidden()
-  @bad_request Refs.bad_request()
   @rate_limited Refs.rate_limited()
 
   operation :index,
@@ -57,52 +56,27 @@ defmodule DustWeb.Api.StoreApiController do
 
   operation :create,
     operation_id: "stores.create",
-    summary: "Create a new store (deprecated for store-scoped tokens)",
+    summary: "Disabled — create stores via the dashboard",
     description: """
-    **Not available with store-scoped tokens.** Returns `403` —
-    store creation is dashboard-only in v0.1, since store-scoped
-    tokens have no authority to operate outside their own store.
-    Granular org-admin tokens (which will re-enable this endpoint
-    over the API) are on the roadmap.
+    Always returns `403`. Store-scoped API tokens have no authority
+    to create new stores; until org-admin tokens ship, store
+    creation is dashboard-only.
 
-    The endpoint stays in the spec so the contract is explicit, but
-    every call returns `403 forbidden` until org-admin tokens ship.
+    The endpoint stays in the spec so the contract is explicit
+    rather than silently 404. When org-admin tokens land, the
+    success/limit/validation response paths will return.
     """,
     tags: ["Stores"],
     deprecated: true,
-    request_body:
-      {%{
-         type: :object,
-         properties: %{
-           name: %{
-             type: :string,
-             description: "Store name. Cannot contain `/`."
-           },
-           ttl: %{
-             type: :integer,
-             description: "Optional TTL in seconds. Store auto-expires after this duration."
-           }
-         },
-         required: [:name],
-         example: %{name: "config"}
-       }, description: "Store creation payload"},
     responses: [
-      created: {@store_ref, description: "Store created"},
-      bad_request: @bad_request,
       unauthorized: @unauthorized,
-      forbidden: @forbidden,
-      payment_required:
+      forbidden:
         {%{
            type: :object,
-           properties: %{
-             error: %{type: :string, enum: ["limit_exceeded"]},
-             limit: %{type: :integer},
-             current: %{type: :integer}
-           },
-           required: [:error]
-         }, description: "Plan limit exceeded"},
-      unprocessable_entity:
-        {Refs.schema("ValidationError"), description: "Validation error"},
+           properties: %{error: %{type: :string, enum: ["forbidden"]}},
+           required: [:error],
+           example: %{error: "forbidden"}
+         }, description: "Always returned in v0.1"},
       too_many_requests: @rate_limited
     ]
 

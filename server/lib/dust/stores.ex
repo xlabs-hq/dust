@@ -155,6 +155,15 @@ defmodule Dust.Stores do
     |> Repo.all()
   end
 
+  def list_store_tokens(store_id) do
+    from(t in StoreToken,
+      where: t.store_id == ^store_id,
+      order_by: [desc: t.inserted_at],
+      preload: [:store]
+    )
+    |> Repo.all()
+  end
+
   def get_token!(id), do: Repo.get!(StoreToken, id)
 
   def revoke_token(token_id) do
