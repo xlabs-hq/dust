@@ -79,6 +79,15 @@ defmodule DustWeb.Router do
     get "/readyz", HealthController, :readyz
   end
 
+  # Dev-only: client-side error reporting from the browser. Logged via
+  # Logger.error so it surfaces in the dev console and tidewave.
+  if Mix.env() == :dev do
+    scope "/_dev", DustWeb do
+      pipe_through :api
+      post "/client_error", DevController, :client_error
+    end
+  end
+
   pipeline :api_auth do
     plug :accepts, ["json"]
     plug DustWeb.Plugs.ApiTokenAuth

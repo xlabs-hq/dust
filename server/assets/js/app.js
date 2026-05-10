@@ -12,6 +12,12 @@ import { createRoot } from "react-dom/client";
 import React from "react";
 import axios from "axios";
 
+if (import.meta.env.DEV) {
+  import("./lib/dev-error-reporter").then(({ installDevErrorReporter }) =>
+    installDevErrorReporter(),
+  );
+}
+
 // Configure axios CSRF for Inertia's internal requests
 const csrfToken = document
   .querySelector('meta[name="csrf-token"]')
