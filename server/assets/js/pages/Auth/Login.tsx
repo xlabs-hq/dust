@@ -294,6 +294,6 @@ function Login({ dev_bypass }: LoginProps) {
   );
 }
 
-Login.layout = [(page: React.ReactNode) => page];
+Login.layout = [({ children }: { children: React.ReactNode }) => children];
 
 export default Login;

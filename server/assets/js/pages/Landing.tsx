@@ -140,6 +140,6 @@ end)
 }
 
 // Opt out of the Shell layout — Landing uses its own full-screen layout
-Landing.layout = [(page: React.ReactNode) => page];
+Landing.layout = [({ children }: { children: React.ReactNode }) => children];
 
 export default Landing;

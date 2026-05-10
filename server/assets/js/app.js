@@ -20,9 +20,22 @@ if (csrfToken) {
   axios.defaults.headers.common["X-CSRF-Token"] = csrfToken;
 }
 
+// Inertia 3 expects a <script data-page=...> for initial page data, but the
+// inertia Elixir adapter (still v2.x) renders <div id="app" data-page="...">.
+// Read it ourselves and pass it explicitly to bridge the two.
+const initialPageEl = document.getElementById("app");
+const initialPage = initialPageEl?.dataset.page
+  ? JSON.parse(initialPageEl.dataset.page)
+  : null;
+
 // Create the Inertia app
 createInertiaApp({
-  title: (title) => (title ? `${title} — Dust` : "Dust"),
+  page: initialPage,
+  title: (title) => {
+    if (!title) return "Dust";
+    if (title === "Dust" || title.includes("— Dust")) return title;
+    return `${title} — Dust`;
+  },
   resolve: async (name) => {
     // Import all page components
     const pages = import.meta.glob("./pages/**/*.tsx", { eager: true });
@@ -40,7 +53,9 @@ createInertiaApp({
     // Pages without an explicit layout get the Shell layout
     if (!component.layout) {
       const { Shell } = await import("./layouts/Shell");
-      component.layout = [(page) => React.createElement(Shell, null, page)];
+      component.layout = [
+        ({ children }) => React.createElement(Shell, null, children),
+      ];
     }
 
     return component;
