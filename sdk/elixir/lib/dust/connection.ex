@@ -18,6 +18,29 @@ defmodule Dust.Connection do
     GenServer.call(pid, :info)
   end
 
+  @doc """
+  Returns `true` if the named Dust.Connection process is currently connected
+  to the Dust server. `false` during initial connect, reconnect backoff, or
+  if no connection process exists by that name.
+
+  Defaults to looking up `Dust.Connection`. Pass an explicit name (or pid)
+  for facade-instance setups where the connection has a different name.
+  """
+  def connected?(name_or_pid \\ __MODULE__) do
+    case GenServer.whereis(name_or_pid) do
+      nil ->
+        false
+
+      pid ->
+        case GenServer.call(pid, :info, 1_000) do
+          %{status: :connected} -> true
+          _ -> false
+        end
+    end
+  catch
+    :exit, _ -> false
+  end
+
   @impl Slipstream
   def init(opts) do
     url = Keyword.fetch!(opts, :url)
@@ -37,6 +60,8 @@ defmodule Dust.Connection do
       |> assign(:url, url)
       |> assign(:status, :disconnected)
       |> assign(:connected_at, nil)
+
+    emit_state_change(nil, :disconnected, socket)
 
     if test_mode? do
       {:ok, socket}
@@ -69,10 +94,14 @@ defmodule Dust.Connection do
   def handle_connect(socket) do
     Logger.info("[Dust.Connection] Connected to server")
 
+    prev_status = socket.assigns.status
+
     socket =
       socket
       |> assign(:status, :connected)
       |> assign(:connected_at, DateTime.utc_now())
+
+    emit_state_change(prev_status, :connected, socket)
 
     stores = socket.assigns.stores
 
@@ -134,7 +163,9 @@ defmodule Dust.Connection do
   def handle_disconnect(reason, socket) do
     Logger.warning("[Dust.Connection] Disconnected: #{inspect(reason)}")
 
+    prev_status = socket.assigns.status
     socket = assign(socket, :status, :reconnecting)
+    emit_state_change(prev_status, :reconnecting, socket, %{reason: reason})
 
     # Update all joined stores to :reconnecting
     Enum.each(socket.assigns.joined_stores, fn store_name ->
@@ -281,6 +312,24 @@ defmodule Dust.Connection do
   end
 
   # -- Private helpers --
+
+  defp emit_state_change(from, to, socket, extra_meta \\ %{}) do
+    metadata =
+      %{
+        from: from,
+        to: to,
+        url: socket.assigns[:url],
+        device_id: socket.assigns[:device_id],
+        stores: socket.assigns[:stores]
+      }
+      |> Map.merge(extra_meta)
+
+    :telemetry.execute(
+      [:dust, :connection, :state_change],
+      %{system_time: System.system_time()},
+      metadata
+    )
+  end
 
   defp maybe_put_if_match(params, %{if_match: value}) when not is_nil(value) do
     Map.put(params, "if_match", value)
