@@ -130,6 +130,119 @@ end)
           </div>
         </section>
 
+        {/* Connect MCP */}
+        <section className="max-w-4xl mx-auto px-6 py-20">
+          <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground text-center mb-3">
+            Talk to your store from ChatGPT, Claude, or Cursor
+          </h2>
+          <p className="text-center text-base text-muted-foreground max-w-2xl mx-auto mb-10 leading-relaxed">
+            Dust is a remote{" "}
+            <a
+              href="https://modelcontextprotocol.io"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline hover:text-foreground"
+            >
+              MCP
+            </a>{" "}
+            server. Connect once, then your assistant can read and update your
+            shared state in plain English — no SDK, no glue code.
+          </p>
+
+          {/* Why */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-12">
+            <div className="rounded-lg border border-border bg-muted/30 p-5">
+              <div className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-2">
+                Update from chat
+              </div>
+              <p className="text-sm leading-relaxed">
+                <span className="italic text-muted-foreground">
+                  &ldquo;Move my deploy flag for europe-west to true.&rdquo;
+                </span>{" "}
+                ChatGPT writes the value; every connected client picks it up
+                instantly.
+              </p>
+            </div>
+            <div className="rounded-lg border border-border bg-muted/30 p-5">
+              <div className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-2">
+                Inspect live state
+              </div>
+              <p className="text-sm leading-relaxed">
+                <span className="italic text-muted-foreground">
+                  &ldquo;Show me every feature flag set in the last hour.&rdquo;
+                </span>{" "}
+                Claude queries the audit log and summarises it.
+              </p>
+            </div>
+            <div className="rounded-lg border border-border bg-muted/30 p-5">
+              <div className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-2">
+                Coordinate agents
+              </div>
+              <p className="text-sm leading-relaxed">
+                <span className="italic text-muted-foreground">
+                  &ldquo;Pick up the next task from the queue.&rdquo;
+                </span>{" "}
+                Multiple agents share scratchpads, queues, and decisions through
+                the same store.
+              </p>
+            </div>
+          </div>
+
+          {/* Server URL */}
+          <div className="rounded-lg border border-border bg-muted/30 p-4 sm:p-6 mb-8">
+            <div className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-2">
+              MCP server URL
+            </div>
+            <code className="font-mono text-base sm:text-lg text-foreground break-all">
+              https://dustlayer.io/mcp
+            </code>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <h3 className="font-semibold mb-3">Claude Desktop / Cursor</h3>
+              <p className="text-sm text-muted-foreground mb-3">
+                Add a remote MCP server in settings, paste the URL above, and
+                sign in via OAuth on first use.
+              </p>
+              <div className="rounded-lg border border-border bg-muted/30 p-4 overflow-x-auto">
+                <pre className="font-mono text-xs leading-relaxed text-foreground">
+                  <code>{`{
+  "mcpServers": {
+    "dust": {
+      "url": "https://dustlayer.io/mcp"
+    }
+  }
+}`}</code>
+                </pre>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="font-semibold mb-3">ChatGPT custom connector</h3>
+              <p className="text-sm text-muted-foreground mb-3">
+                In ChatGPT settings → <em>Connectors</em> → <em>Add MCP</em>,
+                paste the URL. ChatGPT walks you through the OAuth handshake and
+                discovers all 19 tools automatically.
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Headless / scripted access works too — generate a store-scoped
+                Bearer token from your{" "}
+                <a href="/auth/login" className="underline hover:text-foreground">
+                  Tokens
+                </a>{" "}
+                page.
+              </p>
+            </div>
+          </div>
+
+          <p className="text-center text-xs text-muted-foreground mt-10">
+            19 tools available — get · put · merge · enum · increment · log ·
+            rollback · put_file · fetch_file · clone · export · import — and
+            more.
+          </p>
+        </section>
+
         {/* Docs & SDKs */}
         <section className="max-w-4xl mx-auto px-6 py-20">
           <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground text-center mb-12">
