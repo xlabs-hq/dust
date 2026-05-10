@@ -34,6 +34,11 @@ defmodule DustEcto.MixProject do
       {:dust, path: "../elixir"},
       {:ecto, "~> 3.12"},
       {:req, "~> 0.5"},
+      # Plug is only used in tests (Req.Test stubs hitting our HTTP
+      # transport without a real server). It's also a transitive dep of
+      # :dust via Phoenix-shaped tooling, so production users won't see
+      # an extra dep here.
+      {:plug, "~> 1.0", only: [:dev, :test]},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false}
     ]
   end
