@@ -52,13 +52,38 @@ module Dust
         Output.success("OK store_seq=#{seq}")
       end
 
-      # dust delete <store> <path>
+      # dust delete <store> <path> [--if-match N]
       def self.delete(config : Config, args : Array(String))
         Output.require_auth!(config)
-        Output.require_args!(args, 2, "dust delete <store> <path>")
 
-        store, path = args[0], args[1]
-        result = write_op(config, store, "delete", path, nil)
+        positional = [] of String
+        if_match : Int64? = nil
+
+        i = 0
+        while i < args.size
+          case args[i]
+          when "--if-match"
+            if i + 1 < args.size
+              begin
+                if_match = args[i + 1].to_i64
+              rescue ArgumentError
+                Output.error("--if-match requires an integer value")
+              end
+              i += 2
+            else
+              Output.error("--if-match requires a value. Usage: dust delete <store> <path> [--if-match N]")
+              i += 1
+            end
+          else
+            positional << args[i]
+            i += 1
+          end
+        end
+
+        Output.require_args!(positional, 2, "dust delete <store> <path> [--if-match N]")
+
+        store, path = positional[0], positional[1]
+        result = write_op(config, store, "delete", path, nil, if_match: if_match)
         seq = result["response"]["store_seq"]
         Output.success("OK store_seq=#{seq}")
       end

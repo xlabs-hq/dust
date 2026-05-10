@@ -32,10 +32,10 @@ defmodule Dust.Sync do
         value = attrs[:value] || attrs["value"]
 
         cond do
-          op != :set ->
+          op not in [:set, :delete] ->
             {:error, :if_match_unsupported_op}
 
-          is_map(value) and not ValueCodec.typed_value?(value) ->
+          op == :set and is_map(value) and not ValueCodec.typed_value?(value) ->
             {:error, :if_match_multi_leaf}
 
           true ->

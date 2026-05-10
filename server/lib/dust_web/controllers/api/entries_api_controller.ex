@@ -188,10 +188,13 @@ defmodule DustWeb.Api.EntriesApiController do
     summary: "Write an entry at the given path",
     description: """
     Set the value at `path`. The body can be any JSON value (object,
-    scalar, array). To perform a compare-and-swap write, send the
-    `If-Match` header with the entry's current `revision` — the write
-    fails with `412` if the revision has advanced. CAS is leaf-only
-    (no subtree CAS).
+    scalar, array, or `null`). Note that `null` is stored as a
+    *value* — the entry remains in the store with `value: null`. To
+    actually remove an entry, use `DELETE /entries/{path}`.
+
+    To perform a compare-and-swap write, send the `If-Match` header
+    with the entry's current `revision` — the write fails with `412`
+    if the revision has advanced. CAS is leaf-only (no subtree CAS).
 
     Optionally send `X-Request-Id` to attach an opaque correlation
     id; if present, it is used as the write's `client_op_id` for
@@ -244,6 +247,88 @@ defmodule DustWeb.Api.EntriesApiController do
          :ok <- verify_write_permission(store_token),
          {:ok, attrs} <- build_put_attrs(conn, path, value, store_token) do
       write_and_respond(conn, store, path, attrs)
+    end
+  end
+
+  operation :delete,
+    operation_id: "entries.delete",
+    summary: "Delete an entry (or subtree) at the given path",
+    description: """
+    Removes the entry at `path`. If `path` is a subtree (interior node),
+    every descendant entry is removed as well. The op is appended to the
+    log even if no entries existed — DELETE is idempotent.
+
+    To perform a compare-and-swap delete on a leaf, send the `If-Match`
+    header with the entry's current `revision` — the delete fails with
+    `412` if the revision has advanced. CAS is leaf-only; If-Match
+    against a subtree path will never match and returns 412.
+    """,
+    tags: ["Entries"],
+    parameters:
+      @org_store_params ++ @entry_path_param ++ @if_match_param ++ @request_id_param,
+    responses: [
+      ok:
+        {%{
+           type: :object,
+           properties: %{
+             revision: %{
+               type: :integer,
+               description: "Per-entry sequence after the delete (== store_seq)."
+             },
+             store_seq: %{
+               type: :integer,
+               description: "Store-wide monotonic sequence after the delete."
+             }
+           },
+           required: [:revision, :store_seq],
+           example: %{revision: 9, store_seq: 143}
+         }, description: "Delete accepted"},
+      bad_request: @bad_request,
+      unauthorized: @unauthorized,
+      forbidden: @forbidden,
+      precondition_failed:
+        {%{
+           type: :object,
+           properties: %{
+             error: %{type: :string, enum: ["conflict"]},
+             current_revision: %{type: ["integer", "null"]}
+           },
+           required: [:error]
+         }, description: "If-Match revision mismatch"},
+      too_many_requests: @rate_limited
+    ]
+
+  def delete(conn, %{"org" => org_slug, "store" => store_name, "path" => path_segments}) do
+    organization = conn.assigns.organization
+    store_token = conn.assigns.store_token
+
+    with {:ok, path} <- url_path(path_segments),
+         :ok <- verify_org(organization, org_slug),
+         {:ok, store} <- find_store(organization, store_name),
+         :ok <- verify_token_scope(store_token, store),
+         :ok <- verify_write_permission(store_token),
+         {:ok, attrs} <- build_delete_attrs(conn, path, store_token) do
+      write_and_respond(conn, store, path, attrs)
+    end
+  end
+
+  defp build_delete_attrs(conn, path, store_token) do
+    base = %{
+      op: :delete,
+      path: path,
+      device_id: "http:" <> to_string(store_token.id),
+      client_op_id: request_op_id(conn)
+    }
+
+    case get_req_header(conn, "if-match") do
+      [] ->
+        {:ok, base}
+
+      [raw | _] ->
+        case Integer.parse(raw) do
+          {n, ""} when n > 0 -> {:ok, Map.put(base, :if_match, n)}
+          _ -> {:error, {:invalid_params, "If-Match must be a positive integer"}}
+        end
     end
   end
 

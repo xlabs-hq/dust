@@ -610,6 +610,112 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
     end
   end
 
+  describe "DELETE /api/stores/:org/:store/entries/*path" do
+    test "removes a leaf entry", %{conn: conn, token: token, store: store} do
+      assert %{value: "Alice"} = Sync.get_entry(store.id, "users.alice.name")
+
+      resp =
+        conn
+        |> api_conn(token)
+        |> delete("/api/stores/entriesorg/mystore/entries/users/alice/name")
+
+      body = json_response(resp, 200)
+      assert is_integer(body["revision"])
+      assert body["revision"] == body["store_seq"]
+      assert Sync.get_entry(store.id, "users.alice.name") == nil
+    end
+
+    test "removes an entire subtree", %{conn: conn, token: token, store: store} do
+      assert %{value: %{}} = Sync.get_entry(store.id, "users.alice")
+      assert %{value: %{}} = Sync.get_entry(store.id, "users.bob")
+
+      resp =
+        conn
+        |> api_conn(token)
+        |> delete("/api/stores/entriesorg/mystore/entries/users/alice")
+
+      _body = json_response(resp, 200)
+      assert Sync.get_entry(store.id, "users.alice") == nil
+      assert Sync.get_entry(store.id, "users.alice.email") == nil
+      assert Sync.get_entry(store.id, "users.alice.name") == nil
+      # Other subtrees untouched.
+      assert %{value: "Bob"} = Sync.get_entry(store.id, "users.bob.name")
+    end
+
+    test "is idempotent — DELETE on missing key still returns 200", %{conn: conn, token: token} do
+      resp =
+        conn
+        |> api_conn(token)
+        |> delete("/api/stores/entriesorg/mystore/entries/no/such/path")
+
+      body = json_response(resp, 200)
+      assert is_integer(body["revision"])
+    end
+
+    test "DELETE with matching If-Match succeeds", %{conn: conn, token: token, store: store} do
+      %{seq: seq} = Sync.get_entry(store.id, "users.alice.name")
+
+      resp =
+        conn
+        |> api_conn(token)
+        |> put_req_header("if-match", Integer.to_string(seq))
+        |> delete("/api/stores/entriesorg/mystore/entries/users/alice/name")
+
+      _body = json_response(resp, 200)
+      assert Sync.get_entry(store.id, "users.alice.name") == nil
+    end
+
+    test "DELETE with stale If-Match returns 412", %{conn: conn, token: token, store: store} do
+      resp =
+        conn
+        |> api_conn(token)
+        |> put_req_header("if-match", "999999")
+        |> delete("/api/stores/entriesorg/mystore/entries/users/alice/name")
+
+      body = json_response(resp, 412)
+      assert body["error"] == "conflict"
+      # Entry is unchanged.
+      assert %{value: "Alice"} = Sync.get_entry(store.id, "users.alice.name")
+    end
+
+    test "DELETE without write permission returns 403", %{conn: conn, store: store, user: user} do
+      {:ok, ro_token} =
+        Stores.create_store_token(store, %{
+          name: "ro-tok",
+          read: true,
+          write: false,
+          created_by_id: user.id
+        })
+
+      resp =
+        conn
+        |> api_conn(ro_token)
+        |> delete("/api/stores/entriesorg/mystore/entries/users/alice/name")
+
+      assert resp.status == 403
+    end
+
+    test "DELETE with '.' in URL segment returns 400", %{conn: conn, token: token} do
+      resp =
+        conn
+        |> api_conn(token)
+        |> delete("/api/stores/entriesorg/mystore/entries/foo.bar/baz")
+
+      body = json_response(resp, 400)
+      assert body["error"] == "invalid_params"
+      assert body["detail"] =~ "'.'"
+    end
+
+    test "DELETE without Bearer token returns 401", %{conn: conn} do
+      resp =
+        conn
+        |> put_req_header("accept", "application/json")
+        |> delete("/api/stores/entriesorg/mystore/entries/users/alice/name")
+
+      assert resp.status == 401
+    end
+  end
+
   describe "path normalization (slash ↔ dot)" do
     test "GET /entries?pattern=users/alice/* matches as if it were users.alice.*",
          %{conn: conn, token: token} do
