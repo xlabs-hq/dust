@@ -132,6 +132,6 @@ function ResetPassword({ token }: ResetPasswordProps) {
   );
 }
 
-ResetPassword.layout = [({ children }: { children: React.ReactNode }) => children];
+ResetPassword.layout = (page: React.ReactNode) => page;
 
 export default ResetPassword;

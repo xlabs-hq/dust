@@ -243,6 +243,6 @@ function Register() {
   );
 }
 
-Register.layout = [({ children }: { children: React.ReactNode }) => children];
+Register.layout = (page: React.ReactNode) => page;
 
 export default Register;

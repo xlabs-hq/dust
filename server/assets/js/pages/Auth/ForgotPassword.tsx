@@ -91,6 +91,6 @@ function ForgotPassword() {
   );
 }
 
-ForgotPassword.layout = [({ children }: { children: React.ReactNode }) => children];
+ForgotPassword.layout = (page: React.ReactNode) => page;
 
 export default ForgotPassword;

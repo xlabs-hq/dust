@@ -344,6 +344,6 @@ function ResourceCard({
 }
 
 // Opt out of the Shell layout — Landing uses its own full-screen layout
-Landing.layout = [({ children }: { children: React.ReactNode }) => children];
+Landing.layout = (page: React.ReactNode) => page;
 
 export default Landing;
