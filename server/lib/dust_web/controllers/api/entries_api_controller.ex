@@ -377,7 +377,9 @@ defmodule DustWeb.Api.EntriesApiController do
         {:ok, value}
 
       map when is_map(map) and map_size(map) == 0 ->
-        {:error, {:invalid_params, "request body is empty"}}
+        {:error,
+         {:invalid_params,
+          "request body is empty. To write a JSON null value, send the literal string \"null\" with content-type: application/json. To remove an entry, use DELETE."}}
 
       map when is_map(map) ->
         {:ok, map}
@@ -551,7 +553,13 @@ defmodule DustWeb.Api.EntriesApiController do
       json(conn, render_page(page))
     else
       {:error, :invalid_pattern_for_prefixes} ->
-        conn |> put_status(400) |> json(%{error: "invalid_pattern_for_prefixes"})
+        conn
+        |> put_status(400)
+        |> json(%{
+          error: "invalid_pattern_for_prefixes",
+          detail:
+            "select=prefixes accepts only `**` (every top-level prefix) or a `<base>.**` pattern (every direct-child prefix under <base>). Other patterns are rejected because the prefix projection is not well-defined for them."
+        })
 
       {:error, {:invalid_params, detail}} ->
         conn |> put_status(400) |> json(%{error: "invalid_params", detail: detail})

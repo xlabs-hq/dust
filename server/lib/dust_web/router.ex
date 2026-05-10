@@ -128,6 +128,11 @@ defmodule DustWeb.Router do
     get "/stores/:org/:store/entries/*path", EntriesApiController, :show
     delete "/stores/:org/:store/entries/*path", EntriesApiController, :delete
 
+    # Stub routes that point users at the WebSocket realtime protocol
+    # instead of 404'ing on obvious guesses.
+    get "/stores/:org/:store/subscribe", RealtimeController, :subscribe
+    get "/stores/:org/:store/watch", RealtimeController, :watch
+
     get "/stores/:org/:store/webhooks", WebhookController, :index
     post "/stores/:org/:store/webhooks", WebhookController, :create
     delete "/stores/:org/:store/webhooks/:id", WebhookController, :delete

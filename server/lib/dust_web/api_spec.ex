@@ -495,8 +495,25 @@ defmodule DustWeb.ApiSpec do
         name: "If-Match",
         in: :header,
         required: false,
-        description:
-          "Compare-and-swap precondition. Pass the entry's current `revision`; the write fails with 412 if the revision has advanced. Leaf-only (cannot CAS a subtree).",
+        description: """
+        Compare-and-swap precondition. Pass the entry's current
+        `revision`; the write fails with 412 if the revision has
+        advanced.
+
+        **CAS is leaf-only** (capver 2). Specifically:
+
+        - On `PUT`, the body must be a leaf value (scalar or typed
+          single-value). Sending a multi-key map body with `If-Match`
+          returns `400 if_match_multi_leaf`.
+        - On `PUT` or `DELETE`, if no entry exists at the exact path
+          (e.g. the path is an interior subtree node), `If-Match`
+          will never match and returns `412 conflict`.
+        - Other write ops (`merge`, `increment`, `add`, `remove`) over
+          the WebSocket channel reject `If-Match` with
+          `400 if_match_unsupported_op`. (HTTP only exposes `set` /
+          `delete` for entries, so this is only visible to channel
+          clients.)
+        """,
         schema: %{type: :integer}
       }
     }

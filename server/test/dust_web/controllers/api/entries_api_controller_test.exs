@@ -95,13 +95,20 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       assert body["items"] == ["users.alice", "users.bob"]
     end
 
-    test "select=prefixes with invalid pattern returns 400", %{conn: conn, token: token} do
+    test "select=prefixes with invalid pattern returns 400 with detail", %{
+      conn: conn,
+      token: token
+    } do
       resp =
         conn
         |> api_conn(token)
         |> get("/api/stores/entriesorg/mystore/entries?pattern=users.*&select=prefixes")
 
-      assert %{"error" => "invalid_pattern_for_prefixes"} = json_response(resp, 400)
+      body = json_response(resp, 400)
+      assert body["error"] == "invalid_pattern_for_prefixes"
+      assert is_binary(body["detail"])
+      assert body["detail"] =~ "**"
+      assert body["detail"] =~ "<base>.**"
     end
 
     test "paginates via next_cursor with limit=1", %{conn: conn, token: token} do
@@ -530,6 +537,22 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
 
       # Verify the value was actually written.
       assert %{value: "Alice Updated"} = Sync.get_entry(store.id, "users.alice.name")
+    end
+
+    test "PUT with empty body returns 400 with hint about JSON null and DELETE", %{
+      conn: conn,
+      token: token
+    } do
+      resp =
+        conn
+        |> api_conn(token)
+        |> put_req_header("content-type", "application/json")
+        |> put("/api/stores/entriesorg/mystore/entries/users/alice/name", "")
+
+      body = json_response(resp, 400)
+      assert body["error"] == "invalid_params"
+      assert body["detail"] =~ "null"
+      assert body["detail"] =~ "DELETE"
     end
 
     test "writes a leaf value with matching If-Match succeeds", %{
