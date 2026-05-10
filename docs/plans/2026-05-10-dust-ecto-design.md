@@ -166,8 +166,10 @@ config-shaped data this is fine.
 
 ### `mode: :flat`
 
-What xlabs built. One PUT per non-nil field; on update, one PUT per
-changed field.
+What xlabs built. One PUT per field on insert; on update, one PUT
+per changed field. `nil` values write JSON `null` at that field's
+path (consistent with map mode); users wanting a field gone
+delete-and-recreate the whole record.
 
 ```
 Repo.insert(%Link{slug: "foo", title: "x", url: "y"})
@@ -204,12 +206,15 @@ DustEcto.Repo.exists?(Link, "slug")  # true | false
     `GET /entries?pattern=<prefix>.<slug>.**&select=keys&limit=1`.
     The HEAD route is a server-side polish item, not blocking — the
     fallback works fine.
-- **Required-fields guard on read.** A record missing any field listed
-  in `__dust_required_fields__/0` is silently dropped from `all/1`,
-  but a `Logger.warning` lists the slug, missing fields, and unrecognized
-  fields so devs can grep their logs (trial gap #5). The required list
-  is the same one the user's changeset uses, so guard and validation
-  stay in sync.
+- **Required-fields guard on read.** Read flow: gather descendant
+  entries, **synthesize `:slug` from the URL path before validating** —
+  `:slug` is required but is never stored in the body, so without
+  this step every record would fail the guard. After slug injection,
+  any record missing a field listed in `__dust_required_fields__/0`
+  is silently dropped from `all/1`, with a `Logger.warning` listing
+  the slug, missing fields, and unrecognized fields so devs can grep
+  their logs (trial gap #5). The required list is the same one the
+  user's changeset uses, so guard and validation stay in sync.
 - **`Repo.get/2` in map mode** depends on SDK pre-work item D. After
   the server flattens a map-mode write, the entries live at
   `<prefix>.<slug>.<field>` — there is no exact-path leaf at
@@ -350,7 +355,11 @@ end
 
 defp sdk_running? do
   store = Application.fetch_env!(:dust_ecto, :store)
-  Registry.lookup(Dust.SyncEngineRegistry, store) != []
+
+  case Process.whereis(Dust.SyncEngineRegistry) do
+    nil -> false
+    _ -> Registry.lookup(Dust.SyncEngineRegistry, store) != []
+  end
 end
 ```
 
@@ -443,7 +452,7 @@ Same shape as `Ecto.Repo` events so existing dashboards work.
 
 | Trial gap | What dust_ecto does |
 |---|---|
-| #1 — `Req.put(url, json: nil)` empty body | Map mode never writes nil. Flat mode skips nil fields. Non-issue by construction. |
+| #1 — `Req.put(url, json: nil)` empty body | Body is always a populated JSON value: a map in map mode, an explicit JSON null literal in flat mode when a field is `nil`. Never `nil` to Req. Non-issue by construction. |
 | #2 — multi-key transactionality | Map mode = atomic 1 PUT. Flat mode documents the partial-write window. |
 | #3 — no real DELETE | Already shipped upstream (`ac47fbb`). |
 | #4 — atom-keyed dump silently writes zero | Always count writes; `{:error, :nothing_to_write}` if zero. |
@@ -462,12 +471,23 @@ PR against the SDK, mostly ~50–150 LOC.
 | A | **Sync write semantics for all write ops.** Today only `Dust.put/4` (4-arg variant) defers reply until server ack. `delete`, `merge`, `increment`, `add`, `remove` all reply `:ok` immediately. Add the deferred-reply path to all of them, gated on an `opts` arg the same way. | `Repo.delete(struct)` returning `{:ok, _}` must mean server-acked, not "queued in the optimistic cache." |
 | B | **ETS-backed outbox** keyed by `client_op_id`, persisted across `Dust.Connection` process restarts, with on-startup replay. | "I wrote it" stays true even through a connection-process crash. The current outbox lives in process state and dies with the process. |
 | C | **Connection observability** — `Dust.Connection.connected?/0` plus `:telemetry.execute([:dust, :connection, :state_change], %{}, %{from:, to:})` on every transition. | LiveView users need to react to disconnects; dust_ecto needs a clean probe for HTTP-fallback decisions. |
-| D | **SDK subtree-aware reads.** `Dust.get/2` and `Dust.entry/2` are exact-path-only today (`sync_engine.ex:191`, `sync_engine.ex:457`). The server already does subtree assembly server-side (`sync.ex:111` `assemble_subtree`); the SDK doesn't. After a map-mode write, the entries live at `<prefix>.<slug>.<field>` — no exact-path leaf at `<prefix>.<slug>`. SDK reads must fall back to assembling from descendants. | dust_ecto `Repo.get(Link, "foo")` in SDK mode would always return `:not_found` without this. Map mode fundamentally requires it. |
+| D | **SDK subtree-aware reads + cache canonicalization on map writes.** Two paired changes: (1) `Dust.get/2` and `Dust.entry/2` are exact-path-only today (`sync_engine.ex:191`, `sync_engine.ex:457`); the server does subtree assembly server-side (`sync.ex:111` `assemble_subtree`), the SDK doesn't, so map-mode `<prefix>.<slug>` reads must fall back to assembling from descendants. (2) The SDK's optimistic write path (`sync_engine.ex:753`) and server-event apply path (`sync_engine.ex:632`) both write a plain-map value at the exact path verbatim. The server flattens to leaves, so cache-after-own-write has the root-map row, and cache-after-event-echo *adds* the leaf rows on top — divergent shapes. SDK must canonicalize plain-map `set` ops the same way the server does: clear descendants, write flattened leaves, no exact root leaf. Without this, `get`/`all`/`subscribe` results differ depending on whether data came from a live write, catch-up, or snapshot. | dust_ecto `Repo.get(Link, "foo")` in SDK mode would return `:not_found` without (1) and would return inconsistent shapes depending on data path without (2). Map mode fundamentally requires both. |
 | E | **SDK subtree cache invalidation.** Today `cache.delete(target, store, path)` removes only the exact path (`cache/memory.ex:135`, `cache/ecto.ex:123`). The server's DELETE endpoint clears descendants, but the SDK cache and the server-event handler at `sync_engine.ex:633` both call exact-path delete. After `Repo.delete(record)` the descendants would linger in cache, returning stale data. | dust_ecto `Repo.delete` and `Repo.delete_all` both clear subtrees; the local view has to follow. |
 | F | **Public unsubscribe API.** `Dust.on/4` returns a ref but the SDK has no `Dust.off/1` or `Dust.unsubscribe/1`. dust_ecto exposes `Repo.unsubscribe/1`; without an SDK-side counterpart, the underlying registration leaks. | Subscriptions are first-class in the dust_ecto API; we can't ship them without a removal path. |
 | G | **`mode:` opt on `Dust.on/4`** — `:committed | :all | :optimistic`. Today the SDK fires optimistic `committed: false` events for own writes (`sync_engine.ex:752`) and *suppresses* the committed echo of own writes (`sync_engine.ex:666`). dust_ecto's `:upserted`/`:deleted` events need exactly one delivery per write, with `store_seq`, even for own writes. Default `:all` preserves today's behavior. | Without it, dust_ecto can't deliver `{:upserted, %Link{}}` reliably with a `store_seq` for own writes. |
 
-A and B are the original three; D–G surfaced from the r1 review.
+A–C are the original three; D–G surfaced from the r1 review.
+
+**Facade delegations.** `Dust.Instance` (the `use Dust` facade module
+generator at `sdk/elixir/lib/dust/instance.ex`) currently delegates
+the existing 3-arg APIs. Items A and F–G grow new arities and new
+functions on the SDK; the facade must grow matching delegations so
+`MyApp.Dust.delete/3`, `MyApp.Dust.merge/4`, `MyApp.Dust.increment/4`,
+`MyApp.Dust.add/4`, `MyApp.Dust.remove/4`, `MyApp.Dust.enum/3`,
+`MyApp.Dust.range/4`, `MyApp.Dust.entry/2`, `MyApp.Dust.off/1`, and
+`MyApp.Dust.unsubscribe/1` all work. Otherwise dust_ecto's
+`dust_facade: MyApp.Dust` config can't reach the new APIs — only
+calls into the global `Dust` module would.
 
 ## Server pre-work (parallel; not blocking dust_ecto v1)
 
@@ -504,7 +524,7 @@ Dogfooding milestones (each gates the next):
 - (a) Replace `Xlabs.Dust.Client` → dust_ecto HTTP transport
 - (b) Replace `Xlabs.Dust.Schema` → `DustEcto.Schema`
 - (c) Replace `Xlabs.Dust.Repo` → `DustEcto.Repo`
-- (d) Switch from HTTP to SDK transport (boot `Dust.Supervisor`)
+- (d) Switch from HTTP to SDK transport (boot `MyApp.Dust`)
 - (e) Add a LiveView using `Repo.subscribe` for live-update
 
 Milestone (e) is the README closer.
