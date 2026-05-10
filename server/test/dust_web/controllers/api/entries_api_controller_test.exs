@@ -463,7 +463,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       resp =
         conn
         |> api_conn(token)
-        |> get("/api/stores/entriesorg/mystore/entries/users.alice.name")
+        |> get("/api/stores/entriesorg/mystore/entries/users/alice/name")
 
       body = json_response(resp, 200)
       assert body["path"] == "users.alice.name"
@@ -476,7 +476,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       resp =
         conn
         |> api_conn(token)
-        |> get("/api/stores/entriesorg/mystore/entries/no.such.path")
+        |> get("/api/stores/entriesorg/mystore/entries/no/such/path")
 
       assert json_response(resp, 404) == %{"error" => "not_found"}
     end
@@ -507,7 +507,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       resp =
         conn
         |> put_req_header("accept", "application/json")
-        |> get("/api/stores/entriesorg/mystore/entries/users.alice.name")
+        |> get("/api/stores/entriesorg/mystore/entries/users/alice/name")
 
       assert resp.status == 401
     end
@@ -520,7 +520,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
         |> api_conn(token)
         |> put_req_header("content-type", "application/json")
         |> put(
-          "/api/stores/entriesorg/mystore/entries/users.alice.name",
+          "/api/stores/entriesorg/mystore/entries/users/alice/name",
           ~s("Alice Updated")
         )
 
@@ -545,7 +545,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
         |> api_conn(token)
         |> put_req_header("content-type", "application/json")
         |> put_req_header("if-match", Integer.to_string(seq))
-        |> put("/api/stores/entriesorg/mystore/entries/cas.counter", "2")
+        |> put("/api/stores/entriesorg/mystore/entries/cas/counter", "2")
 
       body = json_response(resp, 200)
       assert body["revision"] > seq
@@ -566,7 +566,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
         |> api_conn(token)
         |> put_req_header("content-type", "application/json")
         |> put_req_header("if-match", "999999")
-        |> put("/api/stores/entriesorg/mystore/entries/cas.counter", "2")
+        |> put("/api/stores/entriesorg/mystore/entries/cas/counter", "2")
 
       body = json_response(resp, 412)
       assert body["error"] == "conflict"
@@ -587,7 +587,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
         |> put_req_header("content-type", "application/json")
         |> put_req_header("if-match", "5")
         |> put(
-          "/api/stores/entriesorg/mystore/entries/users.alice",
+          "/api/stores/entriesorg/mystore/entries/users/alice",
           ~s({"name": "Alice"})
         )
 
@@ -604,9 +604,67 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
         conn
         |> put_req_header("accept", "application/json")
         |> put_req_header("content-type", "application/json")
-        |> put("/api/stores/entriesorg/mystore/entries/cas.counter", "1")
+        |> put("/api/stores/entriesorg/mystore/entries/cas/counter", "1")
 
       assert resp.status == 401
+    end
+  end
+
+  describe "path normalization (slash ↔ dot)" do
+    test "GET /entries?pattern=users/alice/* matches as if it were users.alice.*",
+         %{conn: conn, token: token} do
+      resp =
+        conn
+        |> api_conn(token)
+        |> get("/api/stores/entriesorg/mystore/entries?pattern=users/alice/*")
+
+      body = json_response(resp, 200)
+      paths = Enum.map(body["items"], & &1["path"])
+      assert "users.alice.email" in paths
+      assert "users.alice.name" in paths
+    end
+
+    test "GET /entries?from=users/alice&to=users/bob normalises range bounds",
+         %{conn: conn, token: token} do
+      resp =
+        conn
+        |> api_conn(token)
+        |> get("/api/stores/entriesorg/mystore/entries?from=users/alice&to=users/bob")
+
+      body = json_response(resp, 200)
+      paths = Enum.map(body["items"], & &1["path"])
+      assert "users.alice.email" in paths
+      assert "users.alice.name" in paths
+      refute Enum.any?(paths, &String.starts_with?(&1, "users.bob"))
+    end
+
+    test "PUT /entries/foo.bar/baz returns 400 — '.' in URL segment is forbidden",
+         %{conn: conn, token: token} do
+      resp =
+        conn
+        |> api_conn(token)
+        |> put_req_header("content-type", "application/json")
+        |> put("/api/stores/entriesorg/mystore/entries/foo.bar/baz", "\"x\"")
+
+      body = json_response(resp, 400)
+      assert body["error"] == "invalid_params"
+      assert body["detail"] =~ "'.'"
+    end
+
+    test "POST /entries/batch normalises slashed paths in the body",
+         %{conn: conn, token: token} do
+      resp =
+        conn
+        |> api_conn(token)
+        |> put_req_header("content-type", "application/json")
+        |> post(
+          "/api/stores/entriesorg/mystore/entries/batch",
+          Jason.encode!(%{paths: ["users/alice/email", "users.bob.name"]})
+        )
+
+      body = json_response(resp, 200)
+      assert Map.has_key?(body["entries"], "users.alice.email")
+      assert Map.has_key?(body["entries"], "users.bob.name")
     end
   end
 end

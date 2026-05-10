@@ -1,6 +1,7 @@
 import { Connection } from './connection'
 import { MemoryCache } from './cache'
 import { match } from './glob'
+import { normalizePath, normalizePattern } from './path'
 import { ConflictError } from './types'
 import type { DustOptions, EnumOptions, Entry, Event, EventCallback, Page, PresentEvent, Status } from './types'
 
@@ -33,12 +34,14 @@ export class Dust {
   // -- Public API --
 
   async get(store: string, path: string): Promise<unknown> {
+    path = normalizePath(path)
     await this.ensureJoined(store)
     const entry = this.cache.get(store, path)
     return entry?.value ?? null
   }
 
   async entry(store: string, path: string): Promise<Entry | null> {
+    path = normalizePath(path)
     await this.ensureJoined(store)
     return this.cache.readEntry(store, path)
   }
@@ -49,30 +52,31 @@ export class Dust {
     value: unknown,
     opts?: { ifMatch?: number },
   ): Promise<{ storeSeq: number }> {
-    return this.write(store, 'set', path, value, opts)
+    return this.write(store, 'set', normalizePath(path), value, opts)
   }
 
   async merge(store: string, path: string, value: Record<string, unknown>): Promise<{ storeSeq: number }> {
-    return this.write(store, 'merge', path, value)
+    return this.write(store, 'merge', normalizePath(path), value)
   }
 
   async delete(store: string, path: string): Promise<{ storeSeq: number }> {
-    return this.write(store, 'delete', path, null)
+    return this.write(store, 'delete', normalizePath(path), null)
   }
 
   async increment(store: string, path: string, delta: number = 1): Promise<{ storeSeq: number }> {
-    return this.write(store, 'increment', path, delta)
+    return this.write(store, 'increment', normalizePath(path), delta)
   }
 
   async add(store: string, path: string, member: unknown): Promise<{ storeSeq: number }> {
-    return this.write(store, 'add', path, member)
+    return this.write(store, 'add', normalizePath(path), member)
   }
 
   async remove(store: string, path: string, member: unknown): Promise<{ storeSeq: number }> {
-    return this.write(store, 'remove', path, member)
+    return this.write(store, 'remove', normalizePath(path), member)
   }
 
   on(store: string, pattern: string, callback: EventCallback): () => void {
+    pattern = normalizePattern(pattern)
     let subs = this.subscriptions.get(store)
     if (!subs) {
       subs = new Set()
@@ -122,6 +126,7 @@ export class Dust {
     callback: WatchCallback,
     opts: { limit?: number; order?: 'asc' | 'desc' } = {},
   ): Promise<() => void> {
+    pattern = normalizePattern(pattern)
     const limit = Math.min(opts.limit ?? 50, 1000)
     const order = opts.order ?? 'asc'
 
@@ -192,6 +197,7 @@ export class Dust {
     pattern: string,
     opts?: EnumOptions,
   ): Promise<Entry[] | Page<Entry> | Page<string>> {
+    pattern = normalizePattern(pattern)
     await this.ensureJoined(store)
     if (opts === undefined) {
       return this.cache.entries(store, pattern)
@@ -203,8 +209,9 @@ export class Dust {
     if (paths.length > 1000) {
       throw new Error('getMany: maximum 1000 paths per call')
     }
+    const normalized = paths.map(normalizePath)
     await this.ensureJoined(store)
-    const raw = this.cache.readMany(store, paths)
+    const raw = this.cache.readMany(store, normalized)
     const result: Record<string, unknown> = {}
     for (const [path, entry] of Object.entries(raw)) {
       result[path] = entry.value
@@ -221,6 +228,8 @@ export class Dust {
     if ((opts as { select?: string }).select === 'prefixes') {
       throw new Error('range: select prefixes is not supported')
     }
+    from = normalizePath(from)
+    to = normalizePath(to)
     await this.ensureJoined(store)
     return this.cache.browse(store, { ...opts, from, to })
   }

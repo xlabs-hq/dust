@@ -10,60 +10,83 @@ defmodule Dust.SyncEngine do
 
   def via(store), do: {:via, Registry, {Dust.SyncEngineRegistry, store}}
 
+  # Normalize a user-supplied path (slashes → dots, validate non-empty
+  # segments). Raises ArgumentError on invalid input — paths that
+  # can't be normalised are programmer errors, not runtime conditions.
+  defp norm!(path) do
+    case Dust.Protocol.Path.normalize(path) do
+      {:ok, p} ->
+        p
+
+      {:error, reason} ->
+        raise ArgumentError, "invalid path #{inspect(path)}: #{reason}"
+    end
+  end
+
+  defp norm_pattern!(pattern) do
+    case Dust.Protocol.Path.normalize_pattern(pattern) do
+      {:ok, p} ->
+        p
+
+      {:error, reason} ->
+        raise ArgumentError, "invalid pattern #{inspect(pattern)}: #{reason}"
+    end
+  end
+
   def get(store, path) do
-    GenServer.call(via(store), {:get, path})
+    GenServer.call(via(store), {:get, norm!(path)})
   end
 
   def get_many(store, paths) when is_list(paths) do
-    GenServer.call(via(store), {:get_many, paths})
+    GenServer.call(via(store), {:get_many, Enum.map(paths, &norm!/1)})
   end
 
   def put(store, path, value) do
-    GenServer.call(via(store), {:put, path, value})
+    GenServer.call(via(store), {:put, norm!(path), value})
   end
 
   def put(store, path, value, opts) when is_list(opts) do
-    GenServer.call(via(store), {:put, path, value, opts})
+    GenServer.call(via(store), {:put, norm!(path), value, opts})
   end
 
   def delete(store, path) do
-    GenServer.call(via(store), {:delete, path})
+    GenServer.call(via(store), {:delete, norm!(path)})
   end
 
   def merge(store, path, map) do
-    GenServer.call(via(store), {:merge, path, map})
+    GenServer.call(via(store), {:merge, norm!(path), map})
   end
 
   def increment(store, path, delta \\ 1) do
-    GenServer.call(via(store), {:increment, path, delta})
+    GenServer.call(via(store), {:increment, norm!(path), delta})
   end
 
   def add(store, path, member) do
-    GenServer.call(via(store), {:add, path, member})
+    GenServer.call(via(store), {:add, norm!(path), member})
   end
 
   def remove(store, path, member) do
-    GenServer.call(via(store), {:remove, path, member})
+    GenServer.call(via(store), {:remove, norm!(path), member})
   end
 
   def put_file(store, path, source_path, opts \\ []) do
-    GenServer.call(via(store), {:put_file, path, source_path, opts})
+    GenServer.call(via(store), {:put_file, norm!(path), source_path, opts})
   end
 
   def enum(store, pattern) do
-    GenServer.call(via(store), {:enum, pattern})
+    GenServer.call(via(store), {:enum, norm_pattern!(pattern)})
   end
 
   def enum(store, pattern, opts) when is_list(opts) do
-    GenServer.call(via(store), {:enum_paged, pattern, opts})
+    GenServer.call(via(store), {:enum_paged, norm_pattern!(pattern), opts})
   end
 
   def range(store, from, to, opts \\ []) when is_binary(from) and is_binary(to) do
-    GenServer.call(via(store), {:range, from, to, opts})
+    GenServer.call(via(store), {:range, norm!(from), norm!(to), opts})
   end
 
   def entry(store, path) do
-    GenServer.call(via(store), {:entry, path})
+    GenServer.call(via(store), {:entry, norm!(path)})
   end
 
   def status(store) do
@@ -71,7 +94,7 @@ defmodule Dust.SyncEngine do
   end
 
   def on(store, pattern, callback, opts \\ []) do
-    GenServer.call(via(store), {:on, pattern, callback, opts})
+    GenServer.call(via(store), {:on, norm_pattern!(pattern), callback, opts})
   end
 
   def handle_server_event(store, event) do

@@ -103,10 +103,20 @@ defmodule DustWeb.Api.AuditApiController do
 
   defp parse_filters(params) do
     []
-    |> maybe_add(:path, params["path"])
+    |> maybe_add(:path, normalize_filter_path(params["path"]))
     |> maybe_add(:device_id, params["device_id"])
     |> maybe_add(:op, params["op"])
     |> maybe_add(:since, params["since"])
+  end
+
+  defp normalize_filter_path(nil), do: nil
+  defp normalize_filter_path(""), do: nil
+
+  defp normalize_filter_path(path) when is_binary(path) do
+    case DustProtocol.Path.normalize_pattern(path) do
+      {:ok, normalized} -> normalized
+      {:error, _} -> path
+    end
   end
 
   defp maybe_add(opts, _key, nil), do: opts

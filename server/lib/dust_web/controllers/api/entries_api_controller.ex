@@ -44,14 +44,32 @@ defmodule DustWeb.Api.EntriesApiController do
   def show(conn, %{"org" => org_slug, "store" => store_name, "path" => path_segments}) do
     organization = conn.assigns.organization
     store_token = conn.assigns.store_token
-    path = Enum.join(List.wrap(path_segments), ".")
 
-    with :ok <- verify_org(organization, org_slug),
+    with {:ok, path} <- url_path(path_segments),
+         :ok <- verify_org(organization, org_slug),
          {:ok, store} <- find_store(organization, store_name),
          :ok <- verify_token_scope(store_token, store),
          :ok <- verify_read_permission(store_token),
          {:ok, entry} <- fetch_entry(store.id, path) do
       json(conn, render_entry(entry))
+    end
+  end
+
+  defp url_path(segments) do
+    case DustProtocol.Path.from_url_segments(List.wrap(segments)) do
+      {:ok, path} ->
+        {:ok, path}
+
+      {:error, :dot_in_segment} ->
+        {:error,
+         {:invalid_params,
+          "URL path segments cannot contain '.' — use slashes between levels (e.g. /entries/foo/bar/baz)"}}
+
+      {:error, :empty_segment} ->
+        {:error, {:invalid_params, "path cannot contain empty segments"}}
+
+      {:error, :empty_path} ->
+        {:error, {:invalid_params, "path is required"}}
     end
   end
 
@@ -180,9 +198,9 @@ defmodule DustWeb.Api.EntriesApiController do
   def put(conn, %{"org" => org_slug, "store" => store_name, "path" => path_segments}) do
     organization = conn.assigns.organization
     store_token = conn.assigns.store_token
-    path = Enum.join(List.wrap(path_segments), ".")
 
-    with {:ok, value} <- extract_put_value(conn),
+    with {:ok, path} <- url_path(path_segments),
+         {:ok, value} <- extract_put_value(conn),
          :ok <- verify_org(organization, org_slug),
          {:ok, store} <- find_store(organization, store_name),
          :ok <- verify_token_scope(store_token, store),
@@ -342,11 +360,27 @@ defmodule DustWeb.Api.EntriesApiController do
         {:error, {:invalid_params, "paths must be strings"}}
 
       true ->
-        {:ok, paths}
+        normalize_batch_paths(paths)
     end
   end
 
   defp parse_batch_paths(_), do: {:error, {:invalid_params, "paths required"}}
+
+  defp normalize_batch_paths(paths) do
+    Enum.reduce_while(paths, {:ok, []}, fn path, {:ok, acc} ->
+      case DustProtocol.Path.normalize(path) do
+        {:ok, normalized} ->
+          {:cont, {:ok, [normalized | acc]}}
+
+        {:error, _} ->
+          {:halt, {:error, {:invalid_params, "invalid path: #{inspect(path)}"}}}
+      end
+    end)
+    |> case do
+      {:ok, list} -> {:ok, Enum.reverse(list)}
+      err -> err
+    end
+  end
 
   defp render_batch_entries(entries) do
     Map.new(entries, fn {path, %{value: v, type: t, seq: s}} ->
@@ -421,10 +455,22 @@ defmodule DustWeb.Api.EntriesApiController do
     end
   end
 
-  defp parse_from(%{"from" => f}) when is_binary(f) and f != "", do: {:ok, f}
+  defp parse_from(%{"from" => f}) when is_binary(f) and f != "" do
+    case DustProtocol.Path.normalize(f) do
+      {:ok, normalized} -> {:ok, normalized}
+      {:error, _} -> {:error, {:invalid_params, "from must be a valid path"}}
+    end
+  end
+
   defp parse_from(_), do: {:error, {:invalid_params, "from must be a non-empty string"}}
 
-  defp parse_to(%{"to" => t}) when is_binary(t) and t != "", do: {:ok, t}
+  defp parse_to(%{"to" => t}) when is_binary(t) and t != "" do
+    case DustProtocol.Path.normalize(t) do
+      {:ok, normalized} -> {:ok, normalized}
+      {:error, _} -> {:error, {:invalid_params, "to must be a valid path"}}
+    end
+  end
+
   defp parse_to(_), do: {:error, {:invalid_params, "to must be a non-empty string"}}
 
   defp verify_org(organization, org_slug) do
@@ -463,7 +509,12 @@ defmodule DustWeb.Api.EntriesApiController do
   defp maybe_put(opts, _key, nil), do: opts
   defp maybe_put(opts, key, value), do: Keyword.put(opts, key, value)
 
-  defp parse_pattern(%{"pattern" => p}) when is_binary(p) and p != "", do: {:ok, p}
+  defp parse_pattern(%{"pattern" => p}) when is_binary(p) and p != "" do
+    case DustProtocol.Path.normalize_pattern(p) do
+      {:ok, normalized} -> {:ok, normalized}
+      {:error, _} -> {:error, {:invalid_params, "pattern has empty segments"}}
+    end
+  end
 
   defp parse_pattern(%{"pattern" => _}),
     do: {:error, {:invalid_params, "pattern must be a non-empty string"}}
