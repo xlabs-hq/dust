@@ -65,30 +65,83 @@ defmodule DustEcto.Repo do
     {transport, _} = Transport.pick()
     store = Transport.store!()
 
+    # Server enum returns paths in lexicographic order, which means all
+    # leaves of a slug land contiguously. We buffer the in-progress
+    # slug across page boundaries and emit a record only once we see a
+    # leaf belonging to a different slug (or the stream ends).
     Stream.resource(
-      fn -> nil end,
-      fn cursor ->
-        opts = [select: :entries, limit: 100]
-        opts = if cursor, do: Keyword.put(opts, :after, cursor), else: opts
+      fn -> %{cursor: :start, buffer: nil} end,
+      fn
+        :done ->
+          {:halt, :done}
 
-        case transport.list(store, pattern, opts) do
-          {:ok, %{items: items, next_cursor: next}} ->
-            {items, next}
+        state ->
+          opts = [select: :entries, limit: 100]
+          opts = if state.cursor == :start, do: opts, else: Keyword.put(opts, :after, state.cursor)
 
-          {:error, _} = err ->
-            {[err], :halt}
-        end
+          case transport.list(store, pattern, opts) do
+            {:ok, %{items: items, next_cursor: next}} ->
+              {emit, buffer} = group_items_by_slug(items, prefix, state.buffer)
+              records = Enum.flat_map(emit, &emit_or_skip(&1, schema))
+
+              cond do
+                next == nil and is_nil(buffer) ->
+                  {records, :done}
+
+                next == nil ->
+                  # Flush the final in-progress slug.
+                  {records ++ emit_or_skip(buffer, schema), :done}
+
+                true ->
+                  {records, %{cursor: next, buffer: buffer}}
+              end
+
+            {:error, reason} ->
+              # Raise instead of yielding/filtering — silent truncation
+              # is the worst failure mode for a sync consumer that does
+              # `Repo.stream(...) |> Enum.to_list()`. Caller can rescue
+              # if they want lenient semantics.
+              raise "DustEcto.Repo.stream/1 transport error: #{inspect(reason)}"
+          end
       end,
       fn _ -> :ok end
     )
-    |> Stream.reject(&match?({:error, _}, &1))
-    |> Stream.flat_map(fn item ->
-      case rebuild_records([item], schema, prefix) do
-        [] -> []
-        recs -> recs
+  end
+
+  # Walks a list of leaf items, grouping consecutive same-slug entries
+  # into `{slug, fields_map}` accumulators. Yields tuples for every
+  # slug that *closed* (a leaf for a new slug arrived) and returns the
+  # last-still-open slug as the buffer for the next page.
+  defp group_items_by_slug(items, prefix, initial_buffer) do
+    Enum.reduce(items, {[], initial_buffer}, fn item, {closed, buffer} ->
+      case parse_path(item.path, prefix) do
+        {:ok, slug, field_segments} ->
+          case buffer do
+            nil ->
+              {closed, {slug, put_nested(%{}, field_segments, item.value)}}
+
+            {^slug, fields} ->
+              {closed, {slug, put_nested(fields, field_segments, item.value)}}
+
+            other ->
+              {[other | closed], {slug, put_nested(%{}, field_segments, item.value)}}
+          end
+
+        :error ->
+          {closed, buffer}
       end
     end)
+    |> then(fn {closed, buffer} -> {Enum.reverse(closed), buffer} end)
   end
+
+  defp emit_or_skip({slug, fields}, schema) do
+    case load_record(schema, slug, fields) do
+      {:ok, struct} -> [struct]
+      :missing_required -> []
+    end
+  end
+
+  defp emit_or_skip(nil, _schema), do: []
 
   @doc """
   Fetches a single record by slug. Returns `{:ok, struct}` on a hit,
@@ -377,13 +430,20 @@ defmodule DustEcto.Repo do
   # subtree response gives us a fully-assembled value when we GET
   # <prefix>.<slug>; the LIST response, however, returns flat leaf
   # entries. Reassemble by slug.
+  #
+  # `parse_path/2` handles two cases the original implementation
+  # missed: (1) dotted prefixes like `reading.links` (since the prefix
+  # itself contains `.`); (2) nested leaf paths like
+  # `things.foo.meta.a` produced when a map-typed field gets flattened
+  # server-side. The nested leaves get reassembled into a nested map
+  # so `Ecto.embedded_load` can reconstruct the original :map field.
   defp rebuild_records(items, schema, prefix) do
     items
     |> Enum.reduce(%{}, fn item, acc ->
       case parse_path(item.path, prefix) do
-        {:ok, slug, field} ->
+        {:ok, slug, field_segments} ->
           existing = Map.get(acc, slug, %{})
-          Map.put(acc, slug, Map.put(existing, field, item.value))
+          Map.put(acc, slug, put_nested(existing, field_segments, item.value))
 
         :error ->
           acc
@@ -399,12 +459,28 @@ defmodule DustEcto.Repo do
   end
 
   defp parse_path(path, prefix) when is_binary(path) and is_binary(prefix) do
-    # Expect `<prefix>.<slug>.<field>` (or deeper for nested values, but
-    # we only support one level of fields in v1).
-    case String.split(path, ".") do
-      [^prefix, slug, field] -> {:ok, slug, field}
-      _ -> :error
+    prefix_segs = String.split(prefix, ".")
+    path_segs = String.split(path, ".")
+    prefix_len = length(prefix_segs)
+
+    if Enum.take(path_segs, prefix_len) == prefix_segs do
+      case Enum.drop(path_segs, prefix_len) do
+        [slug | [_ | _] = field_segments] when slug != "" ->
+          {:ok, slug, field_segments}
+
+        _ ->
+          :error
+      end
+    else
+      :error
     end
+  end
+
+  defp put_nested(map, [key], value), do: Map.put(map, key, value)
+
+  defp put_nested(map, [key | rest], value) do
+    child = Map.get(map, key, %{})
+    Map.put(map, key, put_nested(child, rest, value))
   end
 
   # `fields` is a string-keyed map gathered from the LIST response, OR

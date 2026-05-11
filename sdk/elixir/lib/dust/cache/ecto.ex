@@ -6,6 +6,12 @@ if Code.ensure_loaded?(Ecto.Query) do
 
     alias Dust.Cache.Ecto.CacheEntry
 
+    # CacheEntry is also wrapped in `if Code.ensure_loaded?(Ecto.Schema)`
+    # so static analysis can't always see it from this file. The runtime
+    # `Code.ensure_loaded?(Ecto.Query)` guard above is sufficient — both
+    # modules ship together.
+    @compile {:no_warn_undefined, CacheEntry}
+
     @seq_sentinel_path "_dust:last_seq"
 
     @impl Dust.Cache

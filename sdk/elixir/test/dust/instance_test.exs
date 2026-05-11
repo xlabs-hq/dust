@@ -85,6 +85,51 @@ defmodule Dust.InstanceTest do
     assert GenServer.whereis(Dust.Connection) == nil
   end
 
+  test "facade exposes every arity dust_ecto (and other downstream packages) need" do
+    # Regression guard: the SDK transport in dust_ecto calls put/4,
+    # entry/2, enum/3, range/4, off/2, etc. If we re-add an arity to
+    # Dust.SyncEngine without exposing it on the facade, downstream
+    # packages break at runtime with UndefinedFunctionError.
+    expected = [
+      get: 2,
+      get_many: 2,
+      entry: 2,
+      put: 3,
+      put: 4,
+      delete: 2,
+      delete: 3,
+      merge: 3,
+      merge: 4,
+      increment: 2,
+      increment: 3,
+      increment: 4,
+      add: 3,
+      add: 4,
+      remove: 3,
+      remove: 4,
+      put_file: 3,
+      put_file: 4,
+      on: 3,
+      on: 4,
+      watch: 3,
+      watch: 4,
+      off: 2,
+      unsubscribe: 2,
+      enum: 2,
+      enum: 3,
+      range: 3,
+      range: 4,
+      status: 1
+    ]
+
+    missing =
+      Enum.reject(expected, fn {fun, arity} ->
+        function_exported?(TestDust, fun, arity)
+      end)
+
+    assert missing == [], "facade is missing: #{inspect(missing)}"
+  end
+
   test "testing: :manual defaults cache to Memory when not specified" do
     # Start a second supervisor with no :cache key — should default to Memory
     {:ok, sup} =

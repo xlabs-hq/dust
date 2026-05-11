@@ -9,6 +9,10 @@ defmodule Dust.SubscriberRegistrar do
   SyncEngines are up before registration runs.
   """
 
+  # PubSubBridge is conditionally defined (only when Phoenix.PubSub is
+  # available). The Code.ensure_loaded? check below guards the call.
+  @compile {:no_warn_undefined, Dust.PubSubBridge}
+
   use GenServer
 
   def start_link(opts) do

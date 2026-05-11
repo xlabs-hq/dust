@@ -70,7 +70,20 @@ defmodule DustEcto.Transport.HTTP do
     case request(:head, config, url_path) do
       {:ok, %{status: 200}} -> {:ok, true}
       {:ok, %{status: 404}} -> {:ok, false}
+      {:ok, %{status: 405}} -> exists_via_keys(store, path)
       err -> translate_error(err)
+    end
+  end
+
+  # HEAD wasn't always supported on the Dust server — pre-0c55375
+  # deploys 405 it. Fall back to the cheapest existence query the
+  # server has always supported: a one-key listing under
+  # `<path>.**`. Bounded (1 key, no values), no body decode.
+  defp exists_via_keys(store, path) do
+    case list(store, "#{path}.**", select: :keys, limit: 1) do
+      {:ok, %{items: [_ | _]}} -> {:ok, true}
+      {:ok, %{items: []}} -> {:ok, false}
+      err -> err
     end
   end
 

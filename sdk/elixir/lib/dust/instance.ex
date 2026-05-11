@@ -60,7 +60,10 @@ defmodule Dust.Instance do
       end
 
       defdelegate get(store, path), to: Dust.SyncEngine
+      defdelegate get_many(store, paths), to: Dust.SyncEngine
+      defdelegate entry(store, path), to: Dust.SyncEngine
       defdelegate put(store, path, value), to: Dust.SyncEngine
+      defdelegate put(store, path, value, opts), to: Dust.SyncEngine
       defdelegate delete(store, path), to: Dust.SyncEngine
       defdelegate delete(store, path, opts), to: Dust.SyncEngine
       defdelegate merge(store, path, map), to: Dust.SyncEngine
@@ -74,9 +77,12 @@ defmodule Dust.Instance do
       defdelegate put_file(store, path, source_path), to: Dust.SyncEngine
       defdelegate put_file(store, path, source_path, opts), to: Dust.SyncEngine
       defdelegate on(store, pattern, callback, opts \\ []), to: Dust.SyncEngine
+      defdelegate watch(store, pattern, callback, opts \\ []), to: Dust.SyncEngine, as: :on
       defdelegate off(store, ref), to: Dust.SyncEngine
       defdelegate unsubscribe(store, ref), to: Dust.SyncEngine, as: :off
       defdelegate enum(store, pattern), to: Dust.SyncEngine
+      defdelegate enum(store, pattern, opts), to: Dust.SyncEngine
+      defdelegate range(store, from, to, opts \\ []), to: Dust.SyncEngine
       defdelegate status(store), to: Dust.SyncEngine
     end
   end
