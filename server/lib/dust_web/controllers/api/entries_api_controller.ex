@@ -740,38 +740,61 @@ defmodule DustWeb.Api.EntriesApiController do
     do: {:error, {:invalid_params, "op #{index}: 'path' required and must be a string"}}
 
   defp build_batch_op_attrs(conn, :set, path, raw, store_token, index) do
-    case Map.fetch(raw, "value") do
-      {:ok, value} ->
-        attrs = %{
-          op: :set,
-          path: path,
-          value: value,
-          device_id: "http:" <> to_string(store_token.id),
-          client_op_id: "#{request_op_id(conn)}:#{index}"
-        }
+    with {:ok, value} <- fetch_set_value(raw, index),
+         {:ok, if_match} <- parse_batch_if_match(raw, index) do
+      attrs = %{
+        op: :set,
+        path: path,
+        value: value,
+        device_id: "http:" <> to_string(store_token.id),
+        client_op_id: "#{request_op_id(conn)}:#{index}"
+      }
 
-        {:ok, maybe_attach_if_match(attrs, raw, index)}
-
-      :error ->
-        {:error, {:invalid_params, "op #{index}: 'value' required for set"}}
+      {:ok, attach_if_match(attrs, if_match)}
     end
   end
 
   defp build_batch_op_attrs(conn, :delete, path, raw, store_token, index) do
-    attrs = %{
-      op: :delete,
-      path: path,
-      device_id: "http:" <> to_string(store_token.id),
-      client_op_id: "#{request_op_id(conn)}:#{index}"
-    }
+    with {:ok, if_match} <- parse_batch_if_match(raw, index) do
+      attrs = %{
+        op: :delete,
+        path: path,
+        device_id: "http:" <> to_string(store_token.id),
+        client_op_id: "#{request_op_id(conn)}:#{index}"
+      }
 
-    {:ok, maybe_attach_if_match(attrs, raw, index)}
+      {:ok, attach_if_match(attrs, if_match)}
+    end
   end
 
-  defp maybe_attach_if_match(attrs, %{"if_match" => n}, _index) when is_integer(n) and n > 0,
-    do: Map.put(attrs, :if_match, n)
+  defp fetch_set_value(raw, index) do
+    case Map.fetch(raw, "value") do
+      {:ok, value} -> {:ok, value}
+      :error -> {:error, {:invalid_params, "op #{index}: 'value' required for set"}}
+    end
+  end
 
-  defp maybe_attach_if_match(attrs, _raw, _index), do: attrs
+  # A present-but-invalid `if_match` must reject the batch with 400 —
+  # silently dropping the precondition would turn a CAS write into an
+  # unconditional one, which is exactly the failure mode CAS exists
+  # to prevent. Absent if_match is fine and yields `:none`.
+  defp parse_batch_if_match(raw, index) do
+    case Map.fetch(raw, "if_match") do
+      :error ->
+        {:ok, :none}
+
+      {:ok, n} when is_integer(n) and n > 0 ->
+        {:ok, n}
+
+      {:ok, other} ->
+        {:error,
+         {:invalid_params,
+          "op #{index}: if_match must be a positive integer (got #{inspect(other)})"}}
+    end
+  end
+
+  defp attach_if_match(attrs, :none), do: attrs
+  defp attach_if_match(attrs, n) when is_integer(n), do: Map.put(attrs, :if_match, n)
 
   defp validate_mutually_exclusive(params) do
     cond do

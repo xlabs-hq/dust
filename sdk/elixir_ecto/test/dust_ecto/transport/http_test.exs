@@ -180,6 +180,42 @@ defmodule DustEcto.Transport.HTTPTest do
     end
   end
 
+  describe "path encoding (RFC 3986 path segments, not query form)" do
+    test "spaces become %20, not '+'" do
+      stub(fn conn ->
+        # The raw request path on the wire — RFC 3986 percent-encoding,
+        # not www-form-urlencoded. A `+` here would be a Bug because
+        # some HTTP layers treat it as a space.
+        assert conn.request_path == "/api/stores/myorg/mystore/entries/hello%20world/title"
+        refute conn.request_path =~ "+"
+
+        Req.Test.json(conn, %{
+          "path" => "hello world.title",
+          "value" => "x",
+          "type" => "string",
+          "revision" => 1
+        })
+      end)
+
+      assert {:ok, _} = HTTP.get(@store, "hello world.title")
+    end
+
+    test "literal '+' in a segment is percent-encoded" do
+      stub(fn conn ->
+        assert conn.request_path == "/api/stores/myorg/mystore/entries/a%2Bb"
+
+        Req.Test.json(conn, %{
+          "path" => "a+b",
+          "value" => "x",
+          "type" => "string",
+          "revision" => 1
+        })
+      end)
+
+      assert {:ok, _} = HTTP.get(@store, "a+b")
+    end
+  end
+
   describe "error translation" do
     test "401 -> :unauthorized" do
       stub(fn conn -> Plug.Conn.send_resp(conn, 401, ~s({})) end)

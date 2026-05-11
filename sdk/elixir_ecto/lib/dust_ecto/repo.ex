@@ -364,15 +364,37 @@ defmodule DustEcto.Repo do
     transport.unsubscribe(store, ref)
   end
 
-  defp ecto_event(_schema, prefix, %{op: :delete, path: path}, _t, _s) do
+  defp ecto_event(schema, prefix, %{op: :delete, path: path}, transport, store) do
     case slug_from_path(path, prefix) do
-      {:ok, slug} -> {:deleted, slug}
-      :error -> nil
+      {:ok, slug, []} ->
+        # Whole-record delete: path is exactly `<prefix>.<slug>`.
+        {:deleted, slug}
+
+      {:ok, slug, _field_segments} ->
+        # Field-level delete: the record may still exist with its
+        # remaining fields. Re-read; emit :upserted if it loads, or
+        # :deleted only when the slug is truly gone.
+        case transport.get(store, "#{prefix}.#{slug}") do
+          {:ok, %{value: value}} ->
+            case load_record_for_event(schema, slug, value) do
+              {:ok, struct} -> {:upserted, struct}
+              :error -> {:deleted, slug}
+            end
+
+          {:error, :not_found} ->
+            {:deleted, slug}
+
+          _ ->
+            nil
+        end
+
+      :error ->
+        nil
     end
   end
 
   defp ecto_event(schema, prefix, %{path: path} = _event, transport, store) do
-    with {:ok, slug} <- slug_from_path(path, prefix),
+    with {:ok, slug, _field_segments} <- slug_from_path(path, prefix),
          {:ok, %{value: value}} <- transport.get(store, "#{prefix}.#{slug}"),
          {:ok, struct} <- load_record_for_event(schema, slug, value) do
       {:upserted, struct}
@@ -383,10 +405,23 @@ defmodule DustEcto.Repo do
 
   defp ecto_event(_schema, _prefix, _event, _t, _s), do: nil
 
+  # Walks prefix-many segments off the front of the path; takes the
+  # next segment as the slug; the rest is the field-segments tail
+  # (empty if the event targets the slug itself, e.g. a whole-record
+  # delete). Handles dotted prefixes by splitting both strings and
+  # comparing segment-by-segment.
   defp slug_from_path(path, prefix) when is_binary(path) and is_binary(prefix) do
-    case String.split(path, ".") do
-      [^prefix, slug | _] when slug != "" -> {:ok, slug}
-      _ -> :error
+    prefix_segs = String.split(prefix, ".")
+    path_segs = String.split(path, ".")
+    prefix_len = length(prefix_segs)
+
+    if Enum.take(path_segs, prefix_len) == prefix_segs do
+      case Enum.drop(path_segs, prefix_len) do
+        [slug | rest] when slug != "" -> {:ok, slug, rest}
+        _ -> :error
+      end
+    else
+      :error
     end
   end
 

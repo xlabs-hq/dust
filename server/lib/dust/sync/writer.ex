@@ -113,7 +113,7 @@ defmodule Dust.Sync.Writer do
       # Update cached metadata in Postgres (best-effort, after durable commit)
       case result do
         {:ok, op} ->
-          update_store_metadata(store_id, op.store_seq, db)
+          update_store_metadata(store_id, op.store_seq, db, 1)
           {result, metadata}
 
         _ ->
@@ -158,7 +158,7 @@ defmodule Dust.Sync.Writer do
       case result do
         {:ok, ops} when is_list(ops) ->
           last = List.last(ops)
-          if last, do: update_store_metadata(store_id, last.store_seq, db)
+          if last, do: update_store_metadata(store_id, last.store_seq, db, length(ops))
           {{:ok, ops}, Map.put(metadata, :ops_committed, length(ops))}
 
         _ ->
@@ -407,8 +407,12 @@ defmodule Dust.Sync.Writer do
   defp encode_value(nil), do: nil
   defp encode_value(value), do: Jason.encode!(ValueCodec.wrap(value))
 
-  # Update cached metadata in Postgres stores table
-  defp update_store_metadata(store_id, current_seq, db) do
+  # Update cached metadata in Postgres stores table. `inc_by` is the
+  # number of ops committed in this transaction — 1 for the normal
+  # write path, N for batch_write — so the cached op_count stays in
+  # sync with the actual store_ops row count.
+  defp update_store_metadata(store_id, current_seq, db, inc_by)
+       when is_integer(inc_by) and inc_by > 0 do
     import Ecto.Query
 
     entry_count = query_one_int(db, "SELECT count(*) FROM store_entries")
@@ -416,7 +420,7 @@ defmodule Dust.Sync.Writer do
     Dust.Repo.update_all(
       from(s in Dust.Stores.Store, where: s.id == ^store_id),
       set: [current_seq: current_seq, entry_count: entry_count],
-      inc: [op_count: 1]
+      inc: [op_count: inc_by]
     )
   end
 

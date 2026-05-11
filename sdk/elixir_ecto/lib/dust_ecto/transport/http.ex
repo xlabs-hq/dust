@@ -204,9 +204,29 @@ defmodule DustEcto.Transport.HTTP do
   end
 
   defp path_to_url_segments(path) when is_binary(path) do
+    # URI.encode_www_form/1 turns space into `+`, which is correct for
+    # `application/x-www-form-urlencoded` query strings but wrong in a
+    # URL path segment — RFC 3986 / Plug treat `+` literally there, so
+    # a Dust segment "hello world" would round-trip as "hello+world".
+    # URI.encode/2 with a path-safe character predicate produces the
+    # right %20 encoding.
     path
     |> String.split(".")
-    |> Enum.map_join("/", &URI.encode_www_form/1)
+    |> Enum.map_join("/", &encode_segment/1)
+  end
+
+  defp encode_segment(segment) do
+    URI.encode(segment, &path_segment_safe?/1)
+  end
+
+  # Characters allowed unencoded in a URL path segment. Per RFC 3986
+  # this would be `unreserved / sub-delims / :@`, but we additionally
+  # percent-encode `+` because several HTTP servers (including older
+  # Plug versions) treat `+` in a path as a space — a leftover from
+  # www-form encoding semantics. Encoding it as `%2B` is universally
+  # safe.
+  defp path_segment_safe?(ch) do
+    URI.char_unreserved?(ch) or ch in ~c"!$&'()*,;=:@"
   end
 
   defp normalize_list_opts(opts, pattern) do

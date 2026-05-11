@@ -748,6 +748,55 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       assert err["detail"] =~ "value"
     end
 
+    test "rejects present-but-invalid if_match (string) — does NOT silently drop it",
+         %{conn: conn, token: token, store: store} do
+      body = %{ops: [%{op: "set", path: "cas_str", value: 1, if_match: "5"}]}
+      resp = batch_write_post(conn, token, Jason.encode!(body))
+
+      err = json_response(resp, 400)
+      assert err["error"] == "invalid_params"
+      assert err["detail"] =~ "if_match"
+
+      # The op did not commit — silent drop would have turned this
+      # into an unconditional write.
+      assert Sync.get_entry(store.id, "cas_str") == nil
+    end
+
+    test "rejects if_match: 0", %{conn: conn, token: token} do
+      body = %{ops: [%{op: "delete", path: "x", if_match: 0}]}
+      resp = batch_write_post(conn, token, Jason.encode!(body))
+      err = json_response(resp, 400)
+      assert err["error"] == "invalid_params"
+      assert err["detail"] =~ "if_match"
+    end
+
+    test "rejects negative if_match", %{conn: conn, token: token} do
+      body = %{ops: [%{op: "set", path: "x", value: 1, if_match: -1}]}
+      resp = batch_write_post(conn, token, Jason.encode!(body))
+      err = json_response(resp, 400)
+      assert err["error"] == "invalid_params"
+      assert err["detail"] =~ "if_match"
+    end
+
+    test "store op_count increments by the batch size, not by 1",
+         %{conn: conn, token: token, store: store} do
+      before = Dust.Repo.get!(Dust.Stores.Store, store.id).op_count
+
+      body = %{
+        ops: [
+          %{op: "set", path: "opcount/a", value: 1},
+          %{op: "set", path: "opcount/b", value: 2},
+          %{op: "set", path: "opcount/c", value: 3}
+        ]
+      }
+
+      resp = batch_write_post(conn, token, Jason.encode!(body))
+      _ = json_response(resp, 200)
+
+      after_seq = Dust.Repo.get!(Dust.Stores.Store, store.id).op_count
+      assert after_seq - before == 3
+    end
+
     test "normalizes slashed paths", %{conn: conn, token: token, store: store} do
       body = %{ops: [%{op: "set", path: "users/charlie/name", value: "Charlie"}]}
       resp = batch_write_post(conn, token, Jason.encode!(body))
