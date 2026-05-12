@@ -7,7 +7,7 @@ Phoenix apps without writing a custom HTTP client.
 ```elixir
 defmodule MyApp.Reading.Link do
   use DustEcto.Schema,
-    prefix: "links",
+    prefix: ["links"],
     required: [:slug, :title, :url]
 
   embedded_schema do
@@ -63,7 +63,7 @@ config :dust_ecto,
 ```elixir
 # lib/my_app/reading/link.ex
 defmodule MyApp.Reading.Link do
-  use DustEcto.Schema, prefix: "links", required: [:slug, :title]
+  use DustEcto.Schema, prefix: ["links"], required: [:slug, :title]
 
   embedded_schema do
     field :title, :string
@@ -387,7 +387,7 @@ mechanical:
 | Hand-rolled | DustEcto |
 |---|---|
 | `MyApp.Dust.Client` | Delete entirely — `DustEcto.Transport.HTTP` replaces it. |
-| `use MyApp.Dust.Schema, prefix: "foo"` | `use DustEcto.Schema, prefix: "foo", required: [...]` |
+| `use MyApp.Dust.Schema, prefix: "foo"` | `use DustEcto.Schema, prefix: ["foo"], required: [...]` |
 | `MyApp.Dust.Repo.all/get/insert/update` | `DustEcto.Repo.all/get/insert/update` (1-for-1) |
 | `MyApp.Dust.Repo.soft_delete` (null-PUT workaround) | `DustEcto.Repo.delete/2` (real delete; needs Dust server ≥ 0.1) |
 | `{:error, {:http, status, body}}` tuples | `{:error, %DustEcto.Error{}}` — pattern-match on `:kind` |

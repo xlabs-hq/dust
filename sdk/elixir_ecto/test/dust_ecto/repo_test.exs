@@ -345,7 +345,7 @@ defmodule DustEcto.RepoTest do
             assert params["select"] == "keys"
             assert params["limit"] == "1"
 
-            Req.Test.json(conn, %{"items" => ["links.foo.title"], "next_cursor" => nil})
+            Req.Test.json(conn, %{"items" => ["links/foo/title"], "next_cursor" => nil})
         end
       end)
 
@@ -452,14 +452,14 @@ defmodule DustEcto.RepoTest do
         # Two ops in the batch, in the order submitted. Paths in the
         # batch_write body are dotted (canonical) — only URL segments use
         # slashes.
-        assert [%{"op" => "set", "path" => "map_links.foo"}, %{"op" => "delete", "path" => "map_links.bar"}] =
+        assert [%{"op" => "set", "path" => "map_links/foo"}, %{"op" => "delete", "path" => "map_links/bar"}] =
                  Enum.map(decoded["ops"], &Map.take(&1, ["op", "path"]))
 
         Req.Test.json(conn, %{
           "store_seq" => 42,
           "ops" => [
-            %{"path" => "map_links.foo", "store_seq" => 41, "revision" => 41},
-            %{"path" => "map_links.bar", "store_seq" => 42, "revision" => 42}
+            %{"path" => "map_links/foo", "store_seq" => 41, "revision" => 41},
+            %{"path" => "map_links/bar", "store_seq" => 42, "revision" => 42}
           ]
         })
       end)
@@ -481,11 +481,11 @@ defmodule DustEcto.RepoTest do
         decoded = JSON.decode!(body)
 
         # FlatNote has exactly one writable field, :body.
-        assert [%{"op" => "set", "path" => "notes.x.body", "value" => "hi"}] = decoded["ops"]
+        assert [%{"op" => "set", "path" => "notes/x/body", "value" => "hi"}] = decoded["ops"]
 
         Req.Test.json(conn, %{
           "store_seq" => 1,
-          "ops" => [%{"path" => "notes.x.body", "store_seq" => 1, "revision" => 1}]
+          "ops" => [%{"path" => "notes/x/body", "store_seq" => 1, "revision" => 1}]
         })
       end)
 

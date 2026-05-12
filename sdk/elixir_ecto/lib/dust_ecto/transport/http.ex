@@ -12,6 +12,7 @@ defmodule DustEcto.Transport.HTTP do
 
   @behaviour DustEcto.Transport
 
+  alias Dust.Protocol.Path, as: DustPath
   alias DustEcto.Error
 
   @impl DustEcto.Transport
@@ -204,15 +205,21 @@ defmodule DustEcto.Transport.HTTP do
   end
 
   defp path_to_url_segments(path) when is_binary(path) do
+    # Path is canonical slash-rendered (`links/foo/title`). Decode it
+    # into segments via the segment-first protocol module so any
+    # `~0`/`~1` escapes round-trip correctly into the URL — a segment
+    # that contains a literal `/` becomes `%2F` in the URL, not a
+    # path separator.
+    #
     # URI.encode_www_form/1 turns space into `+`, which is correct for
-    # `application/x-www-form-urlencoded` query strings but wrong in a
-    # URL path segment — RFC 3986 / Plug treat `+` literally there, so
-    # a Dust segment "hello world" would round-trip as "hello+world".
+    # `application/x-www-form-urlencoded` query strings but wrong in
+    # a URL path segment — RFC 3986 / Plug treat `+` literally there.
     # URI.encode/2 with a path-safe character predicate produces the
     # right %20 encoding.
-    path
-    |> String.split(".")
-    |> Enum.map_join("/", &encode_segment/1)
+    case DustPath.parse_rendered(path) do
+      {:ok, segments} -> Enum.map_join(segments, "/", &encode_segment/1)
+      _ -> raise ArgumentError, "invalid path #{inspect(path)}"
+    end
   end
 
   defp encode_segment(segment) do

@@ -6,9 +6,9 @@ defmodule DustEcto.SchemaTest do
   alias DustEcto.Test.MapLink
 
   describe "macro reflection" do
-    test "exposes the prefix" do
-      assert Link.__dust_prefix__() == "links"
-      assert FlatNote.__dust_prefix__() == "notes"
+    test "exposes the prefix as a segment list" do
+      assert Link.__dust_prefix__() == ["links"]
+      assert FlatNote.__dust_prefix__() == ["notes"]
     end
 
     test "exposes the mode (defaults to :flat)" do
@@ -42,10 +42,32 @@ defmodule DustEcto.SchemaTest do
       end
     end
 
-    test "raises when :prefix is empty" do
-      assert_raise ArgumentError, ~r/non-empty :prefix/, fn ->
+    test "raises when :prefix is an empty list" do
+      assert_raise ArgumentError, ~r/must not be empty/, fn ->
         defmodule EmptyPrefix do
-          use DustEcto.Schema, prefix: ""
+          use DustEcto.Schema, prefix: []
+          embedded_schema do
+            field :x, :string
+          end
+        end
+      end
+    end
+
+    test "raises with a migration hint when :prefix is a (legacy) dotted string" do
+      assert_raise ArgumentError, ~r/segment list, not a string/, fn ->
+        defmodule LegacyDottedPrefix do
+          use DustEcto.Schema, prefix: "reading.links"
+          embedded_schema do
+            field :x, :string
+          end
+        end
+      end
+    end
+
+    test "raises when :prefix segments are not non-empty strings" do
+      assert_raise ArgumentError, ~r/non-empty strings/, fn ->
+        defmodule BadPrefixSegment do
+          use DustEcto.Schema, prefix: ["a", ""]
           embedded_schema do
             field :x, :string
           end
@@ -56,7 +78,7 @@ defmodule DustEcto.SchemaTest do
     test "raises on unknown :mode" do
       assert_raise ArgumentError, ~r/:mode must be :map or :flat/, fn ->
         defmodule BadMode do
-          use DustEcto.Schema, prefix: "x", mode: :weird
+          use DustEcto.Schema, prefix: ["x"], mode: :weird
           embedded_schema do
             field :x, :string
           end
@@ -67,7 +89,7 @@ defmodule DustEcto.SchemaTest do
     test "raises when :required is not a list of atoms" do
       assert_raise ArgumentError, ~r/:required must be a list of field atoms/, fn ->
         defmodule BadRequired do
-          use DustEcto.Schema, prefix: "x", required: ["slug"]
+          use DustEcto.Schema, prefix: ["x"], required: ["slug"]
           embedded_schema do
             field :x, :string
           end

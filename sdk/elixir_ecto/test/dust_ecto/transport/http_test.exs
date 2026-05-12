@@ -35,21 +35,21 @@ defmodule DustEcto.Transport.HTTPTest do
         assert conn.method == "GET"
         assert conn.request_path == "/api/stores/myorg/mystore/entries"
         params = URI.decode_query(conn.query_string)
-        assert params["pattern"] == "links.**"
+        assert params["pattern"] == "links/**"
         assert params["limit"] == "50"
         assert params["select"] == "entries"
 
         Req.Test.json(conn, %{
           "items" => [
-            %{"path" => "links.foo.title", "value" => "Foo", "type" => "string", "revision" => 5}
+            %{"path" => "links/foo/title", "value" => "Foo", "type" => "string", "revision" => 5}
           ],
-          "next_cursor" => "links.foo.title"
+          "next_cursor" => "links/foo/title"
         })
       end)
 
-      assert {:ok, page} = HTTP.list(@store, "links.**", limit: 50, select: :entries)
-      assert page.next_cursor == "links.foo.title"
-      assert [%{path: "links.foo.title", value: "Foo", revision: 5}] = page.items
+      assert {:ok, page} = HTTP.list(@store, "links/**", limit: 50, select: :entries)
+      assert page.next_cursor == "links/foo/title"
+      assert [%{path: "links/foo/title", value: "Foo", revision: 5}] = page.items
     end
   end
 
@@ -60,15 +60,15 @@ defmodule DustEcto.Transport.HTTPTest do
         assert conn.request_path == "/api/stores/myorg/mystore/entries/links/foo/title"
 
         Req.Test.json(conn, %{
-          "path" => "links.foo.title",
+          "path" => "links/foo/title",
           "value" => "Foo",
           "type" => "string",
           "revision" => 7
         })
       end)
 
-      assert {:ok, entry} = HTTP.get(@store, "links.foo.title")
-      assert entry.path == "links.foo.title"
+      assert {:ok, entry} = HTTP.get(@store, "links/foo/title")
+      assert entry.path == "links/foo/title"
       assert entry.revision == 7
     end
 
@@ -79,7 +79,7 @@ defmodule DustEcto.Transport.HTTPTest do
         |> Plug.Conn.send_resp(404, ~s({"error":"not_found"}))
       end)
 
-      assert {:error, :not_found} = HTTP.get(@store, "no.such.path")
+      assert {:error, :not_found} = HTTP.get(@store, "no/such/path")
     end
   end
 
@@ -106,7 +106,7 @@ defmodule DustEcto.Transport.HTTPTest do
         Req.Test.json(conn, %{"store_seq" => 42, "revision" => 42})
       end)
 
-      assert {:ok, %{store_seq: 42}} = HTTP.put(@store, "links.foo.title", "Foo", [])
+      assert {:ok, %{store_seq: 42}} = HTTP.put(@store, "links/foo/title", "Foo", [])
     end
 
     test "If-Match header is forwarded when provided in opts" do
@@ -115,7 +115,7 @@ defmodule DustEcto.Transport.HTTPTest do
         Req.Test.json(conn, %{"store_seq" => 6})
       end)
 
-      assert {:ok, %{store_seq: 6}} = HTTP.put(@store, "links.foo.title", "F", if_match: 5)
+      assert {:ok, %{store_seq: 6}} = HTTP.put(@store, "links/foo/title", "F", if_match: 5)
     end
 
     test "412 conflict translates to %Error{kind: :conflict}" do
@@ -190,14 +190,14 @@ defmodule DustEcto.Transport.HTTPTest do
         refute conn.request_path =~ "+"
 
         Req.Test.json(conn, %{
-          "path" => "hello world.title",
+          "path" => "hello world/title",
           "value" => "x",
           "type" => "string",
           "revision" => 1
         })
       end)
 
-      assert {:ok, _} = HTTP.get(@store, "hello world.title")
+      assert {:ok, _} = HTTP.get(@store, "hello world/title")
     end
 
     test "literal '+' in a segment is percent-encoded" do

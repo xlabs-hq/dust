@@ -20,9 +20,40 @@ defmodule DustEcto.Repo do
   race you.
   """
 
+  alias Dust.Protocol.Path, as: DustPath
   alias DustEcto.{Error, Transport}
 
   require Logger
+
+  # --- Path-building helpers --------------------------------------
+  # Schemas declare their prefix as a segment list
+  # (e.g. `prefix: ["reading", "links"]`). These helpers compose
+  # record / field / pattern paths in canonical slash-rendered form
+  # via the segment-first `Dust.Protocol.Path` API; nothing in this
+  # module should build paths via string interpolation.
+
+  defp record_path!(prefix, slug) when is_list(prefix) and is_binary(slug) do
+    {:ok, segs} = DustPath.child(prefix, slug)
+    {:ok, str} = DustPath.render(segs)
+    str
+  end
+
+  defp field_path!(prefix, slug, field) when is_list(prefix) and is_binary(slug) do
+    {:ok, segs} = DustPath.child(prefix, slug)
+    {:ok, segs} = DustPath.child(segs, to_string(field))
+    {:ok, str} = DustPath.render(segs)
+    str
+  end
+
+  defp prefix_pattern!(prefix) when is_list(prefix) do
+    {:ok, str} = DustPath.render(prefix ++ ["**"])
+    str
+  end
+
+  defp prefix_path!(prefix) when is_list(prefix) do
+    {:ok, str} = DustPath.render(prefix)
+    str
+  end
 
   # ------------------------------------------------------------------
   # Reads
@@ -40,7 +71,7 @@ defmodule DustEcto.Repo do
   @spec all(module()) :: {:ok, [struct()]} | {:error, Error.t()}
   def all(schema) when is_atom(schema) do
     prefix = schema.__dust_prefix__()
-    pattern = "#{prefix}.**"
+    pattern = prefix_pattern!(prefix)
 
     case stream_all_items(pattern) do
       {:ok, items} ->
@@ -61,7 +92,7 @@ defmodule DustEcto.Repo do
   @spec stream(module()) :: Enumerable.t()
   def stream(schema) when is_atom(schema) do
     prefix = schema.__dust_prefix__()
-    pattern = "#{prefix}.**"
+    pattern = prefix_pattern!(prefix)
     {transport, _} = Transport.pick()
     store = Transport.store!()
 
@@ -155,7 +186,7 @@ defmodule DustEcto.Repo do
     {transport, _} = Transport.pick()
     store = Transport.store!()
 
-    case transport.get(store, "#{prefix}.#{slug}") do
+    case transport.get(store, record_path!(prefix, slug)) do
       {:ok, %{value: value}} when is_map(value) ->
         case load_record(schema, slug, value) do
           {:ok, struct} -> {:ok, struct}
@@ -207,7 +238,7 @@ defmodule DustEcto.Repo do
     {transport, _} = Transport.pick()
     store = Transport.store!()
 
-    transport.exists?(store, "#{prefix}.#{slug}")
+    transport.exists?(store, record_path!(prefix, slug))
   end
 
   # ------------------------------------------------------------------
@@ -324,7 +355,7 @@ defmodule DustEcto.Repo do
     {transport, _} = Transport.pick()
     store = Transport.store!()
 
-    transport.delete(store, "#{prefix}.#{slug}", Keyword.take(opts, [:if_match]))
+    transport.delete(store, record_path!(prefix, slug), Keyword.take(opts, [:if_match]))
   end
 
   @doc """
@@ -408,7 +439,7 @@ defmodule DustEcto.Repo do
   defp batch_op_to_wire({:delete, schema, slug, opts})
        when is_atom(schema) and is_binary(slug) and is_list(opts) do
     prefix = schema.__dust_prefix__()
-    op = %{op: :delete, path: "#{prefix}.#{slug}"}
+    op = %{op: :delete, path: record_path!(prefix, slug)}
 
     case Keyword.fetch(opts, :if_match) do
       {:ok, n} when is_integer(n) -> {:ok, [Map.put(op, :if_match, n)]}
@@ -442,7 +473,7 @@ defmodule DustEcto.Repo do
 
       mode == :map ->
         body = dump_for_wire(struct)
-        op = %{op: set_atom, path: "#{prefix}.#{slug}", value: body}
+        op = %{op: set_atom, path: record_path!(prefix, slug), value: body}
 
         case Keyword.fetch(opts, :if_match) do
           {:ok, n} when is_integer(n) -> {:ok, [Map.put(op, :if_match, n)]}
@@ -457,7 +488,7 @@ defmodule DustEcto.Repo do
           |> Enum.reject(&(&1 == :slug))
           |> Enum.flat_map(fn field ->
             case Map.fetch(body, field) do
-              {:ok, value} -> [%{op: set_atom, path: "#{prefix}.#{slug}.#{field}", value: value}]
+              {:ok, value} -> [%{op: set_atom, path: field_path!(prefix, slug, field), value: value}]
               :error -> []
             end
           end)
@@ -482,7 +513,7 @@ defmodule DustEcto.Repo do
     {transport, _} = Transport.pick()
     store = Transport.store!()
 
-    transport.delete(store, prefix, [])
+    transport.delete(store, prefix_path!(prefix), [])
   end
 
   # ------------------------------------------------------------------
@@ -504,7 +535,7 @@ defmodule DustEcto.Repo do
           {:ok, reference()} | {:error, Error.t()}
   def subscribe(schema, callback) when is_atom(schema) and is_function(callback, 1) do
     prefix = schema.__dust_prefix__()
-    pattern = "#{prefix}.**"
+    pattern = prefix_pattern!(prefix)
     {transport, _} = Transport.pick()
     store = Transport.store!()
 
@@ -530,7 +561,7 @@ defmodule DustEcto.Repo do
           {:ok, reference()} | {:error, Error.t()}
   def subscribe_raw(schema, callback) when is_atom(schema) and is_function(callback, 1) do
     prefix = schema.__dust_prefix__()
-    pattern = "#{prefix}.**"
+    pattern = prefix_pattern!(prefix)
     {transport, _} = Transport.pick()
     store = Transport.store!()
 
@@ -555,7 +586,7 @@ defmodule DustEcto.Repo do
         # Field-level delete: the record may still exist with its
         # remaining fields. Re-read; emit :upserted if it loads, or
         # :deleted only when the slug is truly gone.
-        case transport.get(store, "#{prefix}.#{slug}") do
+        case transport.get(store, record_path!(prefix, slug)) do
           {:ok, %{value: value}} ->
             case load_record_for_event(schema, slug, value) do
               {:ok, struct} -> {:upserted, struct}
@@ -576,7 +607,7 @@ defmodule DustEcto.Repo do
 
   defp ecto_event(schema, prefix, %{path: path} = _event, transport, store) do
     with {:ok, slug, _field_segments} <- slug_from_path(path, prefix),
-         {:ok, %{value: value}} <- transport.get(store, "#{prefix}.#{slug}"),
+         {:ok, %{value: value}} <- transport.get(store, record_path!(prefix, slug)),
          {:ok, struct} <- load_record_for_event(schema, slug, value) do
       {:upserted, struct}
     else
@@ -586,30 +617,29 @@ defmodule DustEcto.Repo do
 
   defp ecto_event(_schema, _prefix, _event, _t, _s), do: nil
 
-  # Walks prefix-many segments off the front of the path; takes the
-  # next segment as the slug; the rest is the field-segments tail
-  # (empty if the event targets the slug itself, e.g. a whole-record
-  # delete). Handles dotted prefixes by splitting both strings and
-  # comparing segment-by-segment.
-  defp slug_from_path(path, prefix) when is_binary(path) and is_binary(prefix) do
-    # Path arrives canonical (slash-rendered) post-segment-first migration.
-    # Prefix is whatever the user declared on the schema — may be dotted
-    # legacy form or canonical slash. Decode both to segments via the
-    # same helpers used everywhere else.
-    with {:ok, prefix_segs} <- decode_prefix(prefix),
-         {:ok, path_segs} <- Dust.Protocol.Path.parse_rendered(path) do
-      prefix_len = length(prefix_segs)
+  # Walks prefix-many segments off the front of an incoming path's
+  # segment list; the next segment is the record's slug; the rest is
+  # the field-segments tail (empty if the event targets the slug
+  # itself, e.g. a whole-record delete).
+  #
+  # `prefix` is the schema's `__dust_prefix__/0` segment list. `path`
+  # is canonical slash-rendered.
+  defp slug_from_path(path, prefix) when is_binary(path) and is_list(prefix) do
+    case DustPath.parse_rendered(path) do
+      {:ok, path_segs} ->
+        prefix_len = length(prefix)
 
-      if Enum.take(path_segs, prefix_len) == prefix_segs do
-        case Enum.drop(path_segs, prefix_len) do
-          [slug | rest] when slug != "" -> {:ok, slug, rest}
-          _ -> :error
+        if Enum.take(path_segs, prefix_len) == prefix do
+          case Enum.drop(path_segs, prefix_len) do
+            [slug | rest] when slug != "" -> {:ok, slug, rest}
+            _ -> :error
+          end
+        else
+          :error
         end
-      else
+
+      _ ->
         :error
-      end
-    else
-      _ -> :error
     end
   end
 
@@ -681,35 +711,30 @@ defmodule DustEcto.Repo do
     |> Enum.reverse()
   end
 
-  defp parse_path(path, prefix) when is_binary(path) and is_binary(prefix) do
-    with {:ok, prefix_segs} <- decode_prefix(prefix),
-         {:ok, path_segs} <- Dust.Protocol.Path.parse_rendered(path) do
-      prefix_len = length(prefix_segs)
+  # Pair to `slug_from_path/2` for list-output use cases: walks the
+  # prefix off the front of a slash-rendered path and returns `{:ok,
+  # slug, field_segments}` only when there is at least one field
+  # segment past the slug. Used by `rebuild_records/3` to assemble
+  # record bodies from leaf entries.
+  defp parse_path(path, prefix) when is_binary(path) and is_list(prefix) do
+    case DustPath.parse_rendered(path) do
+      {:ok, path_segs} ->
+        prefix_len = length(prefix)
 
-      if Enum.take(path_segs, prefix_len) == prefix_segs do
-        case Enum.drop(path_segs, prefix_len) do
-          [slug | [_ | _] = field_segments] when slug != "" ->
-            {:ok, slug, field_segments}
+        if Enum.take(path_segs, prefix_len) == prefix do
+          case Enum.drop(path_segs, prefix_len) do
+            [slug | [_ | _] = field_segments] when slug != "" ->
+              {:ok, slug, field_segments}
 
-          _ ->
-            :error
+            _ ->
+              :error
+          end
+        else
+          :error
         end
-      else
-        :error
-      end
-    else
-      _ -> :error
-    end
-  end
 
-  # Schema prefixes may be declared as either legacy dotted strings
-  # (`"reading.links"`) or canonical slash strings (`"reading/links"`).
-  # Future work: accept segment-list prefixes per the dust_ecto
-  # migration design.
-  defp decode_prefix(prefix) when is_binary(prefix) do
-    cond do
-      String.contains?(prefix, "/") -> Dust.Protocol.Path.parse_rendered(prefix)
-      true -> Dust.Protocol.Path.LegacyDot.parse(prefix)
+      _ ->
+        :error
     end
   end
 
@@ -806,7 +831,7 @@ defmodule DustEcto.Repo do
     else
       put_opts = Keyword.take(opts, [:if_match])
 
-      case transport.put(store, "#{prefix}.#{slug}", body, put_opts) do
+      case transport.put(store, record_path!(prefix, slug), body, put_opts) do
         {:ok, _} -> {:ok, struct}
         err -> err
       end
@@ -844,7 +869,7 @@ defmodule DustEcto.Repo do
 
       pairs ->
         Enum.reduce_while(pairs, {:ok, struct}, fn {field, value}, _acc ->
-          case transport.put(store, "#{prefix}.#{slug}.#{field}", value, []) do
+          case transport.put(store, field_path!(prefix, slug, field), value, []) do
             {:ok, _} -> {:cont, {:ok, struct}}
             err -> {:halt, err}
           end

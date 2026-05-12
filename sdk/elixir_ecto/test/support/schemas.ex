@@ -5,7 +5,7 @@ end
 defmodule DustEcto.Test.Link do
   @moduledoc false
   use DustEcto.Schema,
-    prefix: "links",
+    prefix: ["links"],
     required: [:slug, :title, :url]
 
   embedded_schema do
@@ -30,7 +30,7 @@ defmodule DustEcto.Test.MapLink do
   around to exercise `:map` writes specifically.
   """
   use DustEcto.Schema,
-    prefix: "map_links",
+    prefix: ["map_links"],
     required: [:slug, :title, :url],
     mode: :map
 
@@ -51,7 +51,7 @@ end
 defmodule DustEcto.Test.FlatNote do
   @moduledoc false
   use DustEcto.Schema,
-    prefix: "notes",
+    prefix: ["notes"],
     required: [:slug, :body],
     mode: :flat
 
@@ -69,12 +69,13 @@ end
 
 defmodule DustEcto.Test.DottedPrefixLink do
   @moduledoc """
-  Regression schema for dotted-prefix support — prefix itself contains
-  a `.`, so `parse_path` has to walk the path one prefix-segment at a
-  time rather than splitting and pattern-matching on exact arity.
+  Regression schema for multi-segment prefixes — what used to be
+  `prefix: "reading.links"` (legacy dotted) is now an explicit list
+  of segments. Path parsing has to walk segment-by-segment rather
+  than naively dot-splitting.
   """
   use DustEcto.Schema,
-    prefix: "reading.links",
+    prefix: ["reading", "links"],
     required: [:slug, :title]
 
   embedded_schema do
@@ -96,7 +97,7 @@ defmodule DustEcto.Test.NestedThing do
   `things.foo.meta.b`; reads have to reassemble the nested shape.
   """
   use DustEcto.Schema,
-    prefix: "things",
+    prefix: ["things"],
     required: [:slug]
 
   embedded_schema do

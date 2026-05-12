@@ -11,7 +11,7 @@ defmodule DustEcto do
 
       defmodule MyApp.Reading.Link do
         use DustEcto.Schema,
-          prefix: "links",
+          prefix: ["links"],
           required: [:slug, :title, :url]
 
         embedded_schema do
