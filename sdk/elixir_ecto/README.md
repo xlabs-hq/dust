@@ -415,17 +415,25 @@ Config keys (under `:dust_ecto`):
 
 | Key | Default | Where to get it |
 |---|---|---|
+| `:token` | *required* | The store API token. Create one at the [Dust dashboard](https://dustlayer.io). Secret — keep it out of repo. |
 | `:store` | *required* | The Dust store name as `org/name`. |
 | `:base_url` | `https://dustlayer.io` | Override only for self-hosted Dust or a staging instance. |
-| `:token` | *required* | The store API token. Create one at the [Dust dashboard](https://dustlayer.io). |
 
-Typical `runtime.exs` reads these from env:
+Minimum config:
 
 ```elixir
 config :dust_ecto,
   store: System.fetch_env!("DUST_STORE"),
-  base_url: System.get_env("DUST_BASE_URL") || "https://dustlayer.io",
   token: System.fetch_env!("DUST_TOKEN")
+```
+
+If you're hitting a non-default Dust host:
+
+```elixir
+config :dust_ecto,
+  store: System.fetch_env!("DUST_STORE"),
+  token: System.fetch_env!("DUST_TOKEN"),
+  base_url: System.fetch_env!("DUST_BASE_URL")
 ```
 
 Config changes need a server restart in dev — Phoenix's code reload

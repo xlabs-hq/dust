@@ -35,12 +35,22 @@ defmodule DustEcto.TransportTest do
       assert config.token == "tok_x"
     end
 
-    test "raises a clear error if HTTP mode is selected without base_url" do
+    test "base_url defaults to https://dustlayer.io when unset" do
       Application.delete_env(:dust_ecto, :dust_facade)
       Application.delete_env(:dust_ecto, :base_url)
       Application.put_env(:dust_ecto, :token, "tok_x")
+      Application.put_env(:dust_ecto, :store, "myorg/mystore")
 
-      assert_raise ArgumentError, ~r/:base_url/, fn -> Transport.pick() end
+      assert {DustEcto.Transport.HTTP, config} = Transport.pick()
+      assert config.base_url == "https://dustlayer.io"
+    end
+
+    test "raises a clear error if HTTP mode is selected without a token" do
+      Application.delete_env(:dust_ecto, :dust_facade)
+      Application.delete_env(:dust_ecto, :token)
+      Application.put_env(:dust_ecto, :store, "myorg/mystore")
+
+      assert_raise ArgumentError, ~r/:token/, fn -> Transport.pick() end
     end
   end
 

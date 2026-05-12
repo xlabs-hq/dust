@@ -10,6 +10,8 @@ defmodule DustEcto.Transport do
   config based on `dust_facade` config and the SyncEngineRegistry.
   """
 
+  @default_base_url "https://dustlayer.io"
+
   @type store :: String.t()
   @type path :: String.t()
   @type pattern :: String.t()
@@ -62,7 +64,11 @@ defmodule DustEcto.Transport do
       true ->
         {DustEcto.Transport.HTTP,
          %{
-           base_url: Application.fetch_env!(:dust_ecto, :base_url),
+           # base_url defaults to the canonical host — apps only need
+           # to set this for staging environments or self-hosted Dust.
+           # The token has no sensible default (it's a secret) so we
+           # still hard-require it.
+           base_url: Application.get_env(:dust_ecto, :base_url, @default_base_url),
            token: Application.fetch_env!(:dust_ecto, :token)
          }}
     end
