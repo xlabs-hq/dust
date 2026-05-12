@@ -26,18 +26,30 @@ if System.get_env("PHX_SERVER") do
   config :dust, AdminWeb.Endpoint, server: true
 end
 
-# Configure WorkOS
-workos_api_key =
-  System.get_env("WORKOS_API_KEY") ||
-    raise "WORKOS_API_KEY is not set. Add it to server/.env"
+# Configure WorkOS. In test, the application substitutes
+# Dust.WorkOSStub for the real client (see config/test.exs), so the
+# env vars are never read — we provide harmless placeholder values so
+# unset env in CI doesn't crash boot. Dev/prod still require real
+# values.
+case config_env() do
+  :test ->
+    config :workos, WorkOS.Client,
+      api_key: System.get_env("WORKOS_API_KEY", "test_workos_api_key"),
+      client_id: System.get_env("WORKOS_CLIENT_ID", "test_workos_client_id")
 
-workos_client_id =
-  System.get_env("WORKOS_CLIENT_ID") ||
-    raise "WORKOS_CLIENT_ID is not set. Add it to server/.env"
+  _ ->
+    workos_api_key =
+      System.get_env("WORKOS_API_KEY") ||
+        raise "WORKOS_API_KEY is not set. Add it to server/.env"
 
-config :workos, WorkOS.Client,
-  api_key: workos_api_key,
-  client_id: workos_client_id
+    workos_client_id =
+      System.get_env("WORKOS_CLIENT_ID") ||
+        raise "WORKOS_CLIENT_ID is not set. Add it to server/.env"
+
+    config :workos, WorkOS.Client,
+      api_key: workos_api_key,
+      client_id: workos_client_id
+end
 
 # Enable dev bypass when no WorkOS API key is set
 if config_env() == :dev do
