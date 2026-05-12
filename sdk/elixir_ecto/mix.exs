@@ -16,7 +16,12 @@ defmodule DustEcto.MixProject do
       package: package(),
       name: "DustEcto",
       source_url: @source_url,
-      docs: [main: "DustEcto", source_url: @source_url, source_ref: "v#{@version}"]
+      docs: [
+        main: "readme",
+        extras: ["README.md"],
+        source_url: @source_url,
+        source_ref: "v#{@version}"
+      ]
     ]
   end
 
@@ -51,7 +56,8 @@ defmodule DustEcto.MixProject do
     [
       maintainers: ["James Tippett"],
       licenses: ["MIT"],
-      links: %{"GitHub" => @source_url}
+      links: %{"GitHub" => @source_url},
+      files: ~w(lib mix.exs README.md)
     ]
   end
 end
