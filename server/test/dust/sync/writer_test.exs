@@ -163,6 +163,74 @@ defmodule Dust.Sync.WriterTest do
 
       assert Sync.get_entry(store.id, "key").value == "simple"
     end
+
+    test "set with map value clears existing flat-leaf descendants", %{store: store} do
+      # Seed the record's leaves the way a :flat-mode dust_ecto writer
+      # would — three separate PUTs.
+      for {field, value} <- [{"title", "Old"}, {"url", "https://old"}, {"note", "n"}] do
+        Sync.write(store.id, %{
+          op: :set,
+          path: "links.foo.#{field}",
+          value: value,
+          device_id: "d",
+          client_op_id: "seed-#{field}"
+        })
+      end
+
+      # Now a :map-mode writer (or any client) PUTs the whole slug with
+      # a *partial* map — title + url only, no note.
+      Sync.write(store.id, %{
+        op: :set,
+        path: "links.foo",
+        value: %{"title" => "New", "url" => "https://new"},
+        device_id: "d",
+        client_op_id: "replace"
+      })
+
+      # The pre-existing :note leaf must be gone — subtree replace, not
+      # field-wise merge. Confirms the contract relied on by dust_ecto's
+      # :flat ↔ :map crossover.
+      assert Sync.get_entry(store.id, "links.foo.note") == nil
+      assert Sync.get_entry(store.id, "links.foo.title").value == "New"
+      assert Sync.get_entry(store.id, "links.foo.url").value == "https://new"
+
+      # Re-assembled view returns only what was written.
+      entry = Sync.get_entry(store.id, "links.foo")
+      assert entry.value == %{"title" => "New", "url" => "https://new"}
+    end
+
+    test "set with scalar value clears existing flat-leaf descendants", %{store: store} do
+      # Seed two descendants of the path.
+      Sync.write(store.id, %{
+        op: :set,
+        path: "counters.foo.hits",
+        value: 3,
+        device_id: "d",
+        client_op_id: "seed-1"
+      })
+
+      Sync.write(store.id, %{
+        op: :set,
+        path: "counters.foo.misses",
+        value: 1,
+        device_id: "d",
+        client_op_id: "seed-2"
+      })
+
+      # Now overwrite the parent path with a scalar — descendants must
+      # all clear, parent becomes the new scalar leaf.
+      Sync.write(store.id, %{
+        op: :set,
+        path: "counters.foo",
+        value: 0,
+        device_id: "d",
+        client_op_id: "replace"
+      })
+
+      assert Sync.get_entry(store.id, "counters.foo").value == 0
+      assert Sync.get_entry(store.id, "counters.foo.hits") == nil
+      assert Sync.get_entry(store.id, "counters.foo.misses") == nil
+    end
   end
 
   describe "get_ops_since/2" do
