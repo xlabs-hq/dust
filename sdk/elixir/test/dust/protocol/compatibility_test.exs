@@ -22,7 +22,7 @@ defmodule Dust.Protocol.CompatibilityTest do
     # the new shape (`{segments, rendered, valid}`) while this SDK
     # still ships the legacy dotted `Dust.Protocol.Path` API. The two
     # are incompatible by design — the new fixture has cases like
-    # `"hello.world" -> ["hello.world"]` (one segment) that the legacy
+    # `"hello/world" -> ["hello/world"]` (one segment) that the legacy
     # SDK can't represent. Re-enable once the SDK is on the new Path
     # API and we can call `parse_rendered/1` here. Tracked alongside
     # the rest of the segment-first work in

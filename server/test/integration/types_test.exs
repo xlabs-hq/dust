@@ -11,7 +11,7 @@ defmodule Dust.Integration.TypesTest do
       ref =
         push(socket, "write", %{
           "op" => "increment",
-          "path" => "stats.views",
+          "path" => "stats/views",
           "value" => 3,
           "client_op_id" => "o1"
         })
@@ -19,7 +19,7 @@ defmodule Dust.Integration.TypesTest do
       assert_reply ref, :ok, %{store_seq: 1}
       assert_broadcast "event", %{store_seq: 1, op: :increment, path: "stats/views"}
 
-      entry = Dust.Sync.get_entry(store.id, "stats.views")
+      entry = Dust.Sync.get_entry(store.id, "stats/views")
       assert entry.value == 3
     end
 
@@ -30,7 +30,7 @@ defmodule Dust.Integration.TypesTest do
       ref1 =
         push(socket, "write", %{
           "op" => "increment",
-          "path" => "stats.views",
+          "path" => "stats/views",
           "value" => 3,
           "client_op_id" => "o1"
         })
@@ -40,14 +40,14 @@ defmodule Dust.Integration.TypesTest do
       ref2 =
         push(socket, "write", %{
           "op" => "increment",
-          "path" => "stats.views",
+          "path" => "stats/views",
           "value" => 5,
           "client_op_id" => "o2"
         })
 
       assert_reply ref2, :ok, %{store_seq: 2}
 
-      entry = Dust.Sync.get_entry(store.id, "stats.views")
+      entry = Dust.Sync.get_entry(store.id, "stats/views")
       assert entry.value == 8
     end
 
@@ -58,7 +58,7 @@ defmodule Dust.Integration.TypesTest do
       ref =
         push(socket, "write", %{
           "op" => "increment",
-          "path" => "stats.views",
+          "path" => "stats/views",
           "value" => "not_a_number",
           "client_op_id" => "o1"
         })
@@ -119,7 +119,7 @@ defmodule Dust.Integration.TypesTest do
       ref =
         push(socket, "write", %{
           "op" => "add",
-          "path" => "post.tags",
+          "path" => "post/tags",
           "value" => "elixir",
           "client_op_id" => "o1"
         })
@@ -127,7 +127,7 @@ defmodule Dust.Integration.TypesTest do
       assert_reply ref, :ok, %{store_seq: 1}
       assert_broadcast "event", %{store_seq: 1, op: :add, path: "post/tags"}
 
-      entry = Dust.Sync.get_entry(store.id, "post.tags")
+      entry = Dust.Sync.get_entry(store.id, "post/tags")
       assert entry.value == ["elixir"]
     end
 
@@ -139,7 +139,7 @@ defmodule Dust.Integration.TypesTest do
       ref1 =
         push(socket, "write", %{
           "op" => "add",
-          "path" => "post.tags",
+          "path" => "post/tags",
           "value" => "elixir",
           "client_op_id" => "o1"
         })
@@ -149,7 +149,7 @@ defmodule Dust.Integration.TypesTest do
       ref2 =
         push(socket, "write", %{
           "op" => "add",
-          "path" => "post.tags",
+          "path" => "post/tags",
           "value" => "rust",
           "client_op_id" => "o2"
         })
@@ -160,14 +160,14 @@ defmodule Dust.Integration.TypesTest do
       ref3 =
         push(socket, "write", %{
           "op" => "remove",
-          "path" => "post.tags",
+          "path" => "post/tags",
           "value" => "elixir",
           "client_op_id" => "o3"
         })
 
       assert_reply ref3, :ok, %{store_seq: 3}
 
-      entry = Dust.Sync.get_entry(store.id, "post.tags")
+      entry = Dust.Sync.get_entry(store.id, "post/tags")
       assert entry.value == ["rust"]
     end
 
@@ -178,7 +178,7 @@ defmodule Dust.Integration.TypesTest do
       ref =
         push(socket, "write", %{
           "op" => "add",
-          "path" => "post.tags",
+          "path" => "post/tags",
           "value" => nil,
           "client_op_id" => "o1"
         })
@@ -193,7 +193,7 @@ defmodule Dust.Integration.TypesTest do
       ref =
         push(socket, "write", %{
           "op" => "remove",
-          "path" => "post.tags",
+          "path" => "post/tags",
           "value" => nil,
           "client_op_id" => "o1"
         })

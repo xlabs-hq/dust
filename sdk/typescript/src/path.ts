@@ -180,9 +180,11 @@ export function renderDescendantPrefix(segments: Segments): string {
 }
 
 // ----------------------------------------------------------------------
-// Legacy dotted-path helpers (transitional). Used by callers that still
-// pass dotted strings ("posts.alpha" rather than "posts/alpha" or
-// ["posts","alpha"]). Deleted at the end of the migration.
+// Legacy dotted-path helper (explicit opt-in). Callers that hold
+// genuinely-legacy dotted strings call this *explicitly* to convert
+// to a segment list, then pass the list to the public SDK API. Kept
+// while the migration window is open; deleted once no callers
+// remain.
 // ----------------------------------------------------------------------
 
 export function parseLegacyDotted(s: string): Segments {
@@ -195,13 +197,13 @@ export function parseLegacyDotted(s: string): Segments {
 }
 
 /**
- * Normalize a dotted-or-slashed legacy path into the canonical slash
- * form. Heuristic: a string containing `/` is treated as canonical
- * (re-validated); otherwise it's dot-split and re-rendered.
+ * Convert a caller-provided path into canonical slash-rendered form.
+ * Accepts a segment array or a canonical slash-rendered string.
  *
- * SDK boundary helpers use this to keep dotted-form callers working
- * through the migration. Once everyone speaks segment-first, this
- * function and `parseLegacyDotted` go away.
+ * Strings are interpreted as **canonical** — `"example.com"` is one
+ * segment with a literal dot, not the legacy two-segment form. To
+ * handle genuinely-legacy dotted input, callers must call
+ * `parseLegacyDotted` explicitly first and pass the resulting array.
  */
 export function normalizePath(path: PathInput): string {
   if (Array.isArray(path)) {
@@ -210,34 +212,23 @@ export function normalizePath(path: PathInput): string {
   if (typeof path !== 'string') {
     throw new Error('path must be a string or array of strings')
   }
-  if (path.includes('/')) {
-    return normalizeRendered(path)
-  }
-  return render(parseLegacyDotted(path))
+  return normalizeRendered(path)
 }
 
 /**
- * Normalize a glob pattern. Wildcards `*` / `**` survive the
- * round-trip unchanged. Same legacy-vs-canonical heuristic as
- * `normalizePath`.
+ * Normalize a glob pattern to canonical slash-rendered form.
+ * Wildcards `*` / `**` must already be expressed against slash
+ * separators (`"posts/*"`, `"users/**"`). Legacy dotted patterns are
+ * not accepted.
  */
 export function normalizePattern(pattern: string): string {
   if (pattern === '**') return '**'
   if (typeof pattern !== 'string') {
     throw new Error('pattern must be a string')
   }
-  if (pattern.includes('/')) {
-    // Validate by compiling — we don't have the glob module imported
-    // here, so just do a lightweight check on segment shape.
-    const parts = pattern.split('/')
-    if (parts.some((p) => p === '')) {
-      throw new Error(`pattern "${pattern}" contains empty segments`)
-    }
-    return pattern
-  }
-  const parts = pattern.split('.')
+  const parts = pattern.split('/')
   if (parts.some((p) => p === '')) {
     throw new Error(`pattern "${pattern}" contains empty segments`)
   }
-  return parts.join('/')
+  return pattern
 }

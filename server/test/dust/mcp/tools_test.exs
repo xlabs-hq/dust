@@ -160,7 +160,7 @@ defmodule Dust.MCP.ToolsTest do
         req =
           make_req(%{
             "store" => ctx.store_full_name,
-            "path" => "users.#{name}",
+            "path" => "users/#{name}",
             "value" => name
           })
 
@@ -169,12 +169,12 @@ defmodule Dust.MCP.ToolsTest do
 
       # Write an unrelated entry
       req =
-        make_req(%{"store" => ctx.store_full_name, "path" => "settings.theme", "value" => "dark"})
+        make_req(%{"store" => ctx.store_full_name, "path" => "settings/theme", "value" => "dark"})
 
       {:result, _, _} = Dust.MCP.Tools.DustPut.call(req, ctx.channel, [])
 
-      # Enum users.*
-      enum_req = make_req(%{"store" => ctx.store_full_name, "pattern" => "users.*"})
+      # Enum users/*
+      enum_req = make_req(%{"store" => ctx.store_full_name, "pattern" => "users/*"})
       {:result, result, _} = Dust.MCP.Tools.DustEnum.call(enum_req, ctx.channel, [])
 
       assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
@@ -332,7 +332,7 @@ defmodule Dust.MCP.ToolsTest do
       assert text =~ "Merged into profile"
 
       # Read back individual merge results
-      get_req = make_req(%{"store" => ctx.store_full_name, "path" => "profile.age"})
+      get_req = make_req(%{"store" => ctx.store_full_name, "path" => "profile/age"})
       {:result, result, _} = Dust.MCP.Tools.DustGet.call(get_req, ctx.channel, [])
       assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
       assert Jason.decode!(text) == 30
@@ -365,7 +365,7 @@ defmodule Dust.MCP.ToolsTest do
     end
 
     test "filters by path", ctx do
-      for path <- ["a/x", "a.y", "b.z"] do
+      for path <- ["a/x", "a/y", "b/z"] do
         req =
           make_req(%{
             "store" => ctx.store_full_name,
@@ -436,39 +436,39 @@ defmodule Dust.MCP.ToolsTest do
 
   describe "dust_increment" do
     test "increments a counter from nothing", ctx do
-      req = make_req(%{"store" => ctx.store_full_name, "path" => "stats.views", "delta" => 3})
+      req = make_req(%{"store" => ctx.store_full_name, "path" => "stats/views", "delta" => 3})
       {:result, result, _} = Dust.MCP.Tools.DustIncrement.call(req, ctx.channel, [])
 
       assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
-      assert text =~ "Incremented stats.views by 3"
+      assert text =~ "Incremented stats/views by 3"
 
-      get_req = make_req(%{"store" => ctx.store_full_name, "path" => "stats.views"})
+      get_req = make_req(%{"store" => ctx.store_full_name, "path" => "stats/views"})
       {:result, get_result, _} = Dust.MCP.Tools.DustGet.call(get_req, ctx.channel, [])
       assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = get_result
       assert Jason.decode!(text) == 3
     end
 
     test "defaults delta to 1", ctx do
-      req = make_req(%{"store" => ctx.store_full_name, "path" => "stats.hits"})
+      req = make_req(%{"store" => ctx.store_full_name, "path" => "stats/hits"})
       {:result, result, _} = Dust.MCP.Tools.DustIncrement.call(req, ctx.channel, [])
 
       assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
       assert text =~ "by 1"
 
-      get_req = make_req(%{"store" => ctx.store_full_name, "path" => "stats.hits"})
+      get_req = make_req(%{"store" => ctx.store_full_name, "path" => "stats/hits"})
       {:result, get_result, _} = Dust.MCP.Tools.DustGet.call(get_req, ctx.channel, [])
       assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = get_result
       assert Jason.decode!(text) == 1
     end
 
     test "accumulates increments", ctx do
-      req1 = make_req(%{"store" => ctx.store_full_name, "path" => "stats.views", "delta" => 3})
+      req1 = make_req(%{"store" => ctx.store_full_name, "path" => "stats/views", "delta" => 3})
       {:result, _, _} = Dust.MCP.Tools.DustIncrement.call(req1, ctx.channel, [])
 
-      req2 = make_req(%{"store" => ctx.store_full_name, "path" => "stats.views", "delta" => 5})
+      req2 = make_req(%{"store" => ctx.store_full_name, "path" => "stats/views", "delta" => 5})
       {:result, _, _} = Dust.MCP.Tools.DustIncrement.call(req2, ctx.channel, [])
 
-      get_req = make_req(%{"store" => ctx.store_full_name, "path" => "stats.views"})
+      get_req = make_req(%{"store" => ctx.store_full_name, "path" => "stats/views"})
       {:result, get_result, _} = Dust.MCP.Tools.DustGet.call(get_req, ctx.channel, [])
       assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = get_result
       assert Jason.decode!(text) == 8
@@ -478,14 +478,14 @@ defmodule Dust.MCP.ToolsTest do
   describe "dust_add" do
     test "adds a member to a set", ctx do
       req =
-        make_req(%{"store" => ctx.store_full_name, "path" => "post.tags", "member" => "elixir"})
+        make_req(%{"store" => ctx.store_full_name, "path" => "post/tags", "member" => "elixir"})
 
       {:result, result, _} = Dust.MCP.Tools.DustAdd.call(req, ctx.channel, [])
 
       assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
       assert text =~ "Added"
 
-      get_req = make_req(%{"store" => ctx.store_full_name, "path" => "post.tags"})
+      get_req = make_req(%{"store" => ctx.store_full_name, "path" => "post/tags"})
       {:result, get_result, _} = Dust.MCP.Tools.DustGet.call(get_req, ctx.channel, [])
       assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = get_result
       assert Jason.decode!(text) == ["elixir"]
@@ -493,16 +493,16 @@ defmodule Dust.MCP.ToolsTest do
 
     test "adding multiple members", ctx do
       req1 =
-        make_req(%{"store" => ctx.store_full_name, "path" => "post.tags", "member" => "elixir"})
+        make_req(%{"store" => ctx.store_full_name, "path" => "post/tags", "member" => "elixir"})
 
       {:result, _, _} = Dust.MCP.Tools.DustAdd.call(req1, ctx.channel, [])
 
       req2 =
-        make_req(%{"store" => ctx.store_full_name, "path" => "post.tags", "member" => "rust"})
+        make_req(%{"store" => ctx.store_full_name, "path" => "post/tags", "member" => "rust"})
 
       {:result, _, _} = Dust.MCP.Tools.DustAdd.call(req2, ctx.channel, [])
 
-      get_req = make_req(%{"store" => ctx.store_full_name, "path" => "post.tags"})
+      get_req = make_req(%{"store" => ctx.store_full_name, "path" => "post/tags"})
       {:result, get_result, _} = Dust.MCP.Tools.DustGet.call(get_req, ctx.channel, [])
       assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = get_result
       members = Jason.decode!(text)
@@ -515,25 +515,25 @@ defmodule Dust.MCP.ToolsTest do
     test "removes a member from a set", ctx do
       # Add first
       req1 =
-        make_req(%{"store" => ctx.store_full_name, "path" => "post.tags", "member" => "elixir"})
+        make_req(%{"store" => ctx.store_full_name, "path" => "post/tags", "member" => "elixir"})
 
       {:result, _, _} = Dust.MCP.Tools.DustAdd.call(req1, ctx.channel, [])
 
       req2 =
-        make_req(%{"store" => ctx.store_full_name, "path" => "post.tags", "member" => "rust"})
+        make_req(%{"store" => ctx.store_full_name, "path" => "post/tags", "member" => "rust"})
 
       {:result, _, _} = Dust.MCP.Tools.DustAdd.call(req2, ctx.channel, [])
 
       # Remove
       req3 =
-        make_req(%{"store" => ctx.store_full_name, "path" => "post.tags", "member" => "elixir"})
+        make_req(%{"store" => ctx.store_full_name, "path" => "post/tags", "member" => "elixir"})
 
       {:result, result, _} = Dust.MCP.Tools.DustRemove.call(req3, ctx.channel, [])
 
       assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
       assert text =~ "Removed"
 
-      get_req = make_req(%{"store" => ctx.store_full_name, "path" => "post.tags"})
+      get_req = make_req(%{"store" => ctx.store_full_name, "path" => "post/tags"})
       {:result, get_result, _} = Dust.MCP.Tools.DustGet.call(get_req, ctx.channel, [])
       assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = get_result
       assert Jason.decode!(text) == ["rust"]
@@ -649,31 +649,31 @@ defmodule Dust.MCP.ToolsTest do
       req =
         make_req(%{
           "store" => ctx.store_full_name,
-          "path" => "docs.readme",
+          "path" => "docs/readme",
           "content" => content,
-          "filename" => "readme.txt",
+          "filename" => "readme/txt",
           "content_type" => "text/plain"
         })
 
       {:result, result, _} = Dust.MCP.Tools.DustPutFile.call(req, ctx.channel, [])
       assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
-      assert text =~ "Uploaded file to docs.readme"
+      assert text =~ "Uploaded file to docs/readme"
       assert text =~ "sha256:"
 
       # Read back the reference
-      get_req = make_req(%{"store" => ctx.store_full_name, "path" => "docs.readme"})
+      get_req = make_req(%{"store" => ctx.store_full_name, "path" => "docs/readme"})
       {:result, get_result, _} = Dust.MCP.Tools.DustGet.call(get_req, ctx.channel, [])
       assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = get_result
       ref = Jason.decode!(text)
       assert ref["_type"] == "file"
-      assert ref["filename"] == "readme.txt"
+      assert ref["filename"] == "readme/txt"
     end
 
     test "rejects invalid base64", ctx do
       req =
         make_req(%{
           "store" => ctx.store_full_name,
-          "path" => "docs.bad",
+          "path" => "docs/bad",
           "content" => "not-valid-base64!!!"
         })
 
@@ -697,9 +697,9 @@ defmodule Dust.MCP.ToolsTest do
       put_req =
         make_req(%{
           "store" => ctx.store_full_name,
-          "path" => "docs.fetchable",
+          "path" => "docs/fetchable",
           "content" => content,
-          "filename" => "fetchable.txt",
+          "filename" => "fetchable/txt",
           "content_type" => "text/plain"
         })
 
@@ -707,13 +707,13 @@ defmodule Dust.MCP.ToolsTest do
 
       # Fetch metadata only
       fetch_req =
-        make_req(%{"store" => ctx.store_full_name, "path" => "docs.fetchable"})
+        make_req(%{"store" => ctx.store_full_name, "path" => "docs/fetchable"})
 
       {:result, result, _} = Dust.MCP.Tools.DustFetchFile.call(fetch_req, ctx.channel, [])
       assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
       ref = Jason.decode!(text)
       assert ref["_type"] == "file"
-      assert ref["filename"] == "fetchable.txt"
+      assert ref["filename"] == "fetchable/txt"
       refute Map.has_key?(ref, "content")
     end
 
@@ -723,9 +723,9 @@ defmodule Dust.MCP.ToolsTest do
       put_req =
         make_req(%{
           "store" => ctx.store_full_name,
-          "path" => "docs.withcontent",
+          "path" => "docs/withcontent",
           "content" => content,
-          "filename" => "withcontent.txt"
+          "filename" => "withcontent/txt"
         })
 
       {:result, _, _} = Dust.MCP.Tools.DustPutFile.call(put_req, ctx.channel, [])
@@ -733,7 +733,7 @@ defmodule Dust.MCP.ToolsTest do
       fetch_req =
         make_req(%{
           "store" => ctx.store_full_name,
-          "path" => "docs.withcontent",
+          "path" => "docs/withcontent",
           "include_content" => true
         })
 
@@ -808,7 +808,7 @@ defmodule Dust.MCP.ToolsTest do
     test "returns jsonl payload for store_token principal", ctx do
       Dust.Sync.write(ctx.store.id, %{
         op: :set,
-        path: "users.alice",
+        path: "users/alice",
         value: %{"age" => 30},
         device_id: "test",
         client_op_id: Ecto.UUID.generate()
@@ -884,7 +884,7 @@ defmodule Dust.MCP.ToolsTest do
   describe "dust_import" do
     test "imports JSONL payload into store", ctx do
       header = Jason.encode!(%{_header: true, store: ctx.store_full_name, seq: 0, entry_count: 1})
-      entry = Jason.encode!(%{path: "imported.foo", value: "bar"})
+      entry = Jason.encode!(%{path: "imported/foo", value: "bar"})
       payload = Enum.join([header, entry], "\n")
 
       req = make_req(%{"store" => ctx.store_full_name, "payload" => payload})
@@ -895,7 +895,7 @@ defmodule Dust.MCP.ToolsTest do
       assert decoded["ok"] == true
       assert decoded["entries_imported"] == 1
 
-      get_req = make_req(%{"store" => ctx.store_full_name, "path" => "imported.foo"})
+      get_req = make_req(%{"store" => ctx.store_full_name, "path" => "imported/foo"})
       {:result, get_result, _} = Dust.MCP.Tools.DustGet.call(get_req, ctx.channel, [])
       assert %MCP.CallToolResult{content: [%MCP.TextContent{text: gtext}]} = get_result
       assert Jason.decode!(gtext) == "bar"
@@ -928,7 +928,7 @@ defmodule Dust.MCP.ToolsTest do
 
     test "tolerates CRLF line endings in payload", ctx do
       header = Jason.encode!(%{_header: true, store: ctx.store_full_name, seq: 0, entry_count: 1})
-      entry = Jason.encode!(%{path: "crlf.foo", value: "bar"})
+      entry = Jason.encode!(%{path: "crlf/foo", value: "bar"})
       payload = Enum.join([header, entry], "\r\n")
 
       req = make_req(%{"store" => ctx.store_full_name, "payload" => payload})
@@ -939,7 +939,7 @@ defmodule Dust.MCP.ToolsTest do
       assert decoded["ok"] == true
       assert decoded["entries_imported"] == 1
 
-      get_req = make_req(%{"store" => ctx.store_full_name, "path" => "crlf.foo"})
+      get_req = make_req(%{"store" => ctx.store_full_name, "path" => "crlf/foo"})
       {:result, get_result, _} = Dust.MCP.Tools.DustGet.call(get_req, ctx.channel, [])
       assert %MCP.CallToolResult{content: [%MCP.TextContent{text: gtext}]} = get_result
       assert Jason.decode!(gtext) == "bar"

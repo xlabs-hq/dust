@@ -16,7 +16,7 @@ defmodule Dust.SubscriberTest do
   defmodule CustomQueueSubscriber do
     use Dust.Subscriber,
       store: "test/subscriber",
-      pattern: "logs.*",
+      pattern: "logs/*",
       max_queue_size: 50
 
     @impl true

@@ -15,7 +15,7 @@ defmodule Dust.Sync.WriterTest do
       {:ok, event} =
         Sync.write(store.id, %{
           op: :set,
-          path: "posts.hello",
+          path: "posts/hello",
           value: %{"title" => "Hello"},
           device_id: "dev_1",
           client_op_id: "op_1"
@@ -27,7 +27,7 @@ defmodule Dust.Sync.WriterTest do
       assert event.path == "posts/hello"
 
       # Verify materialized entry
-      entry = Sync.get_entry(store.id, "posts.hello")
+      entry = Sync.get_entry(store.id, "posts/hello")
       assert entry.value == %{"title" => "Hello"}
       assert entry.seq == 1
     end
@@ -73,7 +73,7 @@ defmodule Dust.Sync.WriterTest do
     test "merge updates named children only", %{store: store} do
       Sync.write(store.id, %{
         op: :set,
-        path: "settings.theme",
+        path: "settings/theme",
         value: "light",
         device_id: "d",
         client_op_id: "o1"
@@ -81,7 +81,7 @@ defmodule Dust.Sync.WriterTest do
 
       Sync.write(store.id, %{
         op: :set,
-        path: "settings.locale",
+        path: "settings/locale",
         value: "en",
         device_id: "d",
         client_op_id: "o2"
@@ -95,8 +95,8 @@ defmodule Dust.Sync.WriterTest do
         client_op_id: "o3"
       })
 
-      assert Sync.get_entry(store.id, "settings.theme").value == "dark"
-      assert Sync.get_entry(store.id, "settings.locale").value == "en"
+      assert Sync.get_entry(store.id, "settings/theme").value == "dark"
+      assert Sync.get_entry(store.id, "settings/locale").value == "en"
     end
   end
 
@@ -111,9 +111,9 @@ defmodule Dust.Sync.WriterTest do
       })
 
       # Leaf entries should exist
-      assert Sync.get_entry(store.id, "post.title").value == "Hello"
-      assert Sync.get_entry(store.id, "post.meta.author").value == "james"
-      assert Sync.get_entry(store.id, "post.meta.draft").value == true
+      assert Sync.get_entry(store.id, "post/title").value == "Hello"
+      assert Sync.get_entry(store.id, "post/meta/author").value == "james"
+      assert Sync.get_entry(store.id, "post/meta/draft").value == true
 
       # Parent path should reassemble the map
       entry = Sync.get_entry(store.id, "post")
@@ -144,9 +144,9 @@ defmodule Dust.Sync.WriterTest do
       })
 
       # post.meta.draft should be false (updated)
-      assert Sync.get_entry(store.id, "post.meta.draft").value == false
+      assert Sync.get_entry(store.id, "post/meta/draft").value == false
       # post.meta.author should be gone (merge replaced the meta subtree)
-      assert Sync.get_entry(store.id, "post.meta.author") == nil
+      assert Sync.get_entry(store.id, "post/meta/author") == nil
 
       # get("post") should show the correct assembled state
       entry = Sync.get_entry(store.id, "post")
@@ -171,7 +171,7 @@ defmodule Dust.Sync.WriterTest do
       for {field, value} <- [{"title", "Old"}, {"url", "https://old"}, {"note", "n"}] do
         Sync.write(store.id, %{
           op: :set,
-          path: "links.foo.#{field}",
+          path: "links/foo/#{field}",
           value: value,
           device_id: "d",
           client_op_id: "seed-#{field}"
@@ -182,7 +182,7 @@ defmodule Dust.Sync.WriterTest do
       # a *partial* map — title + url only, no note.
       Sync.write(store.id, %{
         op: :set,
-        path: "links.foo",
+        path: "links/foo",
         value: %{"title" => "New", "url" => "https://new"},
         device_id: "d",
         client_op_id: "replace"
@@ -191,12 +191,12 @@ defmodule Dust.Sync.WriterTest do
       # The pre-existing :note leaf must be gone — subtree replace, not
       # field-wise merge. Confirms the contract relied on by dust_ecto's
       # :flat ↔ :map crossover.
-      assert Sync.get_entry(store.id, "links.foo.note") == nil
-      assert Sync.get_entry(store.id, "links.foo.title").value == "New"
-      assert Sync.get_entry(store.id, "links.foo.url").value == "https://new"
+      assert Sync.get_entry(store.id, "links/foo/note") == nil
+      assert Sync.get_entry(store.id, "links/foo/title").value == "New"
+      assert Sync.get_entry(store.id, "links/foo/url").value == "https://new"
 
       # Re-assembled view returns only what was written.
-      entry = Sync.get_entry(store.id, "links.foo")
+      entry = Sync.get_entry(store.id, "links/foo")
       assert entry.value == %{"title" => "New", "url" => "https://new"}
     end
 
@@ -204,7 +204,7 @@ defmodule Dust.Sync.WriterTest do
       # Seed two descendants of the path.
       Sync.write(store.id, %{
         op: :set,
-        path: "counters.foo.hits",
+        path: "counters/foo/hits",
         value: 3,
         device_id: "d",
         client_op_id: "seed-1"
@@ -212,7 +212,7 @@ defmodule Dust.Sync.WriterTest do
 
       Sync.write(store.id, %{
         op: :set,
-        path: "counters.foo.misses",
+        path: "counters/foo/misses",
         value: 1,
         device_id: "d",
         client_op_id: "seed-2"
@@ -222,15 +222,15 @@ defmodule Dust.Sync.WriterTest do
       # all clear, parent becomes the new scalar leaf.
       Sync.write(store.id, %{
         op: :set,
-        path: "counters.foo",
+        path: "counters/foo",
         value: 0,
         device_id: "d",
         client_op_id: "replace"
       })
 
-      assert Sync.get_entry(store.id, "counters.foo").value == 0
-      assert Sync.get_entry(store.id, "counters.foo.hits") == nil
-      assert Sync.get_entry(store.id, "counters.foo.misses") == nil
+      assert Sync.get_entry(store.id, "counters/foo").value == 0
+      assert Sync.get_entry(store.id, "counters/foo/hits") == nil
+      assert Sync.get_entry(store.id, "counters/foo/misses") == nil
     end
   end
 

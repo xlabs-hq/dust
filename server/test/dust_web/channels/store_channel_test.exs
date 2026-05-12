@@ -109,7 +109,7 @@ defmodule DustWeb.StoreChannelTest do
         push(socket, "put_file", %{
           "path" => "docs/readme",
           "content" => base64,
-          "filename" => "readme.txt",
+          "filename" => "readme/txt",
           "content_type" => "text/plain",
           "client_op_id" => "file_op_1"
         })
@@ -133,7 +133,7 @@ defmodule DustWeb.StoreChannelTest do
     test "rejects invalid base64", %{joined_socket: socket} do
       ref =
         push(socket, "put_file", %{
-          "path" => "docs.bad",
+          "path" => "docs/bad",
           "content" => "not valid base64!!!",
           "client_op_id" => "file_op_2"
         })
@@ -142,9 +142,13 @@ defmodule DustWeb.StoreChannelTest do
     end
 
     test "rejects invalid path", %{joined_socket: socket} do
+      # Trailing slash → empty trailing segment. In capver 3 dots are
+      # literal in segments, so the legacy "docs..bad" form is now a
+      # valid one-segment path; we have to test a *structurally*
+      # invalid canonical form instead.
       ref =
         push(socket, "put_file", %{
-          "path" => "docs..bad",
+          "path" => "docs/",
           "content" => Base.encode64("test"),
           "client_op_id" => "file_op_3"
         })
@@ -158,9 +162,9 @@ defmodule DustWeb.StoreChannelTest do
 
       ref =
         push(socket, "put_file", %{
-          "path" => "docs.small",
+          "path" => "docs/small",
           "content" => Base.encode64(small_content),
-          "filename" => "small.txt",
+          "filename" => "small/txt",
           "content_type" => "text/plain",
           "client_op_id" => "file_billing"
         })
@@ -198,7 +202,7 @@ defmodule DustWeb.StoreChannelTest do
       ref =
         push(socket, "write", %{
           "op" => "set",
-          "path" => "posts..hello",
+          "path" => "posts//hello",
           "value" => "v",
           "client_op_id" => "o1"
         })
@@ -379,7 +383,7 @@ defmodule DustWeb.StoreChannelTest do
       # Create data.x → 999 entries total
       Sync.write(store.id, %{
         op: :set,
-        path: "data.x",
+        path: "data/x",
         value: "existing",
         device_id: "d",
         client_op_id: "setup"
@@ -421,7 +425,7 @@ defmodule DustWeb.StoreChannelTest do
       # Create settings.theme → 999 entries total
       Sync.write(store.id, %{
         op: :set,
-        path: "settings.theme",
+        path: "settings/theme",
         value: "dark",
         device_id: "d",
         client_op_id: "setup"
@@ -435,9 +439,9 @@ defmodule DustWeb.StoreChannelTest do
       assert_push "catch_up_complete", _
 
       # Merge {theme: light, lang: en} into "settings"
-      # Should check "settings.theme" (exists) and "settings.lang" (new)
+      # Should check "settings/theme" (exists) and "settings/lang" (new)
       # Bug: checks just "theme" (not found → counts as new) and "lang" (new) = 2 new
-      # Fix: checks "settings.theme" (found → not new) and "settings.lang" (new) = 1 new
+      # Fix: checks "settings/theme" (found → not new) and "settings/lang" (new) = 1 new
       # 999 + 1 = 1000 → allowed
       ref =
         push(socket, "write", %{
@@ -449,8 +453,8 @@ defmodule DustWeb.StoreChannelTest do
 
       assert_reply ref, :ok, _
 
-      assert Sync.get_entry(store.id, "settings.theme").value == "light"
-      assert Sync.get_entry(store.id, "settings.lang").value == "en"
+      assert Sync.get_entry(store.id, "settings/theme").value == "light"
+      assert Sync.get_entry(store.id, "settings/lang").value == "en"
     end
   end
 
@@ -582,7 +586,7 @@ defmodule DustWeb.StoreChannelTest do
       ref =
         push(socket, "write", %{
           "op" => "set",
-          "path" => "users.alice",
+          "path" => "users/alice",
           "value" => %{"name" => "alice"},
           "client_op_id" => "cas_dict",
           "if_match" => 1
@@ -692,7 +696,7 @@ defmodule DustWeb.StoreChannelTest do
 
       ref =
         push(socket, "put_file", %{
-          "path" => "docs.sneaky",
+          "path" => "docs/sneaky",
           "content" => Base.encode64("payload"),
           "client_op_id" => "late_file"
         })

@@ -17,13 +17,13 @@ defmodule Dust.Sync.TypedValuesTest do
       {:ok, _} =
         Sync.write(store.id, %{
           op: :set,
-          path: "products.shoe.price",
+          path: "products/shoe/price",
           value: price,
           device_id: "d1",
           client_op_id: "o1"
         })
 
-      entry = Sync.get_entry(store.id, "products.shoe.price")
+      entry = Sync.get_entry(store.id, "products/shoe/price")
       assert %Decimal{} = entry.value
       assert Decimal.equal?(entry.value, Decimal.new("29.99"))
       assert entry.type == "decimal"
@@ -35,13 +35,13 @@ defmodule Dust.Sync.TypedValuesTest do
       {:ok, _} =
         Sync.write(store.id, %{
           op: :set,
-          path: "account.balance",
+          path: "account/balance",
           value: original,
           device_id: "d1",
           client_op_id: "o1"
         })
 
-      entry = Sync.get_entry(store.id, "account.balance")
+      entry = Sync.get_entry(store.id, "account/balance")
       assert Decimal.equal?(entry.value, original)
     end
 
@@ -51,13 +51,13 @@ defmodule Dust.Sync.TypedValuesTest do
       {:ok, _} =
         Sync.write(store.id, %{
           op: :set,
-          path: "precise.value",
+          path: "precise/value",
           value: precise,
           device_id: "d1",
           client_op_id: "o1"
         })
 
-      entry = Sync.get_entry(store.id, "precise.value")
+      entry = Sync.get_entry(store.id, "precise/value")
       assert Decimal.equal?(entry.value, precise)
     end
 
@@ -71,11 +71,11 @@ defmodule Dust.Sync.TypedValuesTest do
           client_op_id: "o1"
         })
 
-      entry = Sync.get_entry(store.id, "product.price")
+      entry = Sync.get_entry(store.id, "product/price")
       assert %Decimal{} = entry.value
       assert Decimal.equal?(entry.value, Decimal.new("9.99"))
 
-      name_entry = Sync.get_entry(store.id, "product.name")
+      name_entry = Sync.get_entry(store.id, "product/name")
       assert name_entry.value == "Widget"
     end
   end
@@ -87,13 +87,13 @@ defmodule Dust.Sync.TypedValuesTest do
       {:ok, _} =
         Sync.write(store.id, %{
           op: :set,
-          path: "events.launch.date",
+          path: "events/launch/date",
           value: dt,
           device_id: "d1",
           client_op_id: "o1"
         })
 
-      entry = Sync.get_entry(store.id, "events.launch.date")
+      entry = Sync.get_entry(store.id, "events/launch/date")
       assert %DateTime{} = entry.value
       assert DateTime.compare(entry.value, dt) == :eq
       assert entry.type == "datetime"
@@ -105,13 +105,13 @@ defmodule Dust.Sync.TypedValuesTest do
       {:ok, _} =
         Sync.write(store.id, %{
           op: :set,
-          path: "task.due_at",
+          path: "task/due_at",
           value: original,
           device_id: "d1",
           client_op_id: "o1"
         })
 
-      entry = Sync.get_entry(store.id, "task.due_at")
+      entry = Sync.get_entry(store.id, "task/due_at")
       assert DateTime.compare(entry.value, original) == :eq
     end
 
@@ -121,13 +121,13 @@ defmodule Dust.Sync.TypedValuesTest do
       {:ok, _} =
         Sync.write(store.id, %{
           op: :set,
-          path: "event.precise_at",
+          path: "event/precise_at",
           value: precise,
           device_id: "d1",
           client_op_id: "o1"
         })
 
-      entry = Sync.get_entry(store.id, "event.precise_at")
+      entry = Sync.get_entry(store.id, "event/precise_at")
       assert DateTime.compare(entry.value, precise) == :eq
     end
 
@@ -143,11 +143,11 @@ defmodule Dust.Sync.TypedValuesTest do
           client_op_id: "o1"
         })
 
-      entry = Sync.get_entry(store.id, "event.starts_at")
+      entry = Sync.get_entry(store.id, "event/starts_at")
       assert %DateTime{} = entry.value
       assert DateTime.compare(entry.value, dt) == :eq
 
-      title_entry = Sync.get_entry(store.id, "event.title")
+      title_entry = Sync.get_entry(store.id, "event/title")
       assert title_entry.value == "Conference"
     end
   end
@@ -159,7 +159,7 @@ defmodule Dust.Sync.TypedValuesTest do
 
       Sync.write(store.id, %{
         op: :set,
-        path: "item.price",
+        path: "item/price",
         value: price,
         device_id: "d1",
         client_op_id: "o1"
@@ -167,7 +167,7 @@ defmodule Dust.Sync.TypedValuesTest do
 
       Sync.write(store.id, %{
         op: :set,
-        path: "item.created_at",
+        path: "item/created_at",
         value: dt,
         device_id: "d1",
         client_op_id: "o2"

@@ -151,7 +151,7 @@ defmodule Dust.SyncEngineTest do
     :ok = SyncEngine.put("test/store", "items/b", "2")
     :ok = SyncEngine.put("test/store", "items/c", "3")
 
-    page = SyncEngine.enum("test/store", "items.*", limit: 2)
+    page = SyncEngine.enum("test/store", "items/*", limit: 2)
     assert %Dust.Page{} = page
     assert length(page.items) == 2
     assert page.next_cursor != nil
@@ -215,7 +215,7 @@ defmodule Dust.SyncEngineTest do
 
   test "increment fires callback" do
     test_pid = self()
-    SyncEngine.on("test/store", "stats.*", fn event -> send(test_pid, {:event, event}) end)
+    SyncEngine.on("test/store", "stats/*", fn event -> send(test_pid, {:event, event}) end)
     SyncEngine.increment("test/store", "stats/views", 5)
     assert_receive {:event, %{path: "stats/views", op: :increment, value: 5, committed: false}}, 500
   end
@@ -255,7 +255,7 @@ defmodule Dust.SyncEngineTest do
 
   test "add fires callback" do
     test_pid = self()
-    SyncEngine.on("test/store", "post.*", fn event -> send(test_pid, {:event, event}) end)
+    SyncEngine.on("test/store", "post/*", fn event -> send(test_pid, {:event, event}) end)
     SyncEngine.add("test/store", "post/tags", "elixir")
     assert_receive {:event, %{path: "post/tags", op: :add, value: "elixir", committed: false}}, 500
   end
@@ -263,7 +263,7 @@ defmodule Dust.SyncEngineTest do
   test "remove fires callback" do
     test_pid = self()
     SyncEngine.add("test/store", "post/tags", "elixir")
-    SyncEngine.on("test/store", "post.*", fn event -> send(test_pid, {:event, event}) end)
+    SyncEngine.on("test/store", "post/*", fn event -> send(test_pid, {:event, event}) end)
     SyncEngine.remove("test/store", "post/tags", "elixir")
     assert_receive {:event, %{path: "post/tags", op: :remove, value: "elixir", committed: false}}, 500
   end
@@ -336,7 +336,7 @@ defmodule Dust.SyncEngineTest do
 
   test "Decimal detect_type returns decimal" do
     test_pid = self()
-    SyncEngine.on("test/store", "item.*", fn event -> send(test_pid, {:event, event}) end)
+    SyncEngine.on("test/store", "item/*", fn event -> send(test_pid, {:event, event}) end)
     SyncEngine.put("test/store", "item/price", Decimal.new("9.99"))
     assert_receive {:event, %{path: "item/price", op: :set, value: %Decimal{}, committed: false}}, 500
   end
@@ -351,7 +351,7 @@ defmodule Dust.SyncEngineTest do
 
   test "DateTime detect_type returns datetime" do
     test_pid = self()
-    SyncEngine.on("test/store", "event.*", fn event -> send(test_pid, {:event, event}) end)
+    SyncEngine.on("test/store", "event/*", fn event -> send(test_pid, {:event, event}) end)
     SyncEngine.put("test/store", "event/starts_at", ~U[2026-03-31 12:00:00Z])
     assert_receive {:event, %{path: "event/starts_at", op: :set, value: %DateTime{}, committed: false}}, 500
   end
@@ -380,12 +380,12 @@ defmodule Dust.SyncEngineTest do
     File.write!(tmp, <<0, 1, 2, 3>>)
 
     :ok = SyncEngine.put_file("test/store", "files/data", tmp,
-      filename: "custom.dat",
+      filename: "custom/dat",
       content_type: "application/octet-stream"
     )
 
     {:ok, ref} = SyncEngine.get("test/store", "files/data")
-    assert ref.filename == "custom.dat"
+    assert ref.filename == "custom/dat"
     assert ref.content_type == "application/octet-stream"
   after
     File.rm(Path.join(System.tmp_dir!(), "dust_test_upload_*.bin"))
@@ -426,7 +426,7 @@ defmodule Dust.SyncEngineTest do
     File.write!(tmp, "callback test")
 
     test_pid = self()
-    SyncEngine.on("test/store", "uploads.*", fn event -> send(test_pid, {:event, event}) end)
+    SyncEngine.on("test/store", "uploads/*", fn event -> send(test_pid, {:event, event}) end)
     SyncEngine.put_file("test/store", "uploads/file1", tmp)
 
     assert_receive {:event, %{path: "uploads/file1", op: :put_file, committed: false}}, 500
@@ -454,7 +454,7 @@ defmodule Dust.SyncEngineTest do
       test_pid = self()
       callback = fn event -> send(test_pid, {:event, event}) end
 
-      ref = Dust.SyncEngine.on(store, "no_match.**", callback, include_current: true)
+      ref = Dust.SyncEngine.on(store, "no_match/**", callback, include_current: true)
 
       assert is_reference(ref)
       refute_receive {:event, _}, 100
@@ -474,12 +474,12 @@ defmodule Dust.SyncEngineTest do
 
     test "include_current honors :limit" do
       store = "test/store"
-      for i <- 1..10, do: Dust.SyncEngine.seed_entry(store, "k.#{i}", i, "integer")
+      for i <- 1..10, do: Dust.SyncEngine.seed_entry(store, "k/#{i}", i, "integer")
 
       test_pid = self()
       callback = fn event -> send(test_pid, {:event, event}) end
 
-      _ref = Dust.SyncEngine.on(store, "k.**", callback, include_current: true, limit: 3)
+      _ref = Dust.SyncEngine.on(store, "k/**", callback, include_current: true, limit: 3)
 
       events = drain_events(200)
       assert length(events) == 3
@@ -526,7 +526,7 @@ defmodule Dust.SyncEngineTest do
       test_pid = self()
       callback = fn event -> send(test_pid, {:event, event}) end
 
-      _ref = Dust.SyncEngine.on(store, "items.**", callback, include_current: true)
+      _ref = Dust.SyncEngine.on(store, "items/**", callback, include_current: true)
 
       # After registration, dispatch a fake server event via the same path live
       # writes use. This simulates a live write landing right after the
@@ -556,7 +556,7 @@ defmodule Dust.SyncEngineTest do
 
     test "bootstrap that exceeds max_queue_size unregisters and fires on_resync" do
       store = "test/store"
-      for i <- 1..50, do: Dust.SyncEngine.seed_entry(store, "k.#{i}", i, "integer")
+      for i <- 1..50, do: Dust.SyncEngine.seed_entry(store, "k/#{i}", i, "integer")
 
       test_pid = self()
       # Callback blocks forever so the worker can't drain its mailbox
@@ -569,7 +569,7 @@ defmodule Dust.SyncEngineTest do
       on_resync = fn reason -> send(test_pid, {:resync, reason}) end
 
       ref =
-        Dust.SyncEngine.on(store, "k.**", callback,
+        Dust.SyncEngine.on(store, "k/**", callback,
           include_current: true,
           limit: 50,
           max_queue_size: 5,
@@ -861,23 +861,23 @@ defmodule Dust.SyncEngineTest do
 
     test "put replacing a record clears descendants then writes new leaves" do
       :ok = SyncEngine.put("test/store", "links/foo", %{title: "Foo", note: "old"})
-      assert {:ok, "old"} = SyncEngine.get("test/store", "links.foo.note")
+      assert {:ok, "old"} = SyncEngine.get("test/store", "links/foo/note")
 
       # Replace with a record that doesn't have :note. Subtree should be cleared.
       :ok = SyncEngine.put("test/store", "links/foo", %{title: "Foo2", url: "u"})
 
-      assert :miss = SyncEngine.get("test/store", "links.foo.note")
+      assert :miss = SyncEngine.get("test/store", "links/foo/note")
       assert {:ok, "Foo2"} = SyncEngine.get("test/store", "links/foo/title")
       assert {:ok, "u"} = SyncEngine.get("test/store", "links/foo/url")
     end
 
     test "put with a struct value (typed) writes at the exact path, no flattening" do
       dt = ~U[2026-05-11 00:00:00Z]
-      :ok = SyncEngine.put("test/store", "events.now", dt)
+      :ok = SyncEngine.put("test/store", "events/now", dt)
 
-      assert {:ok, ^dt} = SyncEngine.get("test/store", "events.now")
+      assert {:ok, ^dt} = SyncEngine.get("test/store", "events/now")
       # No bogus descendants got created.
-      assert :miss = SyncEngine.get("test/store", "events.now.year")
+      assert :miss = SyncEngine.get("test/store", "events/now/year")
     end
   end
 

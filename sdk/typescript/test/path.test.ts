@@ -177,12 +177,8 @@ describe('renderDescendantPrefix', () => {
 })
 
 describe('legacy compatibility helpers', () => {
-  it('parseLegacyDotted splits on dots', () => {
+  it('parseLegacyDotted splits on dots (explicit opt-in)', () => {
     expect(parseLegacyDotted('a.b.c')).toEqual(['a', 'b', 'c'])
-  })
-
-  it('normalizePath: legacy dotted → canonical slash', () => {
-    expect(normalizePath('a.b.c')).toBe('a/b/c')
   })
 
   it('normalizePath: canonical slash → unchanged', () => {
@@ -193,12 +189,21 @@ describe('legacy compatibility helpers', () => {
     expect(normalizePath(['a', 'b', 'c'])).toBe('a/b/c')
   })
 
-  it('normalizePattern: legacy dotted with wildcard → canonical slash', () => {
-    expect(normalizePattern('foo.*')).toBe('foo/*')
+  it('normalizePath: string with literal dots is one segment, not split', () => {
+    // Capver 3: dots are literal in segments. Callers that hold
+    // genuinely-legacy dotted strings must convert explicitly via
+    // parseLegacyDotted first.
+    expect(normalizePath('example.com')).toBe('example.com')
+    expect(normalizePath(parseLegacyDotted('a.b.c'))).toBe('a/b/c')
   })
 
   it('normalizePattern: ** passes through', () => {
     expect(normalizePattern('**')).toBe('**')
+  })
+
+  it('normalizePattern: canonical slash patterns pass through', () => {
+    expect(normalizePattern('foo/*')).toBe('foo/*')
+    expect(normalizePattern('users/**')).toBe('users/**')
   })
 })
 

@@ -1,7 +1,7 @@
 import { Connection } from './connection'
 import { MemoryCache } from './cache'
 import { match } from './glob'
-import { normalizePath, normalizePattern, parseRendered } from './path'
+import { normalizePath, normalizePattern, parseRendered, type PathInput } from './path'
 import { ConflictError } from './types'
 import type { DustOptions, EnumOptions, Entry, Event, EventCallback, Page, PresentEvent, Status } from './types'
 
@@ -32,46 +32,51 @@ export class Dust {
   }
 
   // -- Public API --
+  //
+  // Path arguments accept either a canonical slash-rendered string
+  // (`"posts/hello"`) or a segment array (`["posts", "hello"]`). Both
+  // are validated and normalised at the boundary; internally the
+  // SDK always speaks canonical slash form.
 
-  async get(store: string, path: string): Promise<unknown> {
-    path = normalizePath(path)
+  async get(store: string, path: PathInput): Promise<unknown> {
+    const normalized = normalizePath(path)
     await this.ensureJoined(store)
-    const entry = this.cache.get(store, path)
+    const entry = this.cache.get(store, normalized)
     return entry?.value ?? null
   }
 
-  async entry(store: string, path: string): Promise<Entry | null> {
-    path = normalizePath(path)
+  async entry(store: string, path: PathInput): Promise<Entry | null> {
+    const normalized = normalizePath(path)
     await this.ensureJoined(store)
-    return this.cache.readEntry(store, path)
+    return this.cache.readEntry(store, normalized)
   }
 
   async put(
     store: string,
-    path: string,
+    path: PathInput,
     value: unknown,
     opts?: { ifMatch?: number },
   ): Promise<{ storeSeq: number }> {
     return this.write(store, 'set', normalizePath(path), value, opts)
   }
 
-  async merge(store: string, path: string, value: Record<string, unknown>): Promise<{ storeSeq: number }> {
+  async merge(store: string, path: PathInput, value: Record<string, unknown>): Promise<{ storeSeq: number }> {
     return this.write(store, 'merge', normalizePath(path), value)
   }
 
-  async delete(store: string, path: string): Promise<{ storeSeq: number }> {
+  async delete(store: string, path: PathInput): Promise<{ storeSeq: number }> {
     return this.write(store, 'delete', normalizePath(path), null)
   }
 
-  async increment(store: string, path: string, delta: number = 1): Promise<{ storeSeq: number }> {
+  async increment(store: string, path: PathInput, delta: number = 1): Promise<{ storeSeq: number }> {
     return this.write(store, 'increment', normalizePath(path), delta)
   }
 
-  async add(store: string, path: string, member: unknown): Promise<{ storeSeq: number }> {
+  async add(store: string, path: PathInput, member: unknown): Promise<{ storeSeq: number }> {
     return this.write(store, 'add', normalizePath(path), member)
   }
 
-  async remove(store: string, path: string, member: unknown): Promise<{ storeSeq: number }> {
+  async remove(store: string, path: PathInput, member: unknown): Promise<{ storeSeq: number }> {
     return this.write(store, 'remove', normalizePath(path), member)
   }
 
@@ -205,7 +210,7 @@ export class Dust {
     return this.cache.browse(store, { ...opts, pattern })
   }
 
-  async getMany(store: string, paths: string[]): Promise<Record<string, unknown>> {
+  async getMany(store: string, paths: PathInput[]): Promise<Record<string, unknown>> {
     if (paths.length > 1000) {
       throw new Error('getMany: maximum 1000 paths per call')
     }
@@ -221,17 +226,17 @@ export class Dust {
 
   async range(
     store: string,
-    from: string,
-    to: string,
+    from: PathInput,
+    to: PathInput,
     opts: Omit<EnumOptions, 'select'> & { select?: 'entries' | 'keys' } = {},
   ): Promise<Page<Entry> | Page<string>> {
     if ((opts as { select?: string }).select === 'prefixes') {
       throw new Error('range: select prefixes is not supported')
     }
-    from = normalizePath(from)
-    to = normalizePath(to)
+    const fromNorm = normalizePath(from)
+    const toNorm = normalizePath(to)
     await this.ensureJoined(store)
-    return this.cache.browse(store, { ...opts, from, to })
+    return this.cache.browse(store, { ...opts, from: fromNorm, to: toNorm })
   }
 
   status(store: string): Status {

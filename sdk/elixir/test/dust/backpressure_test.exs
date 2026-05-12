@@ -34,7 +34,7 @@ defmodule Dust.BackpressureTest do
     end
 
     ref =
-      SyncEngine.on(store, "items.*", slow_callback,
+      SyncEngine.on(store, "items/*", slow_callback,
         max_queue_size: 5,
         on_resync: on_resync
       )
@@ -89,7 +89,7 @@ defmodule Dust.BackpressureTest do
       send(test_pid, {:resync_required, info})
     end
 
-    SyncEngine.on(store, "items.*", fast_callback,
+    SyncEngine.on(store, "items/*", fast_callback,
       max_queue_size: 5,
       on_resync: on_resync
     )
@@ -139,12 +139,12 @@ defmodule Dust.BackpressureTest do
       send(test_pid, {:fast_resync, info})
     end
 
-    SyncEngine.on(store, "items.*", slow_callback,
+    SyncEngine.on(store, "items/*", slow_callback,
       max_queue_size: 3,
       on_resync: slow_resync
     )
 
-    SyncEngine.on(store, "items.*", fast_callback,
+    SyncEngine.on(store, "items/*", fast_callback,
       max_queue_size: 1000,
       on_resync: fast_resync
     )
@@ -191,7 +191,7 @@ defmodule Dust.BackpressureTest do
     end
 
     ref =
-      SyncEngine.on(store, "items.*", slow_callback,
+      SyncEngine.on(store, "items/*", slow_callback,
         max_queue_size: 5,
         on_resync: on_resync
       )

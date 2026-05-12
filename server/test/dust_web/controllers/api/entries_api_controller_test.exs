@@ -152,20 +152,20 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       # alpha rows, zero matches, and returns {[], nil} with the bug.
       for i <- 1..60 do
         suffix = String.pad_leading(to_string(i), 3, "0")
-        seed_entry(store, "logs.server.alpha.#{suffix}", "alpha-#{suffix}")
+        seed_entry(store, "logs/server/alpha/#{suffix}", "alpha-#{suffix}")
       end
 
       # Seed 3 entries that actually match the narrow glob
       for i <- 1..3 do
-        seed_entry(store, "logs.server.error.#{i}", "error-#{i}")
+        seed_entry(store, "logs/server/error/#{i}", "error-#{i}")
       end
 
       # Walk pages following next_cursor until exhausted.
-      # With the bug, the raw LIKE window "logs.%" hits 51 rows before we ever
-      # see an error row if the ordering happens to surface info.* first; on
+      # With the bug, the raw LIKE window "logs/%" hits 51 rows before we ever
+      # see an error row if the ordering happens to surface info/* first; on
       # :desc order the error rows come first but we must still walk without
       # getting a spurious early nil next_cursor.
-      pattern = "logs.*.error.**"
+      pattern = "logs/*/error/**"
 
       walk = fn conn, token, walk ->
         fn after_cursor, acc, pages ->
@@ -208,7 +208,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       resp =
         conn
         |> api_conn(token)
-        |> get("/api/stores/entriesorg/mystore/entries?pattern=weird%25.**&select=keys")
+        |> get("/api/stores/entriesorg/mystore/entries?pattern=weird%25/**&select=keys")
 
       body = json_response(resp, 200)
       assert body["items"] == ["weird%/child"]
@@ -351,8 +351,8 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
             "paths" => [
               "users/alice/email",
               "users/alice/name",
-              "users.nope",
-              "totally.absent"
+              "users/nope",
+              "totally/absent"
             ]
           })
         )
@@ -369,7 +369,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       assert is_binary(alice_email["type"])
       assert is_integer(alice_email["revision"])
 
-      assert Enum.sort(body["missing"]) == ["totally.absent", "users.nope"]
+      assert Enum.sort(body["missing"]) == ["totally/absent", "users/nope"]
     end
 
     test "empty paths list returns empty envelope", %{conn: conn, token: token} do
@@ -657,8 +657,8 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       assert is_integer(result["store_seq"])
 
       # All three writes landed.
-      assert %{value: "Foo"} = Sync.get_entry(store.id, "links.foo.title")
-      assert %{value: "https://foo"} = Sync.get_entry(store.id, "links.foo.url")
+      assert %{value: "Foo"} = Sync.get_entry(store.id, "links/foo/title")
+      assert %{value: "https://foo"} = Sync.get_entry(store.id, "links/foo/url")
       assert Sync.get_entry(store.id, "users/bob/name") == nil
 
       # store_seq is monotonic across the batch.
@@ -691,8 +691,8 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       assert is_integer(err["current_revision"])
 
       # No ops applied — first and third writes did not land.
-      assert Sync.get_entry(store.id, "batch.a") == nil
-      assert Sync.get_entry(store.id, "batch.b") == nil
+      assert Sync.get_entry(store.id, "batch/a") == nil
+      assert Sync.get_entry(store.id, "batch/b") == nil
       assert %{value: 1} = Sync.get_entry(store.id, "cas/counter")
     end
 
@@ -714,7 +714,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       assert err["op_index"] == 1
 
       # No ops applied.
-      assert Sync.get_entry(store.id, "batch.a") == nil
+      assert Sync.get_entry(store.id, "batch/a") == nil
     end
 
     test "rejects empty ops list", %{conn: conn, token: token} do
@@ -897,13 +897,24 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       assert resp.status == 403
     end
 
-    test "returns 400 for '.' in URL segment", %{conn: conn, token: token} do
+    test "accepts '.' inside a URL segment as a literal character", %{conn: conn, token: token, store: store} do
+      # Capver 3 segment-first: dots inside URL segments are literal.
+      # `/entries/foo.bar/baz` is two segments: `["foo.bar", "baz"]`.
+      # Seed the leaf with the segment-first contract, then HEAD it.
+      Sync.write(store.id, %{
+        op: :set,
+        path: ["foo.bar", "baz"],
+        value: "v",
+        device_id: "d",
+        client_op_id: "seed-dot-url"
+      })
+
       resp =
         conn
         |> api_conn(token)
         |> head("/api/stores/entriesorg/mystore/entries/foo.bar/baz")
 
-      assert resp.status == 400
+      assert resp.status == 200
     end
   end
 
@@ -992,15 +1003,23 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       assert resp.status == 403
     end
 
-    test "DELETE with '.' in URL segment returns 400", %{conn: conn, token: token} do
+    test "accepts '.' inside a URL segment as a literal character",
+         %{conn: conn, token: token, store: store} do
+      # Seed first so the DELETE has something to remove.
+      Sync.write(store.id, %{
+        op: :set,
+        path: ["foo.bar", "baz"],
+        value: "v",
+        device_id: "d",
+        client_op_id: "seed-dot-del"
+      })
+
       resp =
         conn
         |> api_conn(token)
         |> delete("/api/stores/entriesorg/mystore/entries/foo.bar/baz")
 
-      body = json_response(resp, 400)
-      assert body["error"] == "invalid_params"
-      assert body["detail"] =~ "'.'"
+      assert resp.status == 200
     end
 
     test "DELETE without Bearer token returns 401", %{conn: conn} do
@@ -1041,17 +1060,19 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       refute Enum.any?(paths, &String.starts_with?(&1, "users/bob"))
     end
 
-    test "PUT /entries/foo.bar/baz returns 400 — '.' in URL segment is forbidden",
-         %{conn: conn, token: token} do
+    test "PUT /entries/foo.bar/baz writes to a two-segment path with a literal dot",
+         %{conn: conn, token: token, store: store} do
       resp =
         conn
         |> api_conn(token)
         |> put_req_header("content-type", "application/json")
         |> put("/api/stores/entriesorg/mystore/entries/foo.bar/baz", "\"x\"")
 
-      body = json_response(resp, 400)
-      assert body["error"] == "invalid_params"
-      assert body["detail"] =~ "'.'"
+      body = json_response(resp, 200)
+      assert is_integer(body["revision"])
+
+      # The seeded entry is two segments: literal `foo.bar` then `baz`.
+      assert Sync.get_entry(store.id, ["foo.bar", "baz"]).value == "x"
     end
 
     test "POST /entries/batch normalises slashed paths in the body",
@@ -1122,7 +1143,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
         |> put_req_header("content-type", "application/json")
         |> post(
           "/api/stores/entriesorg/mystore/entries",
-          Jason.encode!(%{path: "links.foo.title", value: "Foo"})
+          Jason.encode!(%{path: "links/foo/title", value: "Foo"})
         )
 
       body = json_response(resp, 200)
@@ -1130,7 +1151,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       assert is_integer(body["store_seq"])
 
       # And the write actually landed in the store.
-      assert Sync.get_entry(store.id, "links.foo.title").value == "Foo"
+      assert Sync.get_entry(store.id, "links/foo/title").value == "Foo"
     end
 
     test "bearer-authed POST with {path, value} also works", %{conn: conn, token: token} do
@@ -1140,7 +1161,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
         |> put_req_header("content-type", "application/json")
         |> post(
           "/api/stores/entriesorg/mystore/entries",
-          Jason.encode!(%{path: "links.bar.title", value: "Bar"})
+          Jason.encode!(%{path: "links/bar/title", value: "Bar"})
         )
 
       body = json_response(resp, 200)
@@ -1165,7 +1186,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
         |> put_req_header("content-type", "application/json")
         |> post(
           "/api/stores/entriesorg/mystore/entries",
-          Jason.encode!(%{path: "links.foo"})
+          Jason.encode!(%{path: "links/foo"})
         )
 
       assert resp.status == 400
@@ -1174,8 +1195,8 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
     test "if_match in body forwards through to CAS",
          %{logged_in: conn, store: store} do
       # Seed and capture the revision.
-      seed_entry(store, "cas.target", "v0")
-      rev = Sync.get_entry(store.id, "cas.target").seq
+      seed_entry(store, "cas/target", "v0")
+      rev = Sync.get_entry(store.id, "cas/target").seq
 
       # Successful CAS.
       ok_resp =
@@ -1183,7 +1204,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
         |> put_req_header("content-type", "application/json")
         |> post(
           "/api/stores/entriesorg/mystore/entries",
-          Jason.encode!(%{path: "cas.target", value: "v1", if_match: rev})
+          Jason.encode!(%{path: "cas/target", value: "v1", if_match: rev})
         )
 
       assert json_response(ok_resp, 200)
@@ -1194,7 +1215,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
         |> put_req_header("content-type", "application/json")
         |> post(
           "/api/stores/entriesorg/mystore/entries",
-          Jason.encode!(%{path: "cas.target", value: "v2", if_match: rev})
+          Jason.encode!(%{path: "cas/target", value: "v2", if_match: rev})
         )
 
       assert json_response(fail_resp, 412)["error"] == "conflict"
@@ -1222,19 +1243,19 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
 
     test "session-authed DELETE with {path} removes the entry",
          %{logged_in: conn, store: store} do
-      seed_entry(store, "to.delete", "bye")
-      assert Sync.get_entry(store.id, "to.delete")
+      seed_entry(store, "to/delete", "bye")
+      assert Sync.get_entry(store.id, "to/delete")
 
       resp =
         conn
         |> put_req_header("content-type", "application/json")
         |> delete(
           "/api/stores/entriesorg/mystore/entries",
-          Jason.encode!(%{path: "to.delete"})
+          Jason.encode!(%{path: "to/delete"})
         )
 
       assert json_response(resp, 200)
-      assert Sync.get_entry(store.id, "to.delete") == nil
+      assert Sync.get_entry(store.id, "to/delete") == nil
     end
 
     test "missing path 400s", %{logged_in: conn} do

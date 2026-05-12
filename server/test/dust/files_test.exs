@@ -189,7 +189,7 @@ defmodule Dust.FilesTest do
 
       Dust.Sync.write(store.id, %{
         op: :put_file,
-        path: "docs.readme",
+        path: "docs/readme",
         value: ref,
         device_id: "d",
         client_op_id: "f1"

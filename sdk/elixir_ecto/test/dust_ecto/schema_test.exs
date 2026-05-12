@@ -104,16 +104,19 @@ defmodule DustEcto.SchemaTest do
       assert cs.valid?
     end
 
-    test "rejects a slug containing '.'" do
-      cs = Link.changeset(%Link{}, %{slug: "a.b", title: "T", url: "U"})
-      refute cs.valid?
-      assert {"cannot contain '.'" <> _, _} = cs.errors[:slug]
+    test "accepts a slug containing '.' (literal in segment-first model)" do
+      # Capver 3: a slug is one path segment. Literal dots are
+      # ordinary characters — `example.com` is a perfectly valid slug
+      # that renders to a single-segment record path.
+      cs = Link.changeset(%Link{}, %{slug: "example.com", title: "T", url: "U"})
+      assert cs.valid?
     end
 
-    test "rejects a slug containing '/'" do
+    test "accepts a slug containing '/' (rendered as ~1)" do
+      # Literal `/` in a slug is rendered as `~1` per RFC 6901 by
+      # `Dust.Protocol.Path.render/1` before hitting any wire/SQL key.
       cs = Link.changeset(%Link{}, %{slug: "a/b", title: "T", url: "U"})
-      refute cs.valid?
-      assert {"cannot contain '/'" <> _, _} = cs.errors[:slug]
+      assert cs.valid?
     end
 
     test "rejects an empty-string slug" do

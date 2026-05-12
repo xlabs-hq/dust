@@ -152,9 +152,13 @@ defmodule DustEcto.Schema do
   end
 
   @doc """
-  Validates that the given slug field is non-empty and does not contain
-  characters that would mis-shape the record at the storage layer (`.`)
-  or create URL-encoding ambiguity (`/`).
+  Validates that the given slug field is a non-empty string.
+
+  In capver 3 (segment-first paths), the slug is one path segment.
+  Literal `.` and `/` inside that segment are ordinary characters:
+  the dot is just a dot, and the slash is rendered as `~1` per RFC
+  6901 before hitting any wire / SQL key. So this validator only
+  rejects what's structurally invalid — empty strings and non-strings.
 
   Use inside any `changeset/2`:
 
@@ -172,24 +176,7 @@ defmodule DustEcto.Schema do
         Ecto.Changeset.add_error(changeset, field, "cannot be empty")
 
       slug when is_binary(slug) ->
-        cond do
-          String.contains?(slug, ".") ->
-            Ecto.Changeset.add_error(
-              changeset,
-              field,
-              "cannot contain '.' (would mis-shape the record's path)"
-            )
-
-          String.contains?(slug, "/") ->
-            Ecto.Changeset.add_error(
-              changeset,
-              field,
-              "cannot contain '/' (URL path separator)"
-            )
-
-          true ->
-            changeset
-        end
+        changeset
 
       _other ->
         Ecto.Changeset.add_error(changeset, field, "must be a string")

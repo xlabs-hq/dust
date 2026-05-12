@@ -33,7 +33,7 @@ defmodule Dust.Integration.SmokeTest do
       ref =
         push(socket, "write", %{
           "op" => "set",
-          "path" => "posts.hello",
+          "path" => "posts/hello",
           "value" => %{"title" => "Hello"},
           "client_op_id" => "o1"
         })
@@ -41,14 +41,14 @@ defmodule Dust.Integration.SmokeTest do
       assert_reply ref, :ok, %{store_seq: 1}
 
       # Verify entry exists — get_entry unwraps _scalar, but maps stay as-is
-      entry = Dust.Sync.get_entry(store.id, "posts.hello")
+      entry = Dust.Sync.get_entry(store.id, "posts/hello")
       assert entry.value == %{"title" => "Hello"}
 
       # Merge
       ref =
         push(socket, "write", %{
           "op" => "merge",
-          "path" => "posts.hello",
+          "path" => "posts/hello",
           "value" => %{"body" => "World"},
           "client_op_id" => "o2"
         })
@@ -57,20 +57,20 @@ defmodule Dust.Integration.SmokeTest do
 
       # Merge creates child entry posts.hello.body with wrapped scalar
       # get_entry unwraps _scalar, so value is just "World"
-      assert Dust.Sync.get_entry(store.id, "posts.hello.body").value == "World"
+      assert Dust.Sync.get_entry(store.id, "posts/hello/body").value == "World"
 
       # Delete
       ref =
         push(socket, "write", %{
           "op" => "delete",
-          "path" => "posts.hello",
+          "path" => "posts/hello",
           "value" => nil,
           "client_op_id" => "o3"
         })
 
       assert_reply ref, :ok, %{store_seq: 3}
 
-      assert Dust.Sync.get_entry(store.id, "posts.hello") == nil
+      assert Dust.Sync.get_entry(store.id, "posts/hello") == nil
     end
   end
 
@@ -157,7 +157,7 @@ defmodule Dust.Integration.SmokeTest do
       ref1 =
         push(socket, "write", %{
           "op" => "set",
-          "path" => "posts.hello.title",
+          "path" => "posts/hello/title",
           "value" => "Hi",
           "client_op_id" => "o1"
         })
@@ -167,7 +167,7 @@ defmodule Dust.Integration.SmokeTest do
       ref2 =
         push(socket, "write", %{
           "op" => "set",
-          "path" => "posts.hello.body",
+          "path" => "posts/hello/body",
           "value" => "Body",
           "client_op_id" => "o2"
         })
@@ -185,8 +185,8 @@ defmodule Dust.Integration.SmokeTest do
 
       assert_reply ref3, :ok, _
 
-      assert Dust.Sync.get_entry(store.id, "posts.hello.title") == nil
-      assert Dust.Sync.get_entry(store.id, "posts.hello.body") == nil
+      assert Dust.Sync.get_entry(store.id, "posts/hello/title") == nil
+      assert Dust.Sync.get_entry(store.id, "posts/hello/body") == nil
       assert Dust.Sync.get_entry(store.id, "posts") != nil
     end
   end
@@ -218,7 +218,7 @@ defmodule Dust.Integration.SmokeTest do
       assert_reply ref2, :ok, _
 
       # set replaced the merge — locale is gone
-      assert Dust.Sync.get_entry(store.id, "settings.locale") == nil
+      assert Dust.Sync.get_entry(store.id, "settings/locale") == nil
       assert Dust.Sync.get_entry(store.id, "settings") != nil
     end
   end
@@ -284,21 +284,21 @@ defmodule Dust.Integration.SmokeTest do
       # Write to various paths
       push(socket, "write", %{
         "op" => "set",
-        "path" => "posts.hello",
+        "path" => "posts/hello",
         "value" => "v",
         "client_op_id" => "o1"
       })
 
       push(socket, "write", %{
         "op" => "set",
-        "path" => "posts.hello.title",
+        "path" => "posts/hello/title",
         "value" => "v",
         "client_op_id" => "o2"
       })
 
       push(socket, "write", %{
         "op" => "set",
-        "path" => "config.x",
+        "path" => "config/x",
         "value" => "v",
         "client_op_id" => "o3"
       })

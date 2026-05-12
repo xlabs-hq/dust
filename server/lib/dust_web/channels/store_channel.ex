@@ -471,7 +471,7 @@ defmodule DustWeb.StoreChannel do
   end
 
   defp validate_path(nil), do: {:error, :missing_path}
-  defp validate_path(path) when is_binary(path), do: DustProtocol.Path.LegacyDot.parse(path)
+  defp validate_path(path) when is_binary(path), do: DustProtocol.Path.parse_rendered(path)
   defp validate_path(_), do: {:error, :invalid_path}
 
   defp validate_merge_value(:merge, value) when is_map(value), do: :ok
@@ -507,11 +507,27 @@ defmodule DustWeb.StoreChannel do
 
   defp check_billing_limits(:merge, %{"path" => path, "value" => value}, store_id, org)
        when is_map(value) do
-    # Count net-new paths from merge using full path prefix
+    # Count net-new paths from merge using the canonical full-path
+    # prefix. Path arrives canonical (slash-rendered) post-segment-first;
+    # build child paths via segment-aware Path.child to handle dots /
+    # slashes / tildes in child keys correctly.
     new_keys =
-      Enum.count(value, fn {key, _v} ->
-        Sync.get_entry(store_id, "#{path}.#{key}") == nil
-      end)
+      case DustProtocol.Path.parse_rendered(path) do
+        {:ok, prefix_segs} ->
+          Enum.count(value, fn {key, _v} ->
+            with {:ok, child_segs} <- DustProtocol.Path.child(prefix_segs, to_string(key)),
+                 {:ok, child_path} <- DustProtocol.Path.render(child_segs) do
+              Sync.get_entry(store_id, child_path) == nil
+            else
+              _ -> true
+            end
+          end)
+
+        _ ->
+          # Path failed to parse — treat every child as net-new; the
+          # underlying write will fail anyway.
+          map_size(value)
+      end
 
     if new_keys > 0 do
       Dust.Billing.Limits.check_key_count(store_id, new_keys, org)

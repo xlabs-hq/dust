@@ -18,14 +18,14 @@ defmodule Dust.Sync.ImportTest do
       lines = [
         ~s({"_header": true, "store": "importtest/source", "seq": 5, "entry_count": 2}),
         ~s({"path": "a", "value": "hello", "type": "string"}),
-        ~s({"path": "b.c", "value": 42, "type": "integer"})
+        ~s({"path": "b/c", "value": 42, "type": "integer"})
       ]
 
       assert {:ok, %{imported: 2, failed: [], unparseable: 0, skipped: 1}} =
                Sync.Import.from_jsonl(store.id, lines, "system:import")
 
       assert Sync.get_entry(store.id, "a").value == "hello"
-      assert Sync.get_entry(store.id, "b.c").value == 42
+      assert Sync.get_entry(store.id, "b/c").value == 42
     end
 
     test "overwrites existing keys (LWW)", %{store: store} do

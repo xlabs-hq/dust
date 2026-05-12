@@ -150,10 +150,10 @@ module Dust
     end
 
     # ----------------------------------------------------------------
-    # Legacy compatibility helpers (transitional). Used by the CLI to
-    # accept dotted-string arguments during the migration window.
-    # Removed once the CLI exclusively uses slash-rendered or
-    # segment-array inputs.
+    # Legacy dotted-path helper (explicit opt-in). Callers that hold
+    # genuinely-legacy dotted strings convert them explicitly via
+    # this helper, then pass the resulting array. Kept while the
+    # migration window is open.
     # ----------------------------------------------------------------
 
     def self.parse_legacy_dotted(s : String) : Array(String)
@@ -167,36 +167,24 @@ module Dust
       parts
     end
 
-    # Heuristic: a string containing `/` is canonical (re-validated);
-    # otherwise it's dot-split and re-rendered to slash form.
+    # Strings are interpreted as canonical slash-rendered form.
+    # `"example.com"` is one segment with a literal dot, not the
+    # legacy two-segment form.
     def self.normalize_path(s : String) : String
-      if s.includes?('/')
-        normalize_rendered(s)
-      else
-        render(parse_legacy_dotted(s))
-      end
+      normalize_rendered(s)
     end
 
-    # Wildcards `*` / `**` survive. Same heuristic as normalize_path.
+    # Patterns must already be expressed against slash separators.
+    # Wildcards `*` / `**` survive unchanged.
     def self.normalize_pattern(s : String) : String
       return "**" if s == "**"
-      if s.includes?('/')
-        parts = s.split('/')
-        parts.each do |p|
-          if p.empty?
-            raise InvalidPathError.new("pattern \"#{s}\" contains empty segments")
-          end
+      parts = s.split('/')
+      parts.each do |p|
+        if p.empty?
+          raise InvalidPathError.new("pattern \"#{s}\" contains empty segments")
         end
-        s
-      else
-        parts = s.split('.')
-        parts.each do |p|
-          if p.empty?
-            raise InvalidPathError.new("pattern \"#{s}\" contains empty segments")
-          end
-        end
-        parts.join('/')
       end
+      s
     end
   end
 end

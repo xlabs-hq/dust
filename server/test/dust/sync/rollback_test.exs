@@ -27,22 +27,22 @@ defmodule Dust.Sync.RollbackTest do
   describe "rollback_path/3" do
     test "restores a previous value", %{store: store} do
       # Write initial value
-      write!(store.id, :set, "posts.hello", %{"title" => "Hello"})
+      write!(store.id, :set, "posts/hello", %{"title" => "Hello"})
       # seq 1 has title "Hello"
 
       # Overwrite with new value
-      write!(store.id, :set, "posts.hello", %{"title" => "Updated"})
+      write!(store.id, :set, "posts/hello", %{"title" => "Updated"})
       # seq 2 has title "Updated"
 
       # Verify current state
-      assert Sync.get_entry(store.id, "posts.hello").value == %{"title" => "Updated"}
+      assert Sync.get_entry(store.id, "posts/hello").value == %{"title" => "Updated"}
 
       # Rollback to seq 1
-      {:ok, op} = Rollback.rollback_path(store.id, "posts.hello", 1)
+      {:ok, op} = Rollback.rollback_path(store.id, "posts/hello", 1)
 
       assert op.op == :set
       assert op.store_seq == 3
-      assert Sync.get_entry(store.id, "posts.hello").value == %{"title" => "Hello"}
+      assert Sync.get_entry(store.id, "posts/hello").value == %{"title" => "Hello"}
     end
 
     test "rollback to a point before the path existed results in delete", %{store: store} do
@@ -50,16 +50,16 @@ defmodule Dust.Sync.RollbackTest do
       write!(store.id, :set, "other", "value")
 
       # Write the path at seq 2
-      write!(store.id, :set, "posts.new", "content")
+      write!(store.id, :set, "posts/new", "content")
 
       # Verify it exists
-      assert Sync.get_entry(store.id, "posts.new") != nil
+      assert Sync.get_entry(store.id, "posts/new") != nil
 
       # Rollback to seq 1 (before posts.new existed)
-      {:ok, op} = Rollback.rollback_path(store.id, "posts.new", 1)
+      {:ok, op} = Rollback.rollback_path(store.id, "posts/new", 1)
 
       assert op.op == :delete
-      assert Sync.get_entry(store.id, "posts.new") == nil
+      assert Sync.get_entry(store.id, "posts/new") == nil
     end
 
     test "creates a new op — forward operation", %{store: store} do
@@ -197,18 +197,18 @@ defmodule Dust.Sync.RollbackTest do
     end
 
     test "handles store-level rollback with merge ops in history", %{store: store} do
-      write!(store.id, :set, "profile.name", "Alice")
+      write!(store.id, :set, "profile/name", "Alice")
       write!(store.id, :merge, "profile", %{"age" => 30})
       # At seq 2: profile.name=Alice, profile.age=30
 
-      write!(store.id, :set, "profile.name", "Bob")
+      write!(store.id, :set, "profile/name", "Bob")
       # At seq 3: profile.name=Bob, profile.age=30
 
       {:ok, count} = Rollback.rollback_store(store.id, 2)
 
       assert count == 1
-      assert Sync.get_entry(store.id, "profile.name").value == "Alice"
-      assert Sync.get_entry(store.id, "profile.age").value == 30
+      assert Sync.get_entry(store.id, "profile/name").value == "Alice"
+      assert Sync.get_entry(store.id, "profile/age").value == 30
     end
   end
 
@@ -231,21 +231,21 @@ defmodule Dust.Sync.RollbackTest do
       # but materializes an entry at "docs" with value %{readme: "hello"}
       write!(store.id, :set, "docs", %{"readme" => "hello", "license" => "MIT"})
 
-      # Now set a direct child — creates a new op at "docs.readme"
-      write!(store.id, :set, "docs.readme", "updated")
+      # Now set a direct child — creates a new op at "docs/readme"
+      write!(store.id, :set, "docs/readme", "updated")
 
-      # Historical value of "docs.readme" at seq 1 should be "hello"
+      # Historical value of "docs/readme" at seq 1 should be "hello"
       # (extracted from the ancestor set op's map value)
-      value = Rollback.compute_historical_value(store.id, "docs.readme", 1)
+      value = Rollback.compute_historical_value(store.id, "docs/readme", 1)
       assert value == %{"_scalar" => "hello"}
     end
 
     test "ancestor delete removes descendant value", %{store: store} do
-      write!(store.id, :set, "docs.readme", "hello")
+      write!(store.id, :set, "docs/readme", "hello")
       write!(store.id, :delete, "docs", nil)
 
-      # At seq 2, "docs" was deleted — so "docs.readme" should be nil
-      value = Rollback.compute_historical_value(store.id, "docs.readme", 2)
+      # At seq 2, "docs" was deleted — so "docs/readme" should be nil
+      value = Rollback.compute_historical_value(store.id, "docs/readme", 2)
       assert value == nil
     end
 

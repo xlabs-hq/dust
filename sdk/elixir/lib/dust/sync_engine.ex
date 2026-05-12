@@ -26,11 +26,9 @@ defmodule Dust.SyncEngine do
   def via(store), do: {:via, Registry, {Dust.SyncEngineRegistry, store}}
 
   # Normalize a user-supplied path to canonical slash-rendered form.
-  # Accepts segment lists, canonical slash strings, and legacy dotted
-  # strings; returns the slash-rendered form used everywhere downstream
-  # (cache keys, wire protocol). Raises ArgumentError on invalid input —
-  # paths that can't be normalised are programmer errors, not runtime
-  # conditions.
+  # Accepts a segment list or a canonical slash-rendered string.
+  # Strings are interpreted as canonical: `"example.com"` is one
+  # segment, not legacy two-segment "example"."com".
   defp norm!(path) when is_list(path) do
     case Dust.Protocol.Path.render(path) do
       {:ok, p} -> p
@@ -39,47 +37,22 @@ defmodule Dust.SyncEngine do
   end
 
   defp norm!(path) when is_binary(path) do
-    cond do
-      String.contains?(path, "/") ->
-        case Dust.Protocol.Path.normalize_rendered(path) do
-          {:ok, p} -> p
-          {:error, reason} -> raise ArgumentError, "invalid path #{inspect(path)}: #{reason}"
-        end
-
-      true ->
-        case Dust.Protocol.Path.LegacyDot.parse(path) do
-          {:ok, segs} ->
-            case Dust.Protocol.Path.render(segs) do
-              {:ok, p} -> p
-              {:error, reason} -> raise ArgumentError, "invalid path #{inspect(path)}: #{reason}"
-            end
-
-          {:error, reason} ->
-            raise ArgumentError, "invalid path #{inspect(path)}: #{reason}"
-        end
+    case Dust.Protocol.Path.normalize_rendered(path) do
+      {:ok, p} -> p
+      {:error, reason} -> raise ArgumentError, "invalid path #{inspect(path)}: #{reason}"
     end
   end
 
-  # Wildcards in patterns survive both normalisation routes.
+  # Patterns follow the same rule: canonical slash strings or segment
+  # lists. Wildcards `*` / `**` must already be expressed against
+  # slash separators.
   defp norm_pattern!("**"), do: "**"
   defp norm_pattern!(pattern) when is_list(pattern), do: norm!(pattern)
 
   defp norm_pattern!(pattern) when is_binary(pattern) do
-    cond do
-      String.contains?(pattern, "/") ->
-        case Dust.Protocol.Glob.compile(pattern) do
-          {:ok, _} -> pattern
-          {:error, reason} -> raise ArgumentError, "invalid pattern #{inspect(pattern)}: #{reason}"
-        end
-
-      true ->
-        case Dust.Protocol.Path.LegacyDot.normalize_pattern(pattern) do
-          {:ok, dotted} ->
-            dotted |> String.split(".") |> Enum.join("/")
-
-          {:error, reason} ->
-            raise ArgumentError, "invalid pattern #{inspect(pattern)}: #{reason}"
-        end
+    case Dust.Protocol.Glob.compile(pattern) do
+      {:ok, _} -> pattern
+      {:error, reason} -> raise ArgumentError, "invalid pattern #{inspect(pattern)}: #{reason}"
     end
   end
 

@@ -38,11 +38,11 @@ defmodule DustWeb.FileControllerTest do
       store: store,
       rw_token: token
     } do
-      {:ok, ref} = Files.upload("hello file", filename: "hello.txt", content_type: "text/plain")
+      {:ok, ref} = Files.upload("hello file", filename: "hello/txt", content_type: "text/plain")
 
       Sync.write(store.id, %{
         op: :put_file,
-        path: "test.file",
+        path: "test/file",
         value: ref,
         device_id: "test",
         client_op_id: "op1"
@@ -63,11 +63,11 @@ defmodule DustWeb.FileControllerTest do
       store: store,
       rw_token: token
     } do
-      {:ok, ref} = Files.upload("data", filename: "report.pdf", content_type: "application/pdf")
+      {:ok, ref} = Files.upload("data", filename: "report/pdf", content_type: "application/pdf")
 
       Sync.write(store.id, %{
         op: :put_file,
-        path: "test.pdf",
+        path: "test/pdf",
         value: ref,
         device_id: "test",
         client_op_id: "op2"
@@ -79,7 +79,7 @@ defmodule DustWeb.FileControllerTest do
         |> get("/api/files/#{URI.encode(ref["hash"])}")
 
       assert conn.status == 200
-      assert get_resp_header(conn, "content-disposition") |> hd() =~ "report.pdf"
+      assert get_resp_header(conn, "content-disposition") |> hd() =~ "report/pdf"
     end
 
     test "read-only token can download", %{conn: conn, store: store, ro_token: token} do
@@ -87,7 +87,7 @@ defmodule DustWeb.FileControllerTest do
 
       Sync.write(store.id, %{
         op: :put_file,
-        path: "test.readable",
+        path: "test/readable",
         value: ref,
         device_id: "test",
         client_op_id: "op3"

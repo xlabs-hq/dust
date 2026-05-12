@@ -129,20 +129,29 @@ describe Dust::Path do
   end
 
   describe "legacy helpers" do
-    it ".normalize_path: legacy dotted -> canonical slash" do
-      Dust::Path.normalize_path("a.b.c").should eq "a/b/c"
+    it ".parse_legacy_dotted splits on dots (explicit opt-in)" do
+      Dust::Path.parse_legacy_dotted("a.b.c").should eq ["a", "b", "c"]
     end
 
     it ".normalize_path: canonical slash -> unchanged" do
       Dust::Path.normalize_path("a/b/c").should eq "a/b/c"
     end
 
-    it ".normalize_pattern: legacy dotted with wildcard -> canonical slash" do
-      Dust::Path.normalize_pattern("foo.*").should eq "foo/*"
+    it ".normalize_path: string with literal dots is one segment, not split" do
+      # Capver 3: dots are literal in segments. Callers that hold
+      # genuinely-legacy dotted strings must convert explicitly via
+      # `parse_legacy_dotted` first.
+      Dust::Path.normalize_path("example.com").should eq "example.com"
+      Dust::Path.render(Dust::Path.parse_legacy_dotted("a.b.c")).should eq "a/b/c"
     end
 
     it ".normalize_pattern: ** passes through" do
       Dust::Path.normalize_pattern("**").should eq "**"
+    end
+
+    it ".normalize_pattern: canonical slash patterns pass through" do
+      Dust::Path.normalize_pattern("foo/*").should eq "foo/*"
+      Dust::Path.normalize_pattern("users/**").should eq "users/**"
     end
   end
 

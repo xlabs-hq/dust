@@ -15,13 +15,13 @@ defmodule Dust.Sync.SetTest do
       {:ok, _} =
         Sync.write(store.id, %{
           op: :add,
-          path: "post.tags",
+          path: "post/tags",
           value: "elixir",
           device_id: "d1",
           client_op_id: "o1"
         })
 
-      entry = Sync.get_entry(store.id, "post.tags")
+      entry = Sync.get_entry(store.id, "post/tags")
       assert entry.value == ["elixir"]
       assert entry.type == "set"
     end
@@ -29,7 +29,7 @@ defmodule Dust.Sync.SetTest do
     test "add is idempotent (adding same member twice does not duplicate)", %{store: store} do
       Sync.write(store.id, %{
         op: :add,
-        path: "post.tags",
+        path: "post/tags",
         value: "elixir",
         device_id: "d1",
         client_op_id: "o1"
@@ -37,20 +37,20 @@ defmodule Dust.Sync.SetTest do
 
       Sync.write(store.id, %{
         op: :add,
-        path: "post.tags",
+        path: "post/tags",
         value: "elixir",
         device_id: "d1",
         client_op_id: "o2"
       })
 
-      entry = Sync.get_entry(store.id, "post.tags")
+      entry = Sync.get_entry(store.id, "post/tags")
       assert entry.value == ["elixir"]
     end
 
     test "concurrent adds of different members both survive", %{store: store} do
       Sync.write(store.id, %{
         op: :add,
-        path: "post.tags",
+        path: "post/tags",
         value: "elixir",
         device_id: "dev_a",
         client_op_id: "o1"
@@ -58,13 +58,13 @@ defmodule Dust.Sync.SetTest do
 
       Sync.write(store.id, %{
         op: :add,
-        path: "post.tags",
+        path: "post/tags",
         value: "rust",
         device_id: "dev_b",
         client_op_id: "o2"
       })
 
-      entry = Sync.get_entry(store.id, "post.tags")
+      entry = Sync.get_entry(store.id, "post/tags")
       assert is_list(entry.value)
       assert "elixir" in entry.value
       assert "rust" in entry.value
@@ -75,7 +75,7 @@ defmodule Dust.Sync.SetTest do
     test "removes a member", %{store: store} do
       Sync.write(store.id, %{
         op: :add,
-        path: "post.tags",
+        path: "post/tags",
         value: "elixir",
         device_id: "d1",
         client_op_id: "o1"
@@ -83,7 +83,7 @@ defmodule Dust.Sync.SetTest do
 
       Sync.write(store.id, %{
         op: :add,
-        path: "post.tags",
+        path: "post/tags",
         value: "rust",
         device_id: "d1",
         client_op_id: "o2"
@@ -91,13 +91,13 @@ defmodule Dust.Sync.SetTest do
 
       Sync.write(store.id, %{
         op: :remove,
-        path: "post.tags",
+        path: "post/tags",
         value: "elixir",
         device_id: "d1",
         client_op_id: "o3"
       })
 
-      entry = Sync.get_entry(store.id, "post.tags")
+      entry = Sync.get_entry(store.id, "post/tags")
       assert entry.value == ["rust"]
     end
 
@@ -105,13 +105,13 @@ defmodule Dust.Sync.SetTest do
       {:ok, _} =
         Sync.write(store.id, %{
           op: :remove,
-          path: "post.tags",
+          path: "post/tags",
           value: "elixir",
           device_id: "d1",
           client_op_id: "o1"
         })
 
-      entry = Sync.get_entry(store.id, "post.tags")
+      entry = Sync.get_entry(store.id, "post/tags")
       assert entry.value == []
     end
   end
@@ -120,7 +120,7 @@ defmodule Dust.Sync.SetTest do
     test "replaces entire set", %{store: store} do
       Sync.write(store.id, %{
         op: :add,
-        path: "post.tags",
+        path: "post/tags",
         value: "elixir",
         device_id: "d1",
         client_op_id: "o1"
@@ -128,7 +128,7 @@ defmodule Dust.Sync.SetTest do
 
       Sync.write(store.id, %{
         op: :add,
-        path: "post.tags",
+        path: "post/tags",
         value: "rust",
         device_id: "d1",
         client_op_id: "o2"
@@ -137,13 +137,13 @@ defmodule Dust.Sync.SetTest do
       # :set replaces the entire set with LWW
       Sync.write(store.id, %{
         op: :set,
-        path: "post.tags",
+        path: "post/tags",
         value: ["go"],
         device_id: "d1",
         client_op_id: "o3"
       })
 
-      entry = Sync.get_entry(store.id, "post.tags")
+      entry = Sync.get_entry(store.id, "post/tags")
       assert entry.value == ["go"]
     end
   end

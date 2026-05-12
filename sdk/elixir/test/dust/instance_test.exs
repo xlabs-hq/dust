@@ -62,7 +62,7 @@ defmodule Dust.InstanceTest do
 
   test "facade module delegates on (callbacks)" do
     test_pid = self()
-    TestDust.on("test/instance", "events.*", fn event -> send(test_pid, {:event, event}) end)
+    TestDust.on("test/instance", "events/*", fn event -> send(test_pid, {:event, event}) end)
     TestDust.put("test/instance", "events/click", "data")
     assert_receive {:event, %{path: "events/click", committed: false, source: :local}}, 500
   end

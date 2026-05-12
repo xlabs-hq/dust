@@ -10,15 +10,14 @@ defmodule Dust.Sync do
 
   Accepts:
     * a segment list — `["a", "b", "c"]` → `{:ok, "a/b/c"}`
-    * a canonical rendered slash string — passed through after validation
-    * a legacy dotted string — `"a.b.c"` → `{:ok, "a/b/c"}`
+    * a canonical rendered slash string — `"a/b/c"` → passed through
+      after validation
 
-  Returns `{:error, reason}` on invalid input.
-
-  Public so that adjacent modules (Audit, MCP tools, etc.) can use
-  the same normalisation at their boundaries. Internal callers
-  (writer, conflict, rollback) don't need it — they already receive
-  canonical form from this module.
+  Returns `{:error, reason}` on invalid input. Importantly, a string
+  like `"example.com"` is treated as **one segment** containing a
+  literal dot — not as the legacy two-segment form. Callers that
+  hold genuinely-legacy dotted strings must convert them explicitly
+  via `DustProtocol.Path.LegacyDot.parse/1` before calling this.
   """
   @spec normalize_path(term()) :: {:ok, String.t()} | {:error, atom()}
   def normalize_path(path_segments) when is_list(path_segments) do
@@ -28,25 +27,7 @@ defmodule Dust.Sync do
   end
 
   def normalize_path(path) when is_binary(path) do
-    # Heuristic: if the string contains a `/` (and parses cleanly as a
-    # rendered path), trust it as canonical. Otherwise parse as a
-    # legacy dotted path. This is the only place that interprets
-    # ambiguous input — every internal caller already has rendered
-    # form by the time it gets here.
-    cond do
-      String.contains?(path, "/") ->
-        Path.parse_rendered(path)
-        |> case do
-          {:ok, _segments} -> {:ok, path}
-          err -> err
-        end
-
-      true ->
-        case Path.LegacyDot.parse(path) do
-          {:ok, segments} -> Path.render(segments)
-          err -> err
-        end
-    end
+    Path.normalize_rendered(path)
   end
 
   defp normalize_path_in_attrs(%{path: path} = attrs) do
@@ -422,34 +403,19 @@ defmodule Dust.Sync do
 
   @doc """
   Convert a caller-provided glob pattern into canonical slash-rendered
-  form. Wildcards `*` / `**` survive the round-trip unchanged.
+  form. The input must already be canonical — wildcards `*` and `**`
+  must be expressed against slash separators (`"posts/*"`, `"users/**"`).
 
-  Same legacy-vs-canonical rule as `normalize_path/1`: if the input
-  contains a slash, treat it as canonical (validate with
-  `DustProtocol.Glob`); otherwise dot-split via `LegacyDot` and
-  re-render with slashes.
+  Legacy dotted patterns (`"posts.*"`) are not accepted; callers must
+  convert explicitly.
   """
   @spec normalize_pattern(String.t()) :: {:ok, String.t()} | {:error, atom()}
   def normalize_pattern("**"), do: {:ok, "**"}
 
   def normalize_pattern(pattern) when is_binary(pattern) do
-    cond do
-      String.contains?(pattern, "/") ->
-        case DustProtocol.Glob.compile(pattern) do
-          {:ok, _} -> {:ok, pattern}
-          err -> err
-        end
-
-      true ->
-        case Path.LegacyDot.normalize_pattern(pattern) do
-          {:ok, dotted} ->
-            # Convert dotted form to slash form, preserving `*` / `**`.
-            segments = String.split(dotted, ".")
-            {:ok, Enum.join(segments, "/")}
-
-          err ->
-            err
-        end
+    case DustProtocol.Glob.compile(pattern) do
+      {:ok, _} -> {:ok, pattern}
+      err -> err
     end
   end
 

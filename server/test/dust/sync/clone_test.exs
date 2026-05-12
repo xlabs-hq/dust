@@ -28,7 +28,7 @@ defmodule Dust.Sync.CloneTest do
 
       Sync.write(source.id, %{
         op: :set,
-        path: "b.c",
+        path: "b/c",
         value: 42,
         device_id: "d",
         client_op_id: "o2"
@@ -40,7 +40,7 @@ defmodule Dust.Sync.CloneTest do
 
       # Entries should exist in the target
       assert Sync.get_entry(target.id, "a").value == "hello"
-      assert Sync.get_entry(target.id, "b.c").value == 42
+      assert Sync.get_entry(target.id, "b/c").value == 42
     end
 
     test "preserves seq numbers", %{org: org, source: source} do

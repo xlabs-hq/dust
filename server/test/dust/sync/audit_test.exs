@@ -11,11 +11,11 @@ defmodule Dust.Sync.AuditTest do
 
     # Write some ops for testing
     for {path, device, op_type, value, i} <- [
-          {"users.alice", "dev_1", :set, %{"name" => "Alice"}, 1},
-          {"users.bob", "dev_1", :set, %{"name" => "Bob"}, 2},
-          {"settings.theme", "dev_2", :set, "dark", 3},
-          {"users.alice", "dev_1", :merge, %{"age" => 30}, 4},
-          {"users.bob", "dev_2", :delete, nil, 5}
+          {"users/alice", "dev_1", :set, %{"name" => "Alice"}, 1},
+          {"users/bob", "dev_1", :set, %{"name" => "Bob"}, 2},
+          {"settings/theme", "dev_2", :set, "dark", 3},
+          {"users/alice", "dev_1", :merge, %{"age" => 30}, 4},
+          {"users/bob", "dev_2", :delete, nil, 5}
         ] do
       Sync.write(store.id, %{
         op: op_type,
@@ -51,20 +51,20 @@ defmodule Dust.Sync.AuditTest do
     end
 
     test "filters by exact path", %{store: store} do
-      ops = Audit.query_ops(store.id, path: "users.alice")
+      ops = Audit.query_ops(store.id, path: "users/alice")
       assert length(ops) == 2
       assert Enum.all?(ops, &(&1.path == "users/alice"))
     end
 
     test "filters by wildcard path", %{store: store} do
-      ops = Audit.query_ops(store.id, path: "users.*")
-      # * becomes % for SQL LIKE — matches users.alice and users.bob ops
+      ops = Audit.query_ops(store.id, path: "users/*")
+      # * becomes % for SQL LIKE — matches users/alice and users/bob ops
       assert length(ops) == 4
       assert Enum.all?(ops, &String.starts_with?(&1.path, "users/"))
     end
 
     test "filters by glob wildcard path", %{store: store} do
-      ops = Audit.query_ops(store.id, path: "settings.*")
+      ops = Audit.query_ops(store.id, path: "settings/*")
       assert length(ops) == 1
       assert hd(ops).path == "settings/theme"
     end
@@ -88,7 +88,7 @@ defmodule Dust.Sync.AuditTest do
     end
 
     test "combines multiple filters", %{store: store} do
-      ops = Audit.query_ops(store.id, path: "users.alice", op: "set")
+      ops = Audit.query_ops(store.id, path: "users/alice", op: "set")
       assert length(ops) == 1
       assert hd(ops).path == "users/alice"
       assert hd(ops).op == :set
