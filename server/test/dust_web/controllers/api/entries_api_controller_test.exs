@@ -1070,4 +1070,184 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       assert Map.has_key?(body["entries"], "users.bob.name")
     end
   end
+
+  # ---------------------------------------------------------------------
+  # Session auth + body-path routes (the UI's path through the API)
+  # ---------------------------------------------------------------------
+
+  describe "session auth — bearer fallback" do
+    setup %{conn: conn, user: user} do
+      session_token = Accounts.generate_user_session_token(user)
+      logged_in = init_test_session(conn, %{user_token: session_token})
+      %{logged_in: logged_in}
+    end
+
+    test "GET /entries works with session for a member of the org",
+         %{logged_in: conn} do
+      resp = get(conn, "/api/stores/entriesorg/mystore/entries?pattern=users.**&limit=10")
+      body = json_response(resp, 200)
+      assert length(body["items"]) == 3
+    end
+
+    test "GET /entries 401s when neither bearer nor session is present", %{conn: conn} do
+      resp =
+        conn
+        |> put_req_header("accept", "application/json")
+        |> get("/api/stores/entriesorg/mystore/entries")
+
+      assert json_response(resp, 401) == %{"error" => "unauthorized"}
+    end
+
+    test "session user without org membership 401s", %{conn: conn} do
+      {:ok, outsider} = Accounts.create_user(%{email: "outsider@example.com"})
+      token = Accounts.generate_user_session_token(outsider)
+      conn = init_test_session(conn, %{user_token: token})
+
+      resp = get(conn, "/api/stores/entriesorg/mystore/entries")
+      assert json_response(resp, 401) == %{"error" => "unauthorized"}
+    end
+  end
+
+  describe "POST /api/stores/:org/:store/entries (body path)" do
+    setup %{conn: conn, user: user} do
+      session_token = Accounts.generate_user_session_token(user)
+      logged_in = init_test_session(conn, %{user_token: session_token})
+      %{logged_in: logged_in}
+    end
+
+    test "session-authed POST with {path, value} upserts",
+         %{logged_in: conn, store: store} do
+      resp =
+        conn
+        |> put_req_header("content-type", "application/json")
+        |> post(
+          "/api/stores/entriesorg/mystore/entries",
+          Jason.encode!(%{path: "links.foo.title", value: "Foo"})
+        )
+
+      body = json_response(resp, 200)
+      assert is_integer(body["revision"])
+      assert is_integer(body["store_seq"])
+
+      # And the write actually landed in the store.
+      assert Sync.get_entry(store.id, "links.foo.title").value == "Foo"
+    end
+
+    test "bearer-authed POST with {path, value} also works", %{conn: conn, token: token} do
+      resp =
+        conn
+        |> api_conn(token)
+        |> put_req_header("content-type", "application/json")
+        |> post(
+          "/api/stores/entriesorg/mystore/entries",
+          Jason.encode!(%{path: "links.bar.title", value: "Bar"})
+        )
+
+      body = json_response(resp, 200)
+      assert is_integer(body["store_seq"])
+    end
+
+    test "missing path 400s", %{logged_in: conn} do
+      resp =
+        conn
+        |> put_req_header("content-type", "application/json")
+        |> post(
+          "/api/stores/entriesorg/mystore/entries",
+          Jason.encode!(%{value: "no-path"})
+        )
+
+      assert resp.status == 400
+    end
+
+    test "missing value 400s (use DELETE for removal)", %{logged_in: conn} do
+      resp =
+        conn
+        |> put_req_header("content-type", "application/json")
+        |> post(
+          "/api/stores/entriesorg/mystore/entries",
+          Jason.encode!(%{path: "links.foo"})
+        )
+
+      assert resp.status == 400
+    end
+
+    test "if_match in body forwards through to CAS",
+         %{logged_in: conn, store: store} do
+      # Seed and capture the revision.
+      seed_entry(store, "cas.target", "v0")
+      rev = Sync.get_entry(store.id, "cas.target").seq
+
+      # Successful CAS.
+      ok_resp =
+        conn
+        |> put_req_header("content-type", "application/json")
+        |> post(
+          "/api/stores/entriesorg/mystore/entries",
+          Jason.encode!(%{path: "cas.target", value: "v1", if_match: rev})
+        )
+
+      assert json_response(ok_resp, 200)
+
+      # Failed CAS using stale rev.
+      fail_resp =
+        conn
+        |> put_req_header("content-type", "application/json")
+        |> post(
+          "/api/stores/entriesorg/mystore/entries",
+          Jason.encode!(%{path: "cas.target", value: "v2", if_match: rev})
+        )
+
+      assert json_response(fail_resp, 412)["error"] == "conflict"
+    end
+
+    test "non-positive if_match 400s", %{logged_in: conn} do
+      resp =
+        conn
+        |> put_req_header("content-type", "application/json")
+        |> post(
+          "/api/stores/entriesorg/mystore/entries",
+          Jason.encode!(%{path: "x", value: "y", if_match: 0})
+        )
+
+      assert resp.status == 400
+    end
+  end
+
+  describe "DELETE /api/stores/:org/:store/entries (body path)" do
+    setup %{conn: conn, user: user} do
+      session_token = Accounts.generate_user_session_token(user)
+      logged_in = init_test_session(conn, %{user_token: session_token})
+      %{logged_in: logged_in}
+    end
+
+    test "session-authed DELETE with {path} removes the entry",
+         %{logged_in: conn, store: store} do
+      seed_entry(store, "to.delete", "bye")
+      assert Sync.get_entry(store.id, "to.delete")
+
+      resp =
+        conn
+        |> put_req_header("content-type", "application/json")
+        |> delete(
+          "/api/stores/entriesorg/mystore/entries",
+          Jason.encode!(%{path: "to.delete"})
+        )
+
+      assert json_response(resp, 200)
+      assert Sync.get_entry(store.id, "to.delete") == nil
+    end
+
+    test "missing path 400s", %{logged_in: conn} do
+      resp =
+        conn
+        |> put_req_header("content-type", "application/json")
+        |> delete(
+          "/api/stores/entriesorg/mystore/entries",
+          Jason.encode!(%{})
+        )
+
+      assert resp.status == 400
+    end
+  end
+
 end

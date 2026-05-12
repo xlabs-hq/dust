@@ -1,5 +1,6 @@
 import React from "react";
 import { Head, Link, router, usePage } from "@inertiajs/react";
+import { toast } from "sonner";
 import { useChannel, useChannelEvent } from "@/lib/use-channel";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -13,8 +14,17 @@ import {
 } from "@/components/ui/Table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import GettingStartedSnippets from "@/components/GettingStartedSnippets";
+import { EntryEditor } from "@/components/EntryEditor";
 import type { SharedProps } from "@/types";
-import { ArrowLeft, FileText, ScrollText, Webhook } from "lucide-react";
+import {
+  ArrowLeft,
+  FileText,
+  Pencil,
+  Plus,
+  ScrollText,
+  Trash2,
+  Webhook,
+} from "lucide-react";
 
 interface Entry {
   path: string;
@@ -53,6 +63,7 @@ export default function StoreShow() {
   const { store, entries, ops, current_seq, current_organization, socket_token } =
     usePage<StoreShowProps>().props;
   const orgSlug = current_organization?.slug || "";
+  const entriesEndpoint = `/api/stores/${orgSlug}/${store.name}/entries`;
 
   const { channel } = useChannel({
     token: socket_token as string | null,
@@ -62,6 +73,57 @@ export default function StoreShow() {
   useChannelEvent(channel, "changed", () => {
     router.reload({ only: ["store", "entries", "ops", "current_seq"] });
   });
+
+  // Editor state — a single modal handles both create and edit. When
+  // editingPath is null we're in "create" mode; otherwise we're editing
+  // the entry whose path matches.
+  const [editorOpen, setEditorOpen] = React.useState(false);
+  const [editingEntry, setEditingEntry] = React.useState<Entry | null>(null);
+
+  function openCreate() {
+    setEditingEntry(null);
+    setEditorOpen(true);
+  }
+
+  function openEdit(entry: Entry) {
+    setEditingEntry(entry);
+    setEditorOpen(true);
+  }
+
+  function refreshAfterWrite() {
+    // The channel-driven `changed` event will also fire, but reloading
+    // here closes the optimistic gap: the user sees their change land
+    // immediately, not "soon after the WebSocket round-trips."
+    router.reload({ only: ["store", "entries", "ops", "current_seq"] });
+  }
+
+  async function handleDelete(entry: Entry) {
+    if (!window.confirm(`Delete ${entry.path}?`)) return;
+
+    try {
+      const res = await fetch(entriesEndpoint, {
+        method: "DELETE",
+        credentials: "same-origin",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json",
+          ...(getCsrfHeader() || {}),
+        },
+        body: JSON.stringify({ path: entry.path }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        toast.error(body.error || body.detail || `Delete failed (HTTP ${res.status})`);
+        return;
+      }
+
+      toast.success(`Deleted ${entry.path}`);
+      refreshAfterWrite();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Network error — please retry");
+    }
+  }
 
   return (
     <>
@@ -118,7 +180,14 @@ export default function StoreShow() {
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="data">
+          <TabsContent value="data" className="space-y-3">
+            <div className="flex justify-end">
+              <Button size="sm" onClick={openCreate}>
+                <Plus className="w-4 h-4" />
+                New entry
+              </Button>
+            </div>
+
             {entries.length === 0 ? (
               <GettingStartedSnippets
                 storeFullName={store.full_name}
@@ -133,6 +202,7 @@ export default function StoreShow() {
                       <TableHead>Value</TableHead>
                       <TableHead>Type</TableHead>
                       <TableHead className="text-right">Seq</TableHead>
+                      <TableHead className="w-[1%] text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -151,6 +221,24 @@ export default function StoreShow() {
                         </TableCell>
                         <TableCell className="text-right tabular-nums">
                           {entry.seq}
+                        </TableCell>
+                        <TableCell className="text-right whitespace-nowrap">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={`Edit ${entry.path}`}
+                            onClick={() => openEdit(entry)}
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={`Delete ${entry.path}`}
+                            onClick={() => handleDelete(entry)}
+                          >
+                            <Trash2 className="w-4 h-4 text-destructive" />
+                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -220,9 +308,26 @@ export default function StoreShow() {
             )}
           </TabsContent>
         </Tabs>
+
+        <EntryEditor
+          mode={editingEntry ? "edit" : "create"}
+          open={editorOpen}
+          onOpenChange={setEditorOpen}
+          endpoint={entriesEndpoint}
+          path={editingEntry?.path}
+          initialValue={editingEntry?.value}
+          onSaved={refreshAfterWrite}
+        />
       </div>
     </>
   );
+}
+
+function getCsrfHeader(): Record<string, string> | null {
+  if (typeof document === "undefined") return null;
+  const meta = document.querySelector('meta[name="csrf-token"]');
+  const token = meta?.getAttribute("content");
+  return token ? { "x-csrf-token": token } : null;
 }
 
 function OpBadge({ op }: { op: string }) {

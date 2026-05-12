@@ -4,6 +4,7 @@ defmodule DustWeb.Api.EntriesApiController do
 
   alias Dust.Stores
   alias Dust.Sync
+  alias DustWeb.ApiPrincipal
   alias DustWeb.Api.Refs
 
   action_fallback DustWeb.Api.FallbackController
@@ -14,6 +15,28 @@ defmodule DustWeb.Api.EntriesApiController do
   @not_found Refs.not_found()
   @bad_request Refs.bad_request()
   @rate_limited Refs.rate_limited()
+
+  @write_ack_schema %{
+    type: :object,
+    properties: %{
+      revision: %{type: :integer, description: "Per-entry sequence after the write."},
+      store_seq: %{
+        type: :integer,
+        description: "Store-wide monotonic sequence after the write."
+      }
+    },
+    required: [:revision, :store_seq],
+    example: %{revision: 8, store_seq: 142}
+  }
+
+  @conflict_schema %{
+    type: :object,
+    properties: %{
+      error: %{type: :string, enum: ["conflict"]},
+      current_revision: %{type: ["integer", "null"]}
+    },
+    required: [:error]
+  }
 
   # Parameter refs use the `_` key per oaskit convention — the actual
   # name comes from the component definition. Keyword lists can have
@@ -52,14 +75,14 @@ defmodule DustWeb.Api.EntriesApiController do
     ]
 
   def show(conn, %{"org" => org_slug, "store" => store_name, "path" => path_segments}) do
-    organization = conn.assigns.organization
-    store_token = conn.assigns.store_token
+    principal = conn.assigns.api_principal
+    organization = principal.organization
 
     with {:ok, path} <- url_path(path_segments),
          :ok <- verify_org(organization, org_slug),
          {:ok, store} <- find_store(organization, store_name),
-         :ok <- verify_token_scope(store_token, store),
-         :ok <- verify_read_permission(store_token),
+         :ok <- verify_principal_scope(principal, store),
+         :ok <- verify_can_read(principal),
          {:ok, entry} <- fetch_entry(store.id, path) do
       conn
       |> put_resp_header("etag", ~s("#{entry.seq}"))
@@ -180,14 +203,14 @@ defmodule DustWeb.Api.EntriesApiController do
     ]
 
   def index(conn, %{"org" => org_slug, "store" => store_name} = params) do
-    organization = conn.assigns.organization
-    store_token = conn.assigns.store_token
+    principal = conn.assigns.api_principal
+    organization = principal.organization
 
     with :ok <- validate_mutually_exclusive(params),
          :ok <- verify_org(organization, org_slug),
          {:ok, store} <- find_store(organization, store_name),
-         :ok <- verify_token_scope(store_token, store),
-         :ok <- verify_read_permission(store_token) do
+         :ok <- verify_principal_scope(principal, store),
+         :ok <- verify_can_read(principal) do
       case dispatch_mode(params) do
         :range -> do_range(conn, store, params)
         :enum -> do_enum(conn, store, params)
@@ -248,16 +271,16 @@ defmodule DustWeb.Api.EntriesApiController do
     ]
 
   def put(conn, %{"org" => org_slug, "store" => store_name, "path" => path_segments}) do
-    organization = conn.assigns.organization
-    store_token = conn.assigns.store_token
+    principal = conn.assigns.api_principal
+    organization = principal.organization
 
     with {:ok, path} <- url_path(path_segments),
          {:ok, value} <- extract_put_value(conn),
          :ok <- verify_org(organization, org_slug),
          {:ok, store} <- find_store(organization, store_name),
-         :ok <- verify_token_scope(store_token, store),
-         :ok <- verify_write_permission(store_token),
-         {:ok, attrs} <- build_put_attrs(conn, path, value, store_token) do
+         :ok <- verify_principal_scope(principal, store),
+         :ok <- verify_can_write(principal),
+         {:ok, attrs} <- build_put_attrs(conn, path, value, principal) do
       write_and_respond(conn, store, path, attrs)
     end
   end
@@ -311,24 +334,172 @@ defmodule DustWeb.Api.EntriesApiController do
     ]
 
   def delete(conn, %{"org" => org_slug, "store" => store_name, "path" => path_segments}) do
-    organization = conn.assigns.organization
-    store_token = conn.assigns.store_token
+    principal = conn.assigns.api_principal
+    organization = principal.organization
 
     with {:ok, path} <- url_path(path_segments),
          :ok <- verify_org(organization, org_slug),
          {:ok, store} <- find_store(organization, store_name),
-         :ok <- verify_token_scope(store_token, store),
-         :ok <- verify_write_permission(store_token),
-         {:ok, attrs} <- build_delete_attrs(conn, path, store_token) do
+         :ok <- verify_principal_scope(principal, store),
+         :ok <- verify_can_write(principal),
+         {:ok, attrs} <- build_delete_attrs(conn, path, principal) do
       write_and_respond(conn, store, path, attrs)
     end
   end
 
-  defp build_delete_attrs(conn, path, store_token) do
+  # --- Body-path variants (UI-friendly: path in body, not URL) -------
+
+  operation :create,
+    operation_id: "entries.create",
+    summary: "Upsert an entry with the path in the request body",
+    description: """
+    Same semantics as `PUT /entries/{path}`, but the path travels in
+    the request body. Designed for the web UI: avoids slash-encoding
+    dotted paths and lets the writer carry `if_match` in the body
+    rather than a header.
+
+    Body: `{"path": "links.foo.title", "value": <any JSON>, "if_match"?: <int>}`.
+    """,
+    tags: ["Entries"],
+    parameters: @org_store_params ++ @request_id_param,
+    request_body:
+      {%{
+         type: :object,
+         properties: %{
+           path: %{type: :string, example: "links.foo.title"},
+           value: %{description: "Any JSON value."},
+           if_match: %{type: :integer, minimum: 1}
+         },
+         required: [:path, :value]
+       }, description: "Entry path + value (+ optional CAS revision)"},
+    responses: [
+      ok: {@write_ack_schema, description: "Write accepted"},
+      bad_request: @bad_request,
+      unauthorized: @unauthorized,
+      forbidden: @forbidden,
+      precondition_failed: {@conflict_schema, description: "If-Match revision mismatch"},
+      too_many_requests: @rate_limited
+    ]
+
+  def create(conn, %{"org" => org_slug, "store" => store_name} = params) do
+    principal = conn.assigns.api_principal
+    organization = principal.organization
+
+    with {:ok, path} <- fetch_body_path(params),
+         {:ok, value} <- fetch_body_value(params),
+         :ok <- verify_org(organization, org_slug),
+         {:ok, store} <- find_store(organization, store_name),
+         :ok <- verify_principal_scope(principal, store),
+         :ok <- verify_can_write(principal),
+         {:ok, attrs} <- build_body_put_attrs(conn, path, value, params, principal) do
+      write_and_respond(conn, store, path, attrs)
+    end
+  end
+
+  operation :destroy,
+    operation_id: "entries.destroy",
+    summary: "Delete an entry with the path in the request body",
+    description: """
+    Same semantics as `DELETE /entries/{path}`, but the path travels
+    in the request body. Body: `{"path": "links.foo", "if_match"?: <int>}`.
+    """,
+    tags: ["Entries"],
+    parameters: @org_store_params ++ @request_id_param,
+    request_body:
+      {%{
+         type: :object,
+         properties: %{
+           path: %{type: :string, example: "links.foo"},
+           if_match: %{type: :integer, minimum: 1}
+         },
+         required: [:path]
+       }, description: "Entry path (+ optional CAS revision)"},
+    responses: [
+      ok: {@write_ack_schema, description: "Delete accepted"},
+      bad_request: @bad_request,
+      unauthorized: @unauthorized,
+      forbidden: @forbidden,
+      precondition_failed: {@conflict_schema, description: "If-Match revision mismatch"},
+      too_many_requests: @rate_limited
+    ]
+
+  def destroy(conn, %{"org" => org_slug, "store" => store_name} = params) do
+    principal = conn.assigns.api_principal
+    organization = principal.organization
+
+    with {:ok, path} <- fetch_body_path(params),
+         :ok <- verify_org(organization, org_slug),
+         {:ok, store} <- find_store(organization, store_name),
+         :ok <- verify_principal_scope(principal, store),
+         :ok <- verify_can_write(principal),
+         {:ok, attrs} <- build_body_delete_attrs(conn, path, params, principal) do
+      write_and_respond(conn, store, path, attrs)
+    end
+  end
+
+  defp fetch_body_path(%{"path" => path}) when is_binary(path) and path != "" do
+    case DustProtocol.Path.normalize(path) do
+      {:ok, normalized} -> {:ok, normalized}
+      {:error, reason} -> {:error, {:invalid_params, "invalid path (#{reason})"}}
+    end
+  end
+
+  defp fetch_body_path(_),
+    do: {:error, {:invalid_params, "'path' field required in body (non-empty string)"}}
+
+  defp fetch_body_value(%{"value" => value}), do: {:ok, value}
+
+  defp fetch_body_value(_),
+    do:
+      {:error,
+       {:invalid_params,
+        "'value' field required in body. To remove an entry use DELETE /entries with the path in the body."}}
+
+  defp build_body_put_attrs(conn, path, value, params, principal) do
+    base = %{
+      op: :set,
+      path: path,
+      value: value,
+      device_id: ApiPrincipal.device_id(principal),
+      client_op_id: request_op_id(conn)
+    }
+
+    case body_if_match(params) do
+      {:ok, :none} -> {:ok, base}
+      {:ok, n} -> {:ok, Map.put(base, :if_match, n)}
+      err -> err
+    end
+  end
+
+  defp build_body_delete_attrs(conn, path, params, principal) do
     base = %{
       op: :delete,
       path: path,
-      device_id: "http:" <> to_string(store_token.id),
+      device_id: ApiPrincipal.device_id(principal),
+      client_op_id: request_op_id(conn)
+    }
+
+    case body_if_match(params) do
+      {:ok, :none} -> {:ok, base}
+      {:ok, n} -> {:ok, Map.put(base, :if_match, n)}
+      err -> err
+    end
+  end
+
+  defp body_if_match(%{"if_match" => n}) when is_integer(n) and n > 0, do: {:ok, n}
+
+  defp body_if_match(%{"if_match" => other}),
+    do:
+      {:error,
+       {:invalid_params, "if_match must be a positive integer (got #{inspect(other)})"}}
+
+  defp body_if_match(_), do: {:ok, :none}
+
+  defp build_delete_attrs(conn, path, principal) do
+    base = %{
+      op: :delete,
+      path: path,
+      device_id: ApiPrincipal.device_id(principal),
       client_op_id: request_op_id(conn)
     }
 
@@ -398,12 +569,12 @@ defmodule DustWeb.Api.EntriesApiController do
     end
   end
 
-  defp build_put_attrs(conn, path, value, store_token) do
+  defp build_put_attrs(conn, path, value, principal) do
     base = %{
       op: :set,
       path: path,
       value: value,
-      device_id: "http:" <> to_string(store_token.id),
+      device_id: ApiPrincipal.device_id(principal),
       client_op_id: request_op_id(conn)
     }
 
@@ -433,8 +604,8 @@ defmodule DustWeb.Api.EntriesApiController do
     end
   end
 
-  defp verify_write_permission(store_token) do
-    if Stores.StoreToken.can_write?(store_token), do: :ok, else: {:error, :forbidden}
+  defp verify_can_write(principal) do
+    if ApiPrincipal.can_write?(principal), do: :ok, else: {:error, :forbidden}
   end
 
   operation :batch,
@@ -484,14 +655,14 @@ defmodule DustWeb.Api.EntriesApiController do
     ]
 
   def batch(conn, %{"org" => org_slug, "store" => store_name} = params) do
-    organization = conn.assigns.organization
-    store_token = conn.assigns.store_token
+    principal = conn.assigns.api_principal
+    organization = principal.organization
 
     with {:ok, paths} <- parse_batch_paths(params),
          :ok <- verify_org(organization, org_slug),
          {:ok, store} <- find_store(organization, store_name),
-         :ok <- verify_token_scope(store_token, store),
-         :ok <- verify_read_permission(store_token) do
+         :ok <- verify_principal_scope(principal, store),
+         :ok <- verify_can_read(principal) do
       %{entries: entries, missing: missing} = Sync.get_many_entries(store.id, paths)
 
       json(conn, %{
@@ -626,14 +797,14 @@ defmodule DustWeb.Api.EntriesApiController do
     ]
 
   def batch_write(conn, %{"org" => org_slug, "store" => store_name} = params) do
-    organization = conn.assigns.organization
-    store_token = conn.assigns.store_token
+    principal = conn.assigns.api_principal
+    organization = principal.organization
 
-    with {:ok, ops} <- parse_batch_write_ops(conn, params, store_token),
+    with {:ok, ops} <- parse_batch_write_ops(conn, params, principal),
          :ok <- verify_org(organization, org_slug),
          {:ok, store} <- find_store(organization, store_name),
-         :ok <- verify_token_scope(store_token, store),
-         :ok <- verify_write_permission(store_token) do
+         :ok <- verify_principal_scope(principal, store),
+         :ok <- verify_can_write(principal) do
       case Sync.batch_write(store.id, ops) do
         {:ok, results} ->
           last_seq = results |> List.last() |> case do
@@ -682,7 +853,7 @@ defmodule DustWeb.Api.EntriesApiController do
     end
   end
 
-  defp parse_batch_write_ops(conn, %{"ops" => ops}, store_token) when is_list(ops) do
+  defp parse_batch_write_ops(conn, %{"ops" => ops}, principal) when is_list(ops) do
     cond do
       length(ops) == 0 ->
         {:error, {:invalid_params, "ops cannot be empty"}}
@@ -694,7 +865,7 @@ defmodule DustWeb.Api.EntriesApiController do
         ops
         |> Enum.with_index()
         |> Enum.reduce_while({:ok, []}, fn {raw, index}, {:ok, acc} ->
-          case parse_single_batch_op(conn, raw, store_token, index) do
+          case parse_single_batch_op(conn, raw, principal, index) do
             {:ok, attrs} -> {:cont, {:ok, [attrs | acc]}}
             err -> {:halt, err}
           end
@@ -706,18 +877,18 @@ defmodule DustWeb.Api.EntriesApiController do
     end
   end
 
-  defp parse_batch_write_ops(_conn, _params, _store_token),
+  defp parse_batch_write_ops(_conn, _params, _principal),
     do: {:error, {:invalid_params, "ops array required"}}
 
-  defp parse_single_batch_op(conn, raw, store_token, index) when is_map(raw) do
+  defp parse_single_batch_op(conn, raw, principal, index) when is_map(raw) do
     with {:ok, op} <- parse_batch_op_kind(raw, index),
          {:ok, path} <- parse_batch_op_path(raw, index),
-         {:ok, attrs} <- build_batch_op_attrs(conn, op, path, raw, store_token, index) do
+         {:ok, attrs} <- build_batch_op_attrs(conn, op, path, raw, principal, index) do
       {:ok, attrs}
     end
   end
 
-  defp parse_single_batch_op(_conn, _other, _token, index),
+  defp parse_single_batch_op(_conn, _other, _principal, index),
     do: {:error, {:invalid_params, "op #{index} must be an object"}}
 
   defp parse_batch_op_kind(%{"op" => "set"}, _), do: {:ok, :set}
@@ -739,14 +910,14 @@ defmodule DustWeb.Api.EntriesApiController do
   defp parse_batch_op_path(_, index),
     do: {:error, {:invalid_params, "op #{index}: 'path' required and must be a string"}}
 
-  defp build_batch_op_attrs(conn, :set, path, raw, store_token, index) do
+  defp build_batch_op_attrs(conn, :set, path, raw, principal, index) do
     with {:ok, value} <- fetch_set_value(raw, index),
          {:ok, if_match} <- parse_batch_if_match(raw, index) do
       attrs = %{
         op: :set,
         path: path,
         value: value,
-        device_id: "http:" <> to_string(store_token.id),
+        device_id: ApiPrincipal.device_id(principal),
         client_op_id: "#{request_op_id(conn)}:#{index}"
       }
 
@@ -754,12 +925,12 @@ defmodule DustWeb.Api.EntriesApiController do
     end
   end
 
-  defp build_batch_op_attrs(conn, :delete, path, raw, store_token, index) do
+  defp build_batch_op_attrs(conn, :delete, path, raw, principal, index) do
     with {:ok, if_match} <- parse_batch_if_match(raw, index) do
       attrs = %{
         op: :delete,
         path: path,
-        device_id: "http:" <> to_string(store_token.id),
+        device_id: ApiPrincipal.device_id(principal),
         client_op_id: "#{request_op_id(conn)}:#{index}"
       }
 
@@ -898,12 +1069,12 @@ defmodule DustWeb.Api.EntriesApiController do
     end
   end
 
-  defp verify_token_scope(store_token, store) do
-    if store_token.store_id == store.id, do: :ok, else: {:error, :forbidden}
+  defp verify_principal_scope(principal, store) do
+    if ApiPrincipal.scopes_store?(principal, store), do: :ok, else: {:error, :forbidden}
   end
 
-  defp verify_read_permission(store_token) do
-    if Stores.StoreToken.can_read?(store_token), do: :ok, else: {:error, :forbidden}
+  defp verify_can_read(principal) do
+    if ApiPrincipal.can_read?(principal), do: :ok, else: {:error, :forbidden}
   end
 
   defp parse_opts(params) do

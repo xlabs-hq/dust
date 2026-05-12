@@ -101,6 +101,12 @@ defmodule DustWeb.Router do
 
   pipeline :api_auth do
     plug :accepts, ["json"]
+    # Session fetching is needed so the ApiTokenAuth plug can fall
+    # back to current_scope when no Authorization header is present
+    # (the web UI talks to /api via the session cookie). Bearer-only
+    # callers cost is one extra cookie parse — negligible.
+    plug :fetch_session
+    plug :fetch_current_scope_for_user
     plug DustWeb.Plugs.ApiTokenAuth
     plug DustWeb.Plugs.ApiRateLimit
   end
@@ -125,6 +131,11 @@ defmodule DustWeb.Router do
     get "/stores/:org/:store/entries", EntriesApiController, :index
     post "/stores/:org/:store/entries/batch", EntriesApiController, :batch
     post "/stores/:org/:store/entries/batch_write", EntriesApiController, :batch_write
+    # Body-path variants — UI uses these so paths don't have to be
+    # slash-encoded into the URL. Equivalent semantics to the /*path
+    # routes below.
+    post "/stores/:org/:store/entries", EntriesApiController, :create
+    delete "/stores/:org/:store/entries", EntriesApiController, :destroy
     put "/stores/:org/:store/entries/*path", EntriesApiController, :put
     get "/stores/:org/:store/entries/*path", EntriesApiController, :show
     delete "/stores/:org/:store/entries/*path", EntriesApiController, :delete
