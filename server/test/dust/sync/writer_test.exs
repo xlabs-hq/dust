@@ -23,7 +23,8 @@ defmodule Dust.Sync.WriterTest do
 
       assert event.store_seq == 1
       assert event.op == :set
-      assert event.path == "posts.hello"
+      # The writer now stores canonical slash-rendered paths.
+      assert event.path == "posts/hello"
 
       # Verify materialized entry
       entry = Sync.get_entry(store.id, "posts.hello")

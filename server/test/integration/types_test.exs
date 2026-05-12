@@ -17,7 +17,7 @@ defmodule Dust.Integration.TypesTest do
         })
 
       assert_reply ref, :ok, %{store_seq: 1}
-      assert_broadcast "event", %{store_seq: 1, op: :increment, path: "stats.views"}
+      assert_broadcast "event", %{store_seq: 1, op: :increment, path: "stats/views"}
 
       entry = Dust.Sync.get_entry(store.id, "stats.views")
       assert entry.value == 3
@@ -74,7 +74,7 @@ defmodule Dust.Integration.TypesTest do
       # Write a Decimal directly via Sync (simulates server-side write)
       Dust.Sync.write(store.id, %{
         op: :set,
-        path: "product.price",
+        path: "product/price",
         value: Decimal.new("29.99"),
         device_id: "server",
         client_op_id: "o1"
@@ -84,7 +84,7 @@ defmodule Dust.Integration.TypesTest do
       {_socket, _reply} = connect_client(token, store, "dev_1", 0)
 
       assert_push "event", event
-      assert event.path == "product.price"
+      assert event.path == "product/price"
       assert %Decimal{} = event.value
       assert Decimal.equal?(event.value, Decimal.new("29.99"))
     end
@@ -96,7 +96,7 @@ defmodule Dust.Integration.TypesTest do
 
       Dust.Sync.write(store.id, %{
         op: :set,
-        path: "event.starts_at",
+        path: "event/starts_at",
         value: dt,
         device_id: "server",
         client_op_id: "o1"
@@ -105,7 +105,7 @@ defmodule Dust.Integration.TypesTest do
       {_socket, _reply} = connect_client(token, store, "dev_1", 0)
 
       assert_push "event", event
-      assert event.path == "event.starts_at"
+      assert event.path == "event/starts_at"
       assert %DateTime{} = event.value
       assert DateTime.compare(event.value, dt) == :eq
     end
@@ -125,7 +125,7 @@ defmodule Dust.Integration.TypesTest do
         })
 
       assert_reply ref, :ok, %{store_seq: 1}
-      assert_broadcast "event", %{store_seq: 1, op: :add, path: "post.tags"}
+      assert_broadcast "event", %{store_seq: 1, op: :add, path: "post/tags"}
 
       entry = Dust.Sync.get_entry(store.id, "post.tags")
       assert entry.value == ["elixir"]

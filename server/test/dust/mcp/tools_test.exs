@@ -181,9 +181,9 @@ defmodule Dust.MCP.ToolsTest do
       entries = Jason.decode!(text)
       assert length(entries) == 3
       paths = Enum.map(entries, & &1["path"])
-      assert "users.alice" in paths
-      assert "users.bob" in paths
-      assert "users.carol" in paths
+      assert "users/alice" in paths
+      assert "users/bob" in paths
+      assert "users/carol" in paths
     end
 
     test "** matches everything", ctx do
@@ -365,7 +365,7 @@ defmodule Dust.MCP.ToolsTest do
     end
 
     test "filters by path", ctx do
-      for path <- ["a.x", "a.y", "b.z"] do
+      for path <- ["a/x", "a.y", "b.z"] do
         req =
           make_req(%{
             "store" => ctx.store_full_name,
@@ -376,13 +376,13 @@ defmodule Dust.MCP.ToolsTest do
         {:result, _, _} = Dust.MCP.Tools.DustPut.call(req, ctx.channel, [])
       end
 
-      log_req = make_req(%{"store" => ctx.store_full_name, "path" => "a.x"})
+      log_req = make_req(%{"store" => ctx.store_full_name, "path" => "a/x"})
       {:result, result, _} = Dust.MCP.Tools.DustLog.call(log_req, ctx.channel, [])
 
       assert %MCP.CallToolResult{content: [%MCP.TextContent{text: text}]} = result
       ops = Jason.decode!(text)
       assert length(ops) == 1
-      assert hd(ops)["path"] == "a.x"
+      assert hd(ops)["path"] == "a/x"
     end
 
     test "filters by op type", ctx do

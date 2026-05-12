@@ -174,8 +174,8 @@ defmodule Dust.Sync.TypedValuesTest do
       })
 
       entries = Sync.get_all_entries(store.id)
-      price_entry = Enum.find(entries, &(&1.path == "item.price"))
-      dt_entry = Enum.find(entries, &(&1.path == "item.created_at"))
+      price_entry = Enum.find(entries, &(&1.path == "item/price"))
+      dt_entry = Enum.find(entries, &(&1.path == "item/created_at"))
 
       assert %Decimal{} = price_entry.value
       assert Decimal.equal?(price_entry.value, price)

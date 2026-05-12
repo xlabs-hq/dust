@@ -1,9 +1,64 @@
 defmodule Dust.Sync do
   import Ecto.Query, only: [from: 2]
   alias Dust.Sync.{Writer, Rollback, StoreDB, ValueCodec}
+  alias DustProtocol.Path
+
+  @doc """
+  Convert a caller-provided path into the canonical rendered slash
+  form used everywhere below (SQL, materialized state, op echo,
+  webhook payloads).
+
+  Accepts:
+    * a segment list — `["a", "b", "c"]` → `{:ok, "a/b/c"}`
+    * a canonical rendered slash string — passed through after validation
+    * a legacy dotted string — `"a.b.c"` → `{:ok, "a/b/c"}`
+
+  Returns `{:error, reason}` on invalid input.
+
+  Public so that adjacent modules (Audit, MCP tools, etc.) can use
+  the same normalisation at their boundaries. Internal callers
+  (writer, conflict, rollback) don't need it — they already receive
+  canonical form from this module.
+  """
+  @spec normalize_path(term()) :: {:ok, String.t()} | {:error, atom()}
+  def normalize_path(path_segments) when is_list(path_segments) do
+    with {:ok, segments} <- Path.from_segments(path_segments) do
+      Path.render(segments)
+    end
+  end
+
+  def normalize_path(path) when is_binary(path) do
+    # Heuristic: if the string contains a `/` (and parses cleanly as a
+    # rendered path), trust it as canonical. Otherwise parse as a
+    # legacy dotted path. This is the only place that interprets
+    # ambiguous input — every internal caller already has rendered
+    # form by the time it gets here.
+    cond do
+      String.contains?(path, "/") ->
+        Path.parse_rendered(path)
+        |> case do
+          {:ok, _segments} -> {:ok, path}
+          err -> err
+        end
+
+      true ->
+        case Path.LegacyDot.parse(path) do
+          {:ok, segments} -> Path.render(segments)
+          err -> err
+        end
+    end
+  end
+
+  defp normalize_path_in_attrs(%{path: path} = attrs) do
+    case normalize_path(path) do
+      {:ok, rendered} -> {:ok, %{attrs | path: rendered}}
+      err -> err
+    end
+  end
 
   def write(store_id, op_attrs) do
-    with :ok <- validate_if_match_attrs(op_attrs) do
+    with {:ok, op_attrs} <- normalize_path_in_attrs(op_attrs),
+         :ok <- validate_if_match_attrs(op_attrs) do
       case Writer.write(store_id, op_attrs) do
         {:ok, op} ->
           notify_webhooks(store_id, op)
@@ -29,7 +84,8 @@ defmodule Dust.Sync do
   if any op's `If-Match` precondition fails inside the transaction.
   """
   def batch_write(store_id, ops_attrs) when is_list(ops_attrs) do
-    with :ok <- validate_batch_attrs(ops_attrs) do
+    with {:ok, ops_attrs} <- normalize_batch_paths(ops_attrs),
+         :ok <- validate_batch_attrs(ops_attrs) do
       case Writer.batch_write(store_id, ops_attrs) do
         {:ok, ops} ->
           Enum.each(ops, &notify_webhooks(store_id, &1))
@@ -49,6 +105,21 @@ defmodule Dust.Sync do
     end
   catch
     :exit, reason -> {:error, {:writer_unavailable, reason}}
+  end
+
+  defp normalize_batch_paths(ops_attrs) do
+    ops_attrs
+    |> Enum.with_index()
+    |> Enum.reduce_while({:ok, []}, fn {attrs, index}, {:ok, acc} ->
+      case normalize_path_in_attrs(attrs) do
+        {:ok, normalized} -> {:cont, {:ok, [normalized | acc]}}
+        {:error, reason} -> {:halt, {:error, {reason, %{op_index: index}}}}
+      end
+    end)
+    |> case do
+      {:ok, list} -> {:ok, Enum.reverse(list)}
+      err -> err
+    end
   end
 
   defp validate_batch_attrs(ops_attrs) do
@@ -146,24 +217,29 @@ defmodule Dust.Sync do
   end
 
   def get_entry(store_id, path) do
-    with_read_conn(store_id, fn conn ->
-      case query_one_row(
-             conn,
-             "SELECT path, value, type, seq FROM store_entries WHERE path = ?",
-             [path]
-           ) do
-        [_path, json, type, seq] ->
-          value = json |> Jason.decode!() |> ValueCodec.unwrap()
-          %{path: path, value: value, type: type, seq: seq}
+    with {:ok, rendered} <- normalize_path(path) do
+      with_read_conn(store_id, fn conn ->
+        case query_one_row(
+               conn,
+               "SELECT path, value, type, seq FROM store_entries WHERE path = ?",
+               [rendered]
+             ) do
+          [_path, json, type, seq] ->
+            value = json |> Jason.decode!() |> ValueCodec.unwrap()
+            %{path: rendered, value: value, type: type, seq: seq}
 
-        nil ->
-          assemble_subtree(conn, path)
-      end
-    end)
+          nil ->
+            assemble_subtree(conn, rendered)
+        end
+      end)
+    else
+      _ -> nil
+    end
   end
 
   defp assemble_subtree(conn, path) do
-    prefix = path <> "."
+    {:ok, prefix_segments} = Path.parse_rendered(path)
+    {:ok, prefix} = Path.render_descendant_prefix(prefix_segments)
 
     rows =
       query_all(
@@ -178,13 +254,17 @@ defmodule Dust.Sync do
 
       entries ->
         max_seq = entries |> Enum.map(fn [_, _, _, seq] -> seq end) |> Enum.max()
+        prefix_len = length(prefix_segments)
 
         map =
           Enum.reduce(entries, %{}, fn [entry_path, json, _type, _seq], acc ->
-            relative = String.replace_prefix(entry_path, prefix, "")
-            keys = String.split(relative, ".")
+            {:ok, entry_segments} = Path.parse_rendered(entry_path)
+            # Drop the ancestor prefix segments to get the path
+            # *inside* the assembled subtree. These segments are the
+            # nesting keys for `put_nested/3`.
+            relative_keys = Enum.drop(entry_segments, prefix_len)
             value = json |> Jason.decode!() |> ValueCodec.unwrap()
-            put_nested(acc, keys, value)
+            put_nested(acc, relative_keys, value)
           end)
 
         %{path: path, value: map, type: "map", seq: max_seq}
@@ -200,29 +280,54 @@ defmodule Dust.Sync do
 
   @spec get_many_entries(binary(), [String.t()]) :: %{entries: map(), missing: [String.t()]}
   def get_many_entries(store_id, paths) when is_list(paths) do
-    unique_paths = Enum.uniq(paths)
+    # Each input may be dotted (legacy) or slash (canonical). Keep
+    # both forms so we can report `missing` keyed by the *original*
+    # input shape the caller asked about, while the SQL IN clause
+    # uses canonical rendered keys.
+    pairs =
+      paths
+      |> Enum.uniq()
+      |> Enum.map(fn p ->
+        case normalize_path(p) do
+          {:ok, rendered} -> {p, rendered}
+          _ -> {p, nil}
+        end
+      end)
 
-    if unique_paths == [] do
-      %{entries: %{}, missing: []}
+    {valid_pairs, invalid_originals} =
+      Enum.split_with(pairs, fn {_orig, rendered} -> rendered != nil end)
+
+    invalid = Enum.map(invalid_originals, fn {orig, _} -> orig end)
+
+    if valid_pairs == [] do
+      %{entries: %{}, missing: invalid}
     else
+      rendered_to_orig =
+        Enum.into(valid_pairs, %{}, fn {orig, rendered} -> {rendered, orig} end)
+
+      rendered_paths = Map.keys(rendered_to_orig)
+
       result =
         with_read_conn(store_id, fn conn ->
-          placeholders = Enum.map_join(unique_paths, ", ", fn _ -> "?" end)
+          placeholders = Enum.map_join(rendered_paths, ", ", fn _ -> "?" end)
           sql = "SELECT path, value, type, seq FROM store_entries WHERE path IN (#{placeholders})"
-          rows = query_all(conn, sql, unique_paths)
+          rows = query_all(conn, sql, rendered_paths)
 
           entries =
             Enum.reduce(rows, %{}, fn [path, json, type, seq], acc ->
               value = json |> Jason.decode!() |> ValueCodec.unwrap()
+              # Echo back the canonical (rendered) path as the key.
               Map.put(acc, path, %{value: value, type: type, seq: seq})
             end)
 
-          found = Map.keys(entries)
-          missing = unique_paths -- found
+          found_rendered = Map.keys(entries)
+          missing_rendered = rendered_paths -- found_rendered
+          # Map missing back to whatever the caller passed in.
+          missing = Enum.map(missing_rendered, &Map.fetch!(rendered_to_orig, &1)) ++ invalid
           %{entries: entries, missing: missing}
         end)
 
-      result || %{entries: %{}, missing: unique_paths}
+      result || %{entries: %{}, missing: paths}
     end
   end
 
@@ -304,13 +409,47 @@ defmodule Dust.Sync do
     select = Keyword.get(opts, :select, :entries)
     cursor = Keyword.get(opts, :after)
 
-    with :ok <- validate_select_pattern(select, pattern) do
+    with {:ok, pattern} <- normalize_pattern(pattern),
+         :ok <- validate_select_pattern(select, pattern) do
       matched = collect_matches(store_id, pattern, order, cursor, limit)
 
       {page_rows, next_cursor} = take_with_cursor(matched, limit)
       items = project_rows(page_rows, select, pattern, order)
 
       {:ok, %{items: items, next_cursor: next_cursor}}
+    end
+  end
+
+  @doc """
+  Convert a caller-provided glob pattern into canonical slash-rendered
+  form. Wildcards `*` / `**` survive the round-trip unchanged.
+
+  Same legacy-vs-canonical rule as `normalize_path/1`: if the input
+  contains a slash, treat it as canonical (validate with
+  `DustProtocol.Glob`); otherwise dot-split via `LegacyDot` and
+  re-render with slashes.
+  """
+  @spec normalize_pattern(String.t()) :: {:ok, String.t()} | {:error, atom()}
+  def normalize_pattern("**"), do: {:ok, "**"}
+
+  def normalize_pattern(pattern) when is_binary(pattern) do
+    cond do
+      String.contains?(pattern, "/") ->
+        case DustProtocol.Glob.compile(pattern) do
+          {:ok, _} -> {:ok, pattern}
+          err -> err
+        end
+
+      true ->
+        case Path.LegacyDot.normalize_pattern(pattern) do
+          {:ok, dotted} ->
+            # Convert dotted form to slash form, preserving `*` / `**`.
+            segments = String.split(dotted, ".")
+            {:ok, Enum.join(segments, "/")}
+
+          err ->
+            err
+        end
     end
   end
 
@@ -331,9 +470,16 @@ defmodule Dust.Sync do
   defp do_collect_matches(store_id, pattern, order, cursor, limit, acc) do
     rows = fetch_entries_chunk(store_id, pattern, order, cursor, @enum_chunk_size)
 
+    # Compile the pattern once per chunk and parse each row's path
+    # into segments. Both sides are slash-canonical at this point.
+    compiled = DustProtocol.Glob.compile!(pattern)
+
     matches =
       Enum.filter(rows, fn [path, _json, _type, _seq] ->
-        Dust.Glob.match?(path, pattern)
+        case Path.parse_rendered(path) do
+          {:ok, segs} -> DustProtocol.Glob.match?(compiled, segs)
+          _ -> false
+        end
       end)
 
     all = acc ++ matches
@@ -374,19 +520,22 @@ defmodule Dust.Sync do
         {:error, :unsupported_select}
 
       select when select in [:entries, :keys] ->
-        limit = opts |> Keyword.get(:limit, @enum_default_limit) |> clamp_limit()
-        order = Keyword.get(opts, :order, :asc)
-        cursor = Keyword.get(opts, :after)
+        with {:ok, from} <- normalize_path(from),
+             {:ok, to} <- normalize_path(to) do
+          limit = opts |> Keyword.get(:limit, @enum_default_limit) |> clamp_limit()
+          order = Keyword.get(opts, :order, :asc)
+          cursor = Keyword.get(opts, :after)
 
-        result =
-          with_read_conn(store_id, fn conn ->
-            rows = fetch_range_rows(conn, from, to, cursor, order, limit + 1)
-            {page_rows, next_cursor} = take_with_cursor(rows, limit)
-            items = project_rows(page_rows, select, nil, order)
-            %{items: items, next_cursor: next_cursor}
-          end) || %{items: [], next_cursor: nil}
+          result =
+            with_read_conn(store_id, fn conn ->
+              rows = fetch_range_rows(conn, from, to, cursor, order, limit + 1)
+              {page_rows, next_cursor} = take_with_cursor(rows, limit)
+              items = project_rows(page_rows, select, nil, order)
+              %{items: items, next_cursor: next_cursor}
+            end) || %{items: [], next_cursor: nil}
 
-        {:ok, result}
+          {:ok, result}
+        end
     end
   end
 
@@ -426,7 +575,7 @@ defmodule Dust.Sync do
   defp validate_select_pattern(:prefixes, "**"), do: :ok
 
   defp validate_select_pattern(:prefixes, pattern) when is_binary(pattern) do
-    if String.ends_with?(pattern, ".**"),
+    if String.ends_with?(pattern, "/**"),
       do: :ok,
       else: {:error, :invalid_pattern_for_prefixes}
   end
@@ -493,10 +642,11 @@ defmodule Dust.Sync do
     |> String.replace("_", "\\_")
   end
 
-  # Return the literal prefix of a glob pattern — everything before the first
-  # segment containing `*` or `**`. Includes the trailing dot if non-empty.
+  # Return the literal prefix of a (canonical, slash-rendered) glob
+  # pattern — everything before the first segment containing `*` or
+  # `**`. Includes the trailing slash if non-empty.
   defp literal_prefix_of_pattern(pattern) do
-    segments = String.split(pattern, ".")
+    segments = String.split(pattern, "/")
 
     literal =
       Enum.take_while(segments, fn seg ->
@@ -505,7 +655,7 @@ defmodule Dust.Sync do
 
     case literal do
       [] -> ""
-      segs -> Enum.join(segs, ".") <> "."
+      segs -> Enum.join(segs, "/") <> "/"
     end
   end
 
@@ -544,13 +694,14 @@ defmodule Dust.Sync do
   defp prefixes_literal("**"), do: ""
 
   defp prefixes_literal(pattern) do
-    # Pattern ends in ".**"; strip it, keep the literal segment + trailing dot.
+    # Pattern ends in `/**`; strip the wildcard, keep the literal
+    # ancestor segments + trailing `/`.
     String.replace_suffix(pattern, "**", "")
   end
 
-  # literal is either "" or ends with "."
+  # `literal` is either "" or ends with "/".
   defp extract_prefix(path, "") do
-    case String.split(path, ".", parts: 2) do
+    case String.split(path, "/", parts: 2) do
       [head | _] -> head
       _ -> nil
     end
@@ -560,7 +711,7 @@ defmodule Dust.Sync do
     if String.starts_with?(path, literal) do
       rest = binary_part(path, byte_size(literal), byte_size(path) - byte_size(literal))
 
-      case String.split(rest, ".", parts: 2) do
+      case String.split(rest, "/", parts: 2) do
         [head | _] when head != "" -> literal <> head
         _ -> nil
       end

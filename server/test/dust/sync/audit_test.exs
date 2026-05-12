@@ -53,20 +53,20 @@ defmodule Dust.Sync.AuditTest do
     test "filters by exact path", %{store: store} do
       ops = Audit.query_ops(store.id, path: "users.alice")
       assert length(ops) == 2
-      assert Enum.all?(ops, &(&1.path == "users.alice"))
+      assert Enum.all?(ops, &(&1.path == "users/alice"))
     end
 
     test "filters by wildcard path", %{store: store} do
       ops = Audit.query_ops(store.id, path: "users.*")
       # * becomes % for SQL LIKE — matches users.alice and users.bob ops
       assert length(ops) == 4
-      assert Enum.all?(ops, &String.starts_with?(&1.path, "users."))
+      assert Enum.all?(ops, &String.starts_with?(&1.path, "users/"))
     end
 
     test "filters by glob wildcard path", %{store: store} do
       ops = Audit.query_ops(store.id, path: "settings.*")
       assert length(ops) == 1
-      assert hd(ops).path == "settings.theme"
+      assert hd(ops).path == "settings/theme"
     end
 
     test "filters by device_id", %{store: store} do
@@ -90,7 +90,7 @@ defmodule Dust.Sync.AuditTest do
     test "combines multiple filters", %{store: store} do
       ops = Audit.query_ops(store.id, path: "users.alice", op: "set")
       assert length(ops) == 1
-      assert hd(ops).path == "users.alice"
+      assert hd(ops).path == "users/alice"
       assert hd(ops).op == :set
     end
   end

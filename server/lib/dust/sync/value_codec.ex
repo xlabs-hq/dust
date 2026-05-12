@@ -47,14 +47,28 @@ defmodule Dust.Sync.ValueCodec do
 
   # --- Map expansion ---
 
-  @doc "Recursively flatten a map into {path, leaf_value} pairs."
-  def flatten_map(prefix, map) when is_map(map) do
+  @doc """
+  Recursively flatten a map into `{rendered_path, leaf_value}` pairs.
+
+  `prefix` is a rendered slash path. Children are constructed via
+  `DustProtocol.Path.child/2` so map keys containing literal `.` or
+  `/` survive intact (rendered with `~0`/`~1` escapes by
+  `Path.render/1`).
+  """
+  def flatten_map(prefix, map) when is_binary(prefix) and is_map(map) do
+    {:ok, prefix_segments} = DustProtocol.Path.parse_rendered(prefix)
+    do_flatten_map(prefix_segments, map)
+  end
+
+  defp do_flatten_map(prefix_segments, map) when is_list(prefix_segments) and is_map(map) do
     Enum.flat_map(map, fn {key, value} ->
-      child_path = "#{prefix}.#{key}"
+      key_str = to_string(key)
+      {:ok, child_segments} = DustProtocol.Path.child(prefix_segments, key_str)
 
       if is_map(value) and not typed_value?(value) do
-        flatten_map(child_path, value)
+        do_flatten_map(child_segments, value)
       else
+        {:ok, child_path} = DustProtocol.Path.render(child_segments)
         [{child_path, value}]
       end
     end)

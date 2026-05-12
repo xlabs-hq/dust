@@ -18,8 +18,9 @@ defmodule Dust.MCP.Tools.DustEnum do
     },
     annotations: %{readOnlyHint: true}
 
-  alias Dust.Glob
   alias Dust.MCP.Authz
+  alias DustProtocol.Glob
+  alias DustProtocol.Path
   alias GenMCP.MCP
 
   @impl true
@@ -29,16 +30,35 @@ defmodule Dust.MCP.Tools.DustEnum do
 
     with {:ok, store} <- Authz.authorize_store(principal, store_name, :read) do
       entries = Dust.Sync.get_all_entries(store.id)
+      compiled = Glob.compile!(normalize_pattern_for_match(pattern))
 
       matched =
         entries
-        |> Enum.filter(fn entry -> Glob.match?(entry.path, pattern) end)
+        |> Enum.filter(fn entry ->
+          case Path.parse_rendered(entry.path) do
+            {:ok, segs} -> Glob.match?(compiled, segs)
+            _ -> false
+          end
+        end)
         |> Enum.map(fn entry -> %{path: entry.path, value: entry.value, type: entry.type} end)
 
       {:result, MCP.call_tool_result(text: Jason.encode!(matched)), channel}
     else
       {:error, reason} ->
         {:error, reason, channel}
+    end
+  end
+
+  # Mirror Sync's pattern-normalization heuristic: dotted strings come
+  # from legacy MCP callers; rewrite them to slash form so the
+  # segment-aware glob compiles cleanly.
+  defp normalize_pattern_for_match("**"), do: "**"
+
+  defp normalize_pattern_for_match(pattern) when is_binary(pattern) do
+    if String.contains?(pattern, "/") do
+      pattern
+    else
+      pattern |> String.split(".") |> Enum.join("/")
     end
   end
 end

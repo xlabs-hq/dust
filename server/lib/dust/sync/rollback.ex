@@ -17,7 +17,8 @@ defmodule Dust.Sync.Rollback do
   @rollback_device_id "system:rollback"
 
   def rollback_path(store_id, path, to_seq) do
-    with :ok <- validate_retention(store_id, to_seq) do
+    with {:ok, path} <- Sync.normalize_path(path),
+         :ok <- validate_retention(store_id, to_seq) do
       historical_value = compute_historical_value(store_id, path, to_seq)
       current_value = current_path_value(store_id, path)
 
@@ -90,6 +91,7 @@ defmodule Dust.Sync.Rollback do
   end
 
   def compute_historical_value(store_id, path, to_seq) do
+    {:ok, path} = Sync.normalize_path(path)
     state = compute_historical_state(store_id, to_seq)
     state = state || %{}
 
@@ -105,7 +107,9 @@ defmodule Dust.Sync.Rollback do
   end
 
   defp assemble_subtree_from_state(state, path) do
-    prefix = path <> "."
+    {:ok, prefix_segments} = DustProtocol.Path.parse_rendered(path)
+    {:ok, prefix} = DustProtocol.Path.render_descendant_prefix(prefix_segments)
+    prefix_len = length(prefix_segments)
 
     descendants =
       state
@@ -118,8 +122,8 @@ defmodule Dust.Sync.Rollback do
       entries ->
         map =
           Enum.reduce(entries, %{}, fn {entry_path, wrapped_value}, acc ->
-            relative = String.replace_prefix(entry_path, prefix, "")
-            keys = String.split(relative, ".")
+            {:ok, entry_segments} = DustProtocol.Path.parse_rendered(entry_path)
+            keys = Enum.drop(entry_segments, prefix_len)
             value = ValueCodec.unwrap(wrapped_value)
             put_nested(acc, keys, value)
           end)
@@ -242,8 +246,11 @@ defmodule Dust.Sync.Rollback do
   end
 
   defp apply_op_to_state(state, %{op: :merge, path: path, value: map}) when is_map(map) do
+    {:ok, prefix_segments} = DustProtocol.Path.parse_rendered(path)
+
     Enum.reduce(map, state, fn {key, value}, state ->
-      child_path = "#{path}.#{key}"
+      {:ok, child_segments} = DustProtocol.Path.child(prefix_segments, to_string(key))
+      {:ok, child_path} = DustProtocol.Path.render(child_segments)
       unwrapped = ValueCodec.unwrap(value)
 
       if is_map(unwrapped) and not ValueCodec.typed_value?(unwrapped) do
@@ -283,7 +290,8 @@ defmodule Dust.Sync.Rollback do
   defp apply_op_to_state(state, _op), do: state
 
   defp delete_descendants_from_state(state, path) do
-    prefix = path <> "."
+    {:ok, segments} = DustProtocol.Path.parse_rendered(path)
+    {:ok, prefix} = DustProtocol.Path.render_descendant_prefix(segments)
     state |> Enum.reject(fn {k, _v} -> String.starts_with?(k, prefix) end) |> Map.new()
   end
 

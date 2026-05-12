@@ -304,9 +304,9 @@ defmodule Dust.Integration.SmokeTest do
       })
 
       # All three broadcast (Channel broadcasts everything for the store)
-      assert_broadcast "event", %{path: "posts.hello"}
-      assert_broadcast "event", %{path: "posts.hello.title"}
-      assert_broadcast "event", %{path: "config.x"}
+      assert_broadcast "event", %{path: "posts/hello"}
+      assert_broadcast "event", %{path: "posts/hello/title"}
+      assert_broadcast "event", %{path: "config/x"}
     end
   end
 
@@ -317,7 +317,7 @@ defmodule Dust.Integration.SmokeTest do
 
       Dust.Sync.write(store.id, %{
         op: :set,
-        path: "posts.a",
+        path: "posts/a",
         value: "1",
         device_id: "d",
         client_op_id: "o1"
@@ -325,7 +325,7 @@ defmodule Dust.Integration.SmokeTest do
 
       Dust.Sync.write(store.id, %{
         op: :set,
-        path: "posts.b",
+        path: "posts/b",
         value: "2",
         device_id: "d",
         client_op_id: "o2"
@@ -333,14 +333,14 @@ defmodule Dust.Integration.SmokeTest do
 
       Dust.Sync.write(store.id, %{
         op: :set,
-        path: "config.x",
+        path: "config/x",
         value: "3",
         device_id: "d",
         client_op_id: "o3"
       })
 
       entries = Dust.Sync.get_all_entries(store.id)
-      posts = Enum.filter(entries, &String.starts_with?(&1.path, "posts."))
+      posts = Enum.filter(entries, &String.starts_with?(&1.path, "posts/"))
       assert length(posts) == 2
     end
   end

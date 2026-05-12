@@ -2,6 +2,7 @@ defmodule Dust.Sync.Writer do
   use GenServer
 
   alias Dust.Sync.{StoreDB, ValueCodec}
+  alias DustProtocol.Path
 
   @idle_timeout :timer.minutes(15)
 
@@ -259,10 +260,15 @@ defmodule Dust.Sync.Writer do
 
   # --- Apply to entries (SQLite) ---
 
+  # `path` arrives at the writer as a canonical rendered slash string
+  # (Sync.write/2 normalizes inputs before getting here). Internal
+  # segment work goes through DustProtocol.Path; child paths are
+  # constructed via Path.child/2 so literal `.` / `/` in keys survive.
+
   defp apply_to_entries(db, seq, %{op: :set, path: path, value: value} = attrs) do
     decrement_file_ref_at(db, path)
 
-    {:ok, segments} = DustProtocol.Path.LegacyDot.parse(path)
+    {:ok, segments} = Path.parse_rendered(path)
     delete_descendants(db, segments)
 
     if is_map(value) and not ValueCodec.typed_value?(value) do
@@ -284,20 +290,22 @@ defmodule Dust.Sync.Writer do
 
   defp apply_to_entries(db, _seq, %{op: :delete, path: path}) do
     decrement_file_ref_at(db, path)
-    {:ok, segments} = DustProtocol.Path.LegacyDot.parse(path)
+    {:ok, segments} = Path.parse_rendered(path)
     exec(db, "DELETE FROM store_entries WHERE path = ?", [path])
     delete_descendants(db, segments)
     nil
   end
 
   defp apply_to_entries(db, seq, %{op: :merge, path: path, value: map}) when is_map(map) do
+    {:ok, prefix_segments} = Path.parse_rendered(path)
+
     Enum.each(map, fn {key, value} ->
-      child_path = "#{path}.#{key}"
+      {:ok, child_segments} = Path.child(prefix_segments, to_string(key))
+      {:ok, child_path} = Path.render(child_segments)
 
       if is_map(value) and not ValueCodec.typed_value?(value) do
         decrement_file_ref_at(db, child_path)
-        {:ok, segs} = DustProtocol.Path.LegacyDot.parse(child_path)
-        delete_descendants(db, segs)
+        delete_descendants(db, child_segments)
         exec(db, "DELETE FROM store_entries WHERE path = ?", [child_path])
 
         leaves = ValueCodec.flatten_map(child_path, value)
@@ -338,7 +346,7 @@ defmodule Dust.Sync.Writer do
 
   defp apply_to_entries(db, seq, %{op: :put_file, path: path, value: ref}) when is_map(ref) do
     decrement_file_ref_at(db, path)
-    {:ok, segments} = DustProtocol.Path.LegacyDot.parse(path)
+    {:ok, segments} = Path.parse_rendered(path)
     delete_descendants(db, segments)
     upsert_entry(db, path, ref, "file", seq)
     ref
@@ -358,7 +366,7 @@ defmodule Dust.Sync.Writer do
   end
 
   defp delete_descendants(db, ancestor_segments) do
-    prefix = Enum.join(ancestor_segments, ".") <> "."
+    {:ok, prefix} = Path.render_descendant_prefix(ancestor_segments)
     decrement_file_refs(db, prefix)
     exec(db, "DELETE FROM store_entries WHERE path LIKE ?", ["#{prefix}%"])
   end

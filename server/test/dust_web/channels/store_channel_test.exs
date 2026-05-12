@@ -107,7 +107,7 @@ defmodule DustWeb.StoreChannelTest do
 
       ref =
         push(socket, "put_file", %{
-          "path" => "docs.readme",
+          "path" => "docs/readme",
           "content" => base64,
           "filename" => "readme.txt",
           "content_type" => "text/plain",
@@ -121,7 +121,7 @@ defmodule DustWeb.StoreChannelTest do
       assert_broadcast "event", %{
         store_seq: 1,
         op: :put_file,
-        path: "docs.readme",
+        path: "docs/readme",
         value: %{"_type" => "file", "hash" => ^hash}
       }
 
@@ -180,13 +180,13 @@ defmodule DustWeb.StoreChannelTest do
       ref =
         push(socket, "write", %{
           "op" => "set",
-          "path" => "posts.hello",
+          "path" => "posts/hello",
           "value" => %{"title" => "Hello"},
           "client_op_id" => "op_1"
         })
 
       assert_reply ref, :ok, %{store_seq: 1}
-      assert_broadcast "event", %{store_seq: 1, op: :set, path: "posts.hello"}
+      assert_broadcast "event", %{store_seq: 1, op: :set, path: "posts/hello"}
     end
 
     test "rejects invalid path", %{socket: socket, store: store} do
@@ -232,25 +232,25 @@ defmodule DustWeb.StoreChannelTest do
       ref =
         push(socket, "write", %{
           "op" => "increment",
-          "path" => "stats.views",
+          "path" => "stats/views",
           "value" => 5,
           "client_op_id" => "inc_1"
         })
 
       assert_reply ref, :ok, %{store_seq: 1}
-      assert_broadcast "event", %{store_seq: 1, path: "stats.views", value: 5}
+      assert_broadcast "event", %{store_seq: 1, path: "stats/views", value: 5}
 
       # Second increment: 5 + 3 = 8 (should broadcast 8, not 3)
       ref2 =
         push(socket, "write", %{
           "op" => "increment",
-          "path" => "stats.views",
+          "path" => "stats/views",
           "value" => 3,
           "client_op_id" => "inc_2"
         })
 
       assert_reply ref2, :ok, %{store_seq: 2}
-      assert_broadcast "event", %{store_seq: 2, path: "stats.views", value: 8}
+      assert_broadcast "event", %{store_seq: 2, path: "stats/views", value: 8}
     end
 
     test "add broadcasts materialized set, not member", %{socket: socket, store: store} do
@@ -262,25 +262,25 @@ defmodule DustWeb.StoreChannelTest do
       ref =
         push(socket, "write", %{
           "op" => "add",
-          "path" => "post.tags",
+          "path" => "post/tags",
           "value" => "elixir",
           "client_op_id" => "add_1"
         })
 
       assert_reply ref, :ok, %{store_seq: 1}
-      assert_broadcast "event", %{store_seq: 1, path: "post.tags", value: ["elixir"]}
+      assert_broadcast "event", %{store_seq: 1, path: "post/tags", value: ["elixir"]}
 
       ref2 =
         push(socket, "write", %{
           "op" => "add",
-          "path" => "post.tags",
+          "path" => "post/tags",
           "value" => "rust",
           "client_op_id" => "add_2"
         })
 
       assert_reply ref2, :ok, %{store_seq: 2}
       # Should broadcast full set, not just the new member
-      assert_broadcast "event", %{store_seq: 2, path: "post.tags", value: value}
+      assert_broadcast "event", %{store_seq: 2, path: "post/tags", value: value}
       assert "elixir" in value
       assert "rust" in value
     end

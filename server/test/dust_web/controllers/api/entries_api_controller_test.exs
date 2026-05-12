@@ -25,9 +25,9 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
         created_by_id: user.id
       })
 
-    seed_entry(store, "users.alice.email", "alice@example.com")
-    seed_entry(store, "users.alice.name", "Alice")
-    seed_entry(store, "users.bob.name", "Bob")
+    seed_entry(store, "users/alice/email", "alice@example.com")
+    seed_entry(store, "users/alice/name", "Alice")
+    seed_entry(store, "users/bob/name", "Bob")
 
     %{org: org, store: store, token: token, user: user}
   end
@@ -54,13 +54,13 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       resp =
         conn
         |> api_conn(token)
-        |> get("/api/stores/entriesorg/mystore/entries?pattern=users.**&limit=10")
+        |> get("/api/stores/entriesorg/mystore/entries?pattern=users/**&limit=10")
 
       body = json_response(resp, 200)
       assert length(body["items"]) == 3
 
       first = hd(body["items"])
-      assert first["path"] =~ "users."
+      assert first["path"] =~ "users/"
       assert is_integer(first["revision"])
       assert Map.has_key?(first, "value")
       assert Map.has_key?(first, "type")
@@ -71,14 +71,14 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       resp =
         conn
         |> api_conn(token)
-        |> get("/api/stores/entriesorg/mystore/entries?pattern=users.**&select=keys")
+        |> get("/api/stores/entriesorg/mystore/entries?pattern=users/**&select=keys")
 
       body = json_response(resp, 200)
 
       assert body["items"] == [
-               "users.alice.email",
-               "users.alice.name",
-               "users.bob.name"
+               "users/alice/email",
+               "users/alice/name",
+               "users/bob/name"
              ]
     end
 
@@ -89,10 +89,10 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       resp =
         conn
         |> api_conn(token)
-        |> get("/api/stores/entriesorg/mystore/entries?pattern=users.**&select=prefixes")
+        |> get("/api/stores/entriesorg/mystore/entries?pattern=users/**&select=prefixes")
 
       body = json_response(resp, 200)
-      assert body["items"] == ["users.alice", "users.bob"]
+      assert body["items"] == ["users/alice", "users/bob"]
     end
 
     test "select=prefixes with invalid pattern returns 400 with detail", %{
@@ -115,7 +115,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       resp1 =
         conn
         |> api_conn(token)
-        |> get("/api/stores/entriesorg/mystore/entries?pattern=users.**&select=keys&limit=1")
+        |> get("/api/stores/entriesorg/mystore/entries?pattern=users/**&select=keys&limit=1")
 
       body1 = json_response(resp1, 200)
       assert length(body1["items"]) == 1
@@ -125,7 +125,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
         conn
         |> api_conn(token)
         |> get(
-          "/api/stores/entriesorg/mystore/entries?pattern=users.**&select=keys&limit=1&after=#{body1["next_cursor"]}"
+          "/api/stores/entriesorg/mystore/entries?pattern=users/**&select=keys&limit=1&after=#{body1["next_cursor"]}"
         )
 
       body2 = json_response(resp2, 200)
@@ -187,9 +187,9 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       {all_items, page_count} = walk.(conn, token, walk).(nil, [], 0)
 
       assert Enum.sort(all_items) == [
-               "logs.server.error.1",
-               "logs.server.error.2",
-               "logs.server.error.3"
+               "logs/server/error/1",
+               "logs/server/error/2",
+               "logs/server/error/3"
              ]
 
       assert page_count <= 2
@@ -201,9 +201,9 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       store: store
     } do
       # Seed an entry whose literal prefix contains '%'
-      seed_entry(store, "weird%.child", "match-me")
+      seed_entry(store, "weird%/child", "match-me")
       # Decoy that an unescaped LIKE 'weird%.%' would also capture
-      seed_entry(store, "weirdX.child", "decoy")
+      seed_entry(store, "weirdX/child", "decoy")
 
       resp =
         conn
@@ -211,7 +211,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
         |> get("/api/stores/entriesorg/mystore/entries?pattern=weird%25.**&select=keys")
 
       body = json_response(resp, 200)
-      assert body["items"] == ["weird%.child"]
+      assert body["items"] == ["weird%/child"]
     end
   end
 
@@ -270,7 +270,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       resp =
         conn
         |> api_conn(token)
-        |> get("/api/stores/entriesorg/mystore/entries?pattern=users.**&from=a&to=z")
+        |> get("/api/stores/entriesorg/mystore/entries?pattern=users/**&from=a&to=z")
 
       body = json_response(resp, 400)
       assert body["error"] == "conflicting_params"
@@ -349,8 +349,8 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
           "/api/stores/entriesorg/mystore/entries/batch",
           Jason.encode!(%{
             "paths" => [
-              "users.alice.email",
-              "users.alice.name",
+              "users/alice/email",
+              "users/alice/name",
               "users.nope",
               "totally.absent"
             ]
@@ -360,11 +360,11 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       body = json_response(resp, 200)
 
       assert Map.keys(body["entries"]) |> Enum.sort() == [
-               "users.alice.email",
-               "users.alice.name"
+               "users/alice/email",
+               "users/alice/name"
              ]
 
-      alice_email = body["entries"]["users.alice.email"]
+      alice_email = body["entries"]["users/alice/email"]
       assert alice_email["value"] == "alice@example.com"
       assert is_binary(alice_email["type"])
       assert is_integer(alice_email["revision"])
@@ -425,7 +425,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
         |> put_req_header("content-type", "application/json")
         |> post(
           "/api/stores/entriesorg/mystore/entries/batch",
-          Jason.encode!(%{"paths" => ["users.alice.name", 42]})
+          Jason.encode!(%{"paths" => ["users/alice/name", 42]})
         )
 
       body = json_response(resp, 400)
@@ -440,7 +440,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
         |> put_req_header("content-type", "application/json")
         |> post(
           "/api/stores/entriesorg/mystore/entries/batch",
-          Jason.encode!(%{"paths" => ["users.alice.name"]})
+          Jason.encode!(%{"paths" => ["users/alice/name"]})
         )
 
       assert resp.status == 401
@@ -473,7 +473,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
         |> get("/api/stores/entriesorg/mystore/entries/users/alice/name")
 
       body = json_response(resp, 200)
-      assert body["path"] == "users.alice.name"
+      assert body["path"] == "users/alice/name"
       assert body["value"] == "Alice"
       assert is_binary(body["type"])
       assert is_integer(body["revision"])
@@ -536,7 +536,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       assert body["revision"] == body["store_seq"]
 
       # Verify the value was actually written.
-      assert %{value: "Alice Updated"} = Sync.get_entry(store.id, "users.alice.name")
+      assert %{value: "Alice Updated"} = Sync.get_entry(store.id, "users/alice/name")
     end
 
     test "PUT with empty body returns 400 with hint about JSON null and DELETE", %{
@@ -560,8 +560,8 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       token: token,
       store: store
     } do
-      seed_entry(store, "cas.counter", 1)
-      %{seq: seq} = Sync.get_entry(store.id, "cas.counter")
+      seed_entry(store, "cas/counter", 1)
+      %{seq: seq} = Sync.get_entry(store.id, "cas/counter")
 
       resp =
         conn
@@ -573,7 +573,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       body = json_response(resp, 200)
       assert body["revision"] > seq
 
-      assert %{value: 2} = Sync.get_entry(store.id, "cas.counter")
+      assert %{value: 2} = Sync.get_entry(store.id, "cas/counter")
     end
 
     test "stale If-Match returns 412 with current_revision", %{
@@ -581,8 +581,8 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       token: token,
       store: store
     } do
-      seed_entry(store, "cas.counter", 1)
-      %{seq: seq} = Sync.get_entry(store.id, "cas.counter")
+      seed_entry(store, "cas/counter", 1)
+      %{seq: seq} = Sync.get_entry(store.id, "cas/counter")
 
       resp =
         conn
@@ -596,7 +596,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       assert body["current_revision"] == seq
 
       # Entry is unchanged.
-      assert %{value: 1} = Sync.get_entry(store.id, "cas.counter")
+      assert %{value: 1} = Sync.get_entry(store.id, "cas/counter")
     end
 
     test "If-Match with dict body returns 400 if_match_multi_leaf", %{
@@ -619,7 +619,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       assert is_binary(body["detail"])
 
       # The existing subtree is unchanged (safety invariant preserved).
-      assert %{value: "Alice"} = Sync.get_entry(store.id, "users.alice.name")
+      assert %{value: "Alice"} = Sync.get_entry(store.id, "users/alice/name")
     end
 
     test "returns 401 without Bearer token", %{conn: conn} do
@@ -659,7 +659,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       # All three writes landed.
       assert %{value: "Foo"} = Sync.get_entry(store.id, "links.foo.title")
       assert %{value: "https://foo"} = Sync.get_entry(store.id, "links.foo.url")
-      assert Sync.get_entry(store.id, "users.bob.name") == nil
+      assert Sync.get_entry(store.id, "users/bob/name") == nil
 
       # store_seq is monotonic across the batch.
       [op1, op2, op3] = result["ops"]
@@ -672,7 +672,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       token: token,
       store: store
     } do
-      seed_entry(store, "cas.counter", 1)
+      seed_entry(store, "cas/counter", 1)
 
       body = %{
         ops: [
@@ -687,13 +687,13 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
 
       assert err["error"] == "conflict"
       assert err["op_index"] == 1
-      assert err["path"] == "cas.counter"
+      assert err["path"] == "cas/counter"
       assert is_integer(err["current_revision"])
 
       # No ops applied — first and third writes did not land.
       assert Sync.get_entry(store.id, "batch.a") == nil
       assert Sync.get_entry(store.id, "batch.b") == nil
-      assert %{value: 1} = Sync.get_entry(store.id, "cas.counter")
+      assert %{value: 1} = Sync.get_entry(store.id, "cas/counter")
     end
 
     test "returns 400 if_match_multi_leaf for a multi-key map with If-Match", %{
@@ -802,8 +802,8 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       resp = batch_write_post(conn, token, Jason.encode!(body))
       result = json_response(resp, 200)
 
-      assert hd(result["ops"])["path"] == "users.charlie.name"
-      assert %{value: "Charlie"} = Sync.get_entry(store.id, "users.charlie.name")
+      assert hd(result["ops"])["path"] == "users/charlie/name"
+      assert %{value: "Charlie"} = Sync.get_entry(store.id, "users/charlie/name")
     end
 
     test "returns 403 without write permission", %{conn: conn, store: store, user: user} do
@@ -836,7 +836,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
 
   describe "HEAD /api/stores/:org/:store/entries/*path" do
     test "returns 200 + ETag for an existing leaf", %{conn: conn, token: token, store: store} do
-      %{seq: seq} = Sync.get_entry(store.id, "users.alice.name")
+      %{seq: seq} = Sync.get_entry(store.id, "users/alice/name")
 
       resp =
         conn
@@ -909,7 +909,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
 
   describe "DELETE /api/stores/:org/:store/entries/*path" do
     test "removes a leaf entry", %{conn: conn, token: token, store: store} do
-      assert %{value: "Alice"} = Sync.get_entry(store.id, "users.alice.name")
+      assert %{value: "Alice"} = Sync.get_entry(store.id, "users/alice/name")
 
       resp =
         conn
@@ -919,12 +919,12 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       body = json_response(resp, 200)
       assert is_integer(body["revision"])
       assert body["revision"] == body["store_seq"]
-      assert Sync.get_entry(store.id, "users.alice.name") == nil
+      assert Sync.get_entry(store.id, "users/alice/name") == nil
     end
 
     test "removes an entire subtree", %{conn: conn, token: token, store: store} do
-      assert %{value: %{}} = Sync.get_entry(store.id, "users.alice")
-      assert %{value: %{}} = Sync.get_entry(store.id, "users.bob")
+      assert %{value: %{}} = Sync.get_entry(store.id, "users/alice")
+      assert %{value: %{}} = Sync.get_entry(store.id, "users/bob")
 
       resp =
         conn
@@ -932,11 +932,11 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
         |> delete("/api/stores/entriesorg/mystore/entries/users/alice")
 
       _body = json_response(resp, 200)
-      assert Sync.get_entry(store.id, "users.alice") == nil
-      assert Sync.get_entry(store.id, "users.alice.email") == nil
-      assert Sync.get_entry(store.id, "users.alice.name") == nil
+      assert Sync.get_entry(store.id, "users/alice") == nil
+      assert Sync.get_entry(store.id, "users/alice/email") == nil
+      assert Sync.get_entry(store.id, "users/alice/name") == nil
       # Other subtrees untouched.
-      assert %{value: "Bob"} = Sync.get_entry(store.id, "users.bob.name")
+      assert %{value: "Bob"} = Sync.get_entry(store.id, "users/bob/name")
     end
 
     test "is idempotent — DELETE on missing key still returns 200", %{conn: conn, token: token} do
@@ -950,7 +950,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
     end
 
     test "DELETE with matching If-Match succeeds", %{conn: conn, token: token, store: store} do
-      %{seq: seq} = Sync.get_entry(store.id, "users.alice.name")
+      %{seq: seq} = Sync.get_entry(store.id, "users/alice/name")
 
       resp =
         conn
@@ -959,7 +959,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
         |> delete("/api/stores/entriesorg/mystore/entries/users/alice/name")
 
       _body = json_response(resp, 200)
-      assert Sync.get_entry(store.id, "users.alice.name") == nil
+      assert Sync.get_entry(store.id, "users/alice/name") == nil
     end
 
     test "DELETE with stale If-Match returns 412", %{conn: conn, token: token, store: store} do
@@ -972,7 +972,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       body = json_response(resp, 412)
       assert body["error"] == "conflict"
       # Entry is unchanged.
-      assert %{value: "Alice"} = Sync.get_entry(store.id, "users.alice.name")
+      assert %{value: "Alice"} = Sync.get_entry(store.id, "users/alice/name")
     end
 
     test "DELETE without write permission returns 403", %{conn: conn, store: store, user: user} do
@@ -1014,7 +1014,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
   end
 
   describe "path normalization (slash ↔ dot)" do
-    test "GET /entries?pattern=users/alice/* matches as if it were users.alice.*",
+    test "GET /entries?pattern=users/alice/* matches as if it were users/alice.*",
          %{conn: conn, token: token} do
       resp =
         conn
@@ -1023,8 +1023,8 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
 
       body = json_response(resp, 200)
       paths = Enum.map(body["items"], & &1["path"])
-      assert "users.alice.email" in paths
-      assert "users.alice.name" in paths
+      assert "users/alice/email" in paths
+      assert "users/alice/name" in paths
     end
 
     test "GET /entries?from=users/alice&to=users/bob normalises range bounds",
@@ -1036,9 +1036,9 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
 
       body = json_response(resp, 200)
       paths = Enum.map(body["items"], & &1["path"])
-      assert "users.alice.email" in paths
-      assert "users.alice.name" in paths
-      refute Enum.any?(paths, &String.starts_with?(&1, "users.bob"))
+      assert "users/alice/email" in paths
+      assert "users/alice/name" in paths
+      refute Enum.any?(paths, &String.starts_with?(&1, "users/bob"))
     end
 
     test "PUT /entries/foo.bar/baz returns 400 — '.' in URL segment is forbidden",
@@ -1062,12 +1062,12 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
         |> put_req_header("content-type", "application/json")
         |> post(
           "/api/stores/entriesorg/mystore/entries/batch",
-          Jason.encode!(%{paths: ["users/alice/email", "users.bob.name"]})
+          Jason.encode!(%{paths: ["users/alice/email", "users/bob/name"]})
         )
 
       body = json_response(resp, 200)
-      assert Map.has_key?(body["entries"], "users.alice.email")
-      assert Map.has_key?(body["entries"], "users.bob.name")
+      assert Map.has_key?(body["entries"], "users/alice/email")
+      assert Map.has_key?(body["entries"], "users/bob/name")
     end
   end
 
@@ -1084,7 +1084,7 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
 
     test "GET /entries works with session for a member of the org",
          %{logged_in: conn} do
-      resp = get(conn, "/api/stores/entriesorg/mystore/entries?pattern=users.**&limit=10")
+      resp = get(conn, "/api/stores/entriesorg/mystore/entries?pattern=users/**&limit=10")
       body = json_response(resp, 200)
       assert length(body["items"]) == 3
     end

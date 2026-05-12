@@ -64,9 +64,25 @@ defmodule Dust.Sync.Audit do
   defp maybe_add_path(clauses, params, ""), do: {clauses, params}
 
   defp maybe_add_path(clauses, params, path) do
-    if String.contains?(path, "*") do
+    # Normalise caller input (which may be legacy dotted form) before
+    # binding into SQL. After normalisation paths/patterns are
+    # slash-rendered, matching what the writer stores.
+    normalized =
+      if String.contains?(path, "*") do
+        case Dust.Sync.normalize_pattern(path) do
+          {:ok, p} -> p
+          _ -> path
+        end
+      else
+        case Dust.Sync.normalize_path(path) do
+          {:ok, p} -> p
+          _ -> path
+        end
+      end
+
+    if String.contains?(normalized, "*") do
       like_pattern =
-        path
+        normalized
         |> String.replace("%", "\\%")
         |> String.replace("_", "\\_")
         |> String.replace("**", "%%DOUBLE%%")
@@ -75,7 +91,7 @@ defmodule Dust.Sync.Audit do
 
       {clauses ++ ["path LIKE ?"], params ++ [like_pattern]}
     else
-      {clauses ++ ["path = ?"], params ++ [path]}
+      {clauses ++ ["path = ?"], params ++ [normalized]}
     end
   end
 
