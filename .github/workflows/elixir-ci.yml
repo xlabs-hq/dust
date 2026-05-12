@@ -1,0 +1,122 @@
+name: Elixir CI
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'server/**'
+      - 'sdk/elixir/**'
+      - 'sdk/elixir_ecto/**'
+      - '.github/workflows/elixir-ci.yml'
+  pull_request:
+    paths:
+      - 'server/**'
+      - 'sdk/elixir/**'
+      - 'sdk/elixir_ecto/**'
+      - '.github/workflows/elixir-ci.yml'
+
+env:
+  # Opt JavaScript-based actions in to Node.js 24 ahead of GitHub's
+  # 2026-09-16 forced cutover. Same as cli-ci.yml.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+  MIX_ENV: test
+  # Pin Elixir/OTP centrally — every job inherits the same versions
+  # so a "bump everywhere at once" change is a one-line edit.
+  ELIXIR_VERSION: '1.18.4'
+  OTP_VERSION: '27.3'
+
+jobs:
+  # Server gets its own job because it needs a Postgres service
+  # container. The two SDK projects ride the matrix below.
+  server:
+    name: server
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Elixir + OTP
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+
+      - name: Cache deps + _build
+        uses: actions/cache@v4
+        with:
+          path: |
+            server/deps
+            server/_build
+          key: ${{ runner.os }}-mix-server-${{ hashFiles('server/mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-mix-server-
+
+      - name: Fetch deps
+        working-directory: server
+        run: mix deps.get
+
+      - name: Compile
+        working-directory: server
+        run: mix compile
+
+      - name: Run tests
+        working-directory: server
+        run: mix test
+
+  sdk:
+    name: ${{ matrix.project }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - project: sdk/elixir
+            dir: sdk/elixir
+          - project: sdk/elixir_ecto
+            dir: sdk/elixir_ecto
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Elixir + OTP
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+
+      - name: Cache deps + _build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ matrix.dir }}/deps
+            ${{ matrix.dir }}/_build
+          key: ${{ runner.os }}-mix-${{ matrix.project }}-${{ hashFiles(format('{0}/mix.lock', matrix.dir)) }}
+          restore-keys: |
+            ${{ runner.os }}-mix-${{ matrix.project }}-
+
+      - name: Fetch deps
+        working-directory: ${{ matrix.dir }}
+        run: mix deps.get
+
+      - name: Compile
+        working-directory: ${{ matrix.dir }}
+        run: mix compile
+
+      - name: Run tests
+        working-directory: ${{ matrix.dir }}
+        run: mix test
