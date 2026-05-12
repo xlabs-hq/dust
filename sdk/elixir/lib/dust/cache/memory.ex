@@ -94,16 +94,23 @@ defmodule Dust.Cache.Memory do
 
   @impl true
   def handle_call({:read_all, store, pattern}, _from, state) do
-    compiled = Dust.Protocol.Glob.compile(pattern)
+    {:ok, compiled} = Dust.Protocol.Glob.compile(pattern)
 
     results =
       state.entries
       |> Enum.filter(fn {{s, path}, _} ->
-        s == store and Dust.Protocol.Glob.match?(compiled, String.split(path, "."))
+        s == store and path_matches?(path, compiled)
       end)
       |> Enum.map(fn {{_s, path}, {value, _type, _seq}} -> {path, value} end)
 
     {:reply, results, state}
+  end
+
+  defp path_matches?(path, compiled) do
+    case Dust.Protocol.Path.parse_rendered(path) do
+      {:ok, segs} -> Dust.Protocol.Glob.match?(compiled, segs)
+      _ -> false
+    end
   end
 
   @impl true
@@ -149,7 +156,8 @@ defmodule Dust.Cache.Memory do
 
   @impl true
   def handle_call({:delete_subtree, store, path}, _from, state) do
-    prefix = path <> "."
+    {:ok, segments} = Dust.Protocol.Path.parse_rendered(path)
+    {:ok, prefix} = Dust.Protocol.Path.render_descendant_prefix(segments)
 
     {removed, kept} =
       Enum.split_with(state.entries, fn {{s, p}, _} ->
@@ -162,7 +170,8 @@ defmodule Dust.Cache.Memory do
 
   @impl true
   def handle_call({:read_subtree, store, path}, _from, state) do
-    prefix = path <> "."
+    {:ok, segments} = Dust.Protocol.Path.parse_rendered(path)
+    {:ok, prefix} = Dust.Protocol.Path.render_descendant_prefix(segments)
 
     rows =
       state.entries
@@ -199,7 +208,7 @@ defmodule Dust.Cache.Memory do
     from = Keyword.get(opts, :from)
     to = Keyword.get(opts, :to)
 
-    compiled = Dust.Protocol.Glob.compile(pattern)
+    {:ok, compiled} = Dust.Protocol.Glob.compile(pattern)
 
     entries =
       state.entries
@@ -244,30 +253,30 @@ defmodule Dust.Cache.Memory do
   defp literal_prefix_of("**"), do: ""
 
   defp literal_prefix_of(pattern) do
-    case String.split(pattern, ".**", parts: 2) do
+    case String.split(pattern, "/**", parts: 2) do
       [prefix, ""] ->
         prefix
 
       _ ->
         raise ArgumentError,
-              "select: :prefixes requires pattern ending in .** or ** (got #{inspect(pattern)})"
+              "select: :prefixes requires pattern ending in /** or ** (got #{inspect(pattern)})"
     end
   end
 
   defp extract_prefix(path, "") do
-    case String.split(path, ".", parts: 2) do
+    case String.split(path, "/", parts: 2) do
       [seg | _] -> seg
       [] -> nil
     end
   end
 
   defp extract_prefix(path, literal) do
-    prefix_with_dot = literal <> "."
+    prefix_with_slash = literal <> "/"
 
-    if String.starts_with?(path, prefix_with_dot) do
-      rest = String.replace_prefix(path, prefix_with_dot, "")
-      [next_seg | _] = String.split(rest, ".", parts: 2)
-      literal <> "." <> next_seg
+    if String.starts_with?(path, prefix_with_slash) do
+      rest = String.replace_prefix(path, prefix_with_slash, "")
+      [next_seg | _] = String.split(rest, "/", parts: 2)
+      literal <> "/" <> next_seg
     end
   end
 
@@ -276,7 +285,7 @@ defmodule Dust.Cache.Memory do
   end
 
   defp matches_filter?(path, _pattern, compiled, _from, _to) do
-    Dust.Protocol.Glob.match?(compiled, String.split(path, "."))
+    path_matches?(path, compiled)
   end
 
   defp sort_direction(:asc), do: :asc

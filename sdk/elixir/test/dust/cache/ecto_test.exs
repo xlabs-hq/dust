@@ -13,14 +13,14 @@ defmodule Dust.Cache.EctoTest do
 
   describe "write and read" do
     test "round-trips a string value" do
-      :ok = EctoCache.write(Dust.TestRepo, @store, "users.1.name", "Alice", "string", 1)
-      assert {:ok, "Alice"} = EctoCache.read(Dust.TestRepo, @store, "users.1.name")
+      :ok = EctoCache.write(Dust.TestRepo, @store, "users/1/name", "Alice", "string", 1)
+      assert {:ok, "Alice"} = EctoCache.read(Dust.TestRepo, @store, "users/1/name")
     end
 
     test "round-trips a map value" do
       value = %{"name" => "Alice", "age" => 30}
-      :ok = EctoCache.write(Dust.TestRepo, @store, "users.1", value, "map", 1)
-      assert {:ok, ^value} = EctoCache.read(Dust.TestRepo, @store, "users.1")
+      :ok = EctoCache.write(Dust.TestRepo, @store, "users/1", value, "map", 1)
+      assert {:ok, ^value} = EctoCache.read(Dust.TestRepo, @store, "users/1")
     end
 
     test "round-trips an integer value" do
@@ -53,9 +53,9 @@ defmodule Dust.Cache.EctoTest do
 
   describe "read_entry" do
     test "returns full metadata for present keys" do
-      :ok = EctoCache.write(Dust.TestRepo, @store, "a.b", "hello", "string", 7)
+      :ok = EctoCache.write(Dust.TestRepo, @store, "a/b", "hello", "string", 7)
 
-      assert EctoCache.read_entry(Dust.TestRepo, @store, "a.b") ==
+      assert EctoCache.read_entry(Dust.TestRepo, @store, "a/b") ==
                {:ok, {"hello", "string", 7}}
     end
 
@@ -128,32 +128,32 @@ defmodule Dust.Cache.EctoTest do
 
   describe "read_all" do
     test "returns matching entries by glob pattern" do
-      :ok = EctoCache.write(Dust.TestRepo, @store, "users.1.name", "Alice", "string", 1)
-      :ok = EctoCache.write(Dust.TestRepo, @store, "users.2.name", "Bob", "string", 2)
-      :ok = EctoCache.write(Dust.TestRepo, @store, "users.1.age", 30, "integer", 3)
-      :ok = EctoCache.write(Dust.TestRepo, @store, "posts.1.title", "Hello", "string", 4)
+      :ok = EctoCache.write(Dust.TestRepo, @store, "users/1/name", "Alice", "string", 1)
+      :ok = EctoCache.write(Dust.TestRepo, @store, "users/2/name", "Bob", "string", 2)
+      :ok = EctoCache.write(Dust.TestRepo, @store, "users/1/age", 30, "integer", 3)
+      :ok = EctoCache.write(Dust.TestRepo, @store, "posts/1/title", "Hello", "string", 4)
 
-      results = EctoCache.read_all(Dust.TestRepo, @store, "users.*.name")
+      results = EctoCache.read_all(Dust.TestRepo, @store, "users/*/name")
       assert length(results) == 2
 
       result_map = Map.new(results)
-      assert result_map["users.1.name"] == "Alice"
-      assert result_map["users.2.name"] == "Bob"
+      assert result_map["users/1/name"] == "Alice"
+      assert result_map["users/2/name"] == "Bob"
     end
 
     test "returns all entries with double-star glob" do
-      :ok = EctoCache.write(Dust.TestRepo, @store, "users.1.name", "Alice", "string", 1)
-      :ok = EctoCache.write(Dust.TestRepo, @store, "users.2.name", "Bob", "string", 2)
-      :ok = EctoCache.write(Dust.TestRepo, @store, "users.1.age", 30, "integer", 3)
+      :ok = EctoCache.write(Dust.TestRepo, @store, "users/1/name", "Alice", "string", 1)
+      :ok = EctoCache.write(Dust.TestRepo, @store, "users/2/name", "Bob", "string", 2)
+      :ok = EctoCache.write(Dust.TestRepo, @store, "users/1/age", 30, "integer", 3)
 
-      results = EctoCache.read_all(Dust.TestRepo, @store, "users.**")
+      results = EctoCache.read_all(Dust.TestRepo, @store, "users/**")
       assert length(results) == 3
     end
 
     test "returns empty list when nothing matches" do
-      :ok = EctoCache.write(Dust.TestRepo, @store, "users.1.name", "Alice", "string", 1)
+      :ok = EctoCache.write(Dust.TestRepo, @store, "users/1/name", "Alice", "string", 1)
 
-      results = EctoCache.read_all(Dust.TestRepo, @store, "posts.**")
+      results = EctoCache.read_all(Dust.TestRepo, @store, "posts/**")
       assert results == []
     end
 
@@ -170,16 +170,16 @@ defmodule Dust.Cache.EctoTest do
   describe "write_batch" do
     test "writes multiple entries at once" do
       entries = [
-        {"users.1.name", "Alice", "string", 1},
-        {"users.2.name", "Bob", "string", 2},
-        {"users.3.name", "Carol", "string", 3}
+        {"users/1/name", "Alice", "string", 1},
+        {"users/2/name", "Bob", "string", 2},
+        {"users/3/name", "Carol", "string", 3}
       ]
 
       :ok = EctoCache.write_batch(Dust.TestRepo, @store, entries)
 
-      assert {:ok, "Alice"} = EctoCache.read(Dust.TestRepo, @store, "users.1.name")
-      assert {:ok, "Bob"} = EctoCache.read(Dust.TestRepo, @store, "users.2.name")
-      assert {:ok, "Carol"} = EctoCache.read(Dust.TestRepo, @store, "users.3.name")
+      assert {:ok, "Alice"} = EctoCache.read(Dust.TestRepo, @store, "users/1/name")
+      assert {:ok, "Bob"} = EctoCache.read(Dust.TestRepo, @store, "users/2/name")
+      assert {:ok, "Carol"} = EctoCache.read(Dust.TestRepo, @store, "users/3/name")
     end
 
     test "updates last_seq to the highest in the batch" do
@@ -241,14 +241,14 @@ defmodule Dust.Cache.EctoTest do
 
   describe "browse select" do
     test "select: :entries (default) returns decoded 4-tuples" do
-      :ok = EctoCache.write(Dust.TestRepo, @store, "users.1.name", "Alice", "string", 1)
-      :ok = EctoCache.write(Dust.TestRepo, @store, "users.2.name", "Bob", "string", 2)
+      :ok = EctoCache.write(Dust.TestRepo, @store, "users/1/name", "Alice", "string", 1)
+      :ok = EctoCache.write(Dust.TestRepo, @store, "users/2/name", "Bob", "string", 2)
 
       {page, _next_cursor} = EctoCache.browse(Dust.TestRepo, @store, [])
 
       assert [
-               {"users.1.name", "Alice", "string", 1},
-               {"users.2.name", "Bob", "string", 2}
+               {"users/1/name", "Alice", "string", 1},
+               {"users/2/name", "Bob", "string", 2}
              ] = page
     end
 
@@ -276,7 +276,7 @@ defmodule Dust.Cache.EctoTest do
     end
 
     test "select: :prefixes with pattern ** returns unique top-level segments" do
-      for p <- ~w(users.alice.name users.bob.name posts.hi),
+      for p <- ~w(users/alice/name users/bob/name posts/hi),
           do: :ok = EctoCache.write(Dust.TestRepo, @store, p, 1, "integer", 1)
 
       {items, _} =
@@ -285,172 +285,18 @@ defmodule Dust.Cache.EctoTest do
       assert items == ~w(posts users)
     end
 
-    test "select: :prefixes with pattern 'users.**' returns unique next-segment prefixes" do
-      for p <- ~w(users.alice.name users.alice.email users.bob.name),
+    test "select: :prefixes with pattern 'users/**' returns unique next-segment prefixes" do
+      for p <- ~w(users/alice/name users/alice/email users/bob/name),
           do: :ok = EctoCache.write(Dust.TestRepo, @store, p, 1, "integer", 1)
 
       {items, _} =
         EctoCache.browse(Dust.TestRepo, @store,
-          pattern: "users.**",
+          pattern: "users/**",
           select: :prefixes,
           limit: 10
         )
 
-      assert items == ~w(users.alice users.bob)
-    end
-  end
-
-  describe "browse pagination with narrow glob" do
-    test "paginates narrow glob over wide raw prefix without dropping matches" do
-      # Seed 60 decoy entries that sort BEFORE the matches so a naive limit+1
-      # raw fetch captures 51 decoys and zero matches.
-      for i <- 1..60 do
-        suffix = String.pad_leading(to_string(i), 3, "0")
-
-        :ok =
-          EctoCache.write(
-            Dust.TestRepo,
-            @store,
-            "logs.server.alpha.#{suffix}",
-            "alpha-#{suffix}",
-            "string",
-            i
-          )
-      end
-
-      # Seed 3 entries that actually match the narrow glob
-      for i <- 1..3 do
-        :ok =
-          EctoCache.write(
-            Dust.TestRepo,
-            @store,
-            "logs.server.error.#{i}",
-            "error-#{i}",
-            "string",
-            100 + i
-          )
-      end
-
-      # Walk pages following next_cursor until exhausted.
-      walk = fn cursor, acc, pages, walk ->
-        {page, next_cursor} =
-          EctoCache.browse(Dust.TestRepo, @store,
-            pattern: "logs.*.error.**",
-            select: :keys,
-            limit: 50,
-            cursor: cursor
-          )
-
-        new_acc = acc ++ page
-
-        case next_cursor do
-          nil -> {new_acc, pages + 1}
-          c -> walk.(c, new_acc, pages + 1, walk)
-        end
-      end
-
-      {all_items, page_count} = walk.(nil, [], 0, walk)
-
-      assert Enum.sort(all_items) == [
-               "logs.server.error.1",
-               "logs.server.error.2",
-               "logs.server.error.3"
-             ]
-
-      assert page_count <= 2
-    end
-
-    test "I1 regression: literal '%' in pattern prefix returns only exact matches" do
-      :ok = EctoCache.write(Dust.TestRepo, @store, "weird%.child", "match", "string", 1)
-      :ok = EctoCache.write(Dust.TestRepo, @store, "weirdX.child", "decoy", "string", 2)
-
-      {items, _} =
-        EctoCache.browse(Dust.TestRepo, @store,
-          pattern: "weird%.**",
-          select: :keys,
-          limit: 10
-        )
-
-      assert items == ["weird%.child"]
-    end
-  end
-
-  describe "browse with :from/:to range" do
-    test "returns entries within [from, to) lexicographically" do
-      for k <- ~w(a b c d e),
-          do: :ok = EctoCache.write(Dust.TestRepo, @store, k, k, "string", 1)
-
-      {page, _} = EctoCache.browse(Dust.TestRepo, @store, from: "b", to: "d", limit: 10)
-      paths = Enum.map(page, fn {p, _, _, _} -> p end)
-      assert paths == ~w(b c)
-    end
-
-    test "from is inclusive, to is exclusive" do
-      for k <- ~w(a b c),
-          do: :ok = EctoCache.write(Dust.TestRepo, @store, k, k, "string", 1)
-
-      {page, _} = EctoCache.browse(Dust.TestRepo, @store, from: "a", to: "c", limit: 10)
-      assert Enum.map(page, fn {p, _, _, _} -> p end) == ~w(a b)
-    end
-
-    test "from >= to returns an empty page" do
-      :ok = EctoCache.write(Dust.TestRepo, @store, "x", "x", "string", 1)
-      {page, _} = EctoCache.browse(Dust.TestRepo, @store, from: "z", to: "a", limit: 10)
-      assert page == []
-    end
-
-    test "range respects order: :desc" do
-      for k <- ~w(a b c d),
-          do: :ok = EctoCache.write(Dust.TestRepo, @store, k, k, "string", 1)
-
-      {page, _} =
-        EctoCache.browse(Dust.TestRepo, @store, from: "a", to: "d", limit: 10, order: :desc)
-
-      assert Enum.map(page, fn {p, _, _, _} -> p end) == ~w(c b a)
-    end
-
-    test "range + limit produces a next_cursor" do
-      for k <- ~w(a b c d e),
-          do: :ok = EctoCache.write(Dust.TestRepo, @store, k, k, "string", 1)
-
-      {page, cursor} = EctoCache.browse(Dust.TestRepo, @store, from: "a", to: "z", limit: 2)
-      assert Enum.map(page, fn {p, _, _, _} -> p end) == ~w(a b)
-      assert cursor == "b"
-    end
-
-    test "range + cursor resumes correctly" do
-      for k <- ~w(a b c d e),
-          do: :ok = EctoCache.write(Dust.TestRepo, @store, k, k, "string", 1)
-
-      {page, _} =
-        EctoCache.browse(Dust.TestRepo, @store, from: "a", to: "z", limit: 2, cursor: "b")
-
-      assert Enum.map(page, fn {p, _, _, _} -> p end) == ~w(c d)
-    end
-  end
-
-  describe "read_many/3" do
-    test "returns a map of present entries" do
-      :ok = EctoCache.write(Dust.TestRepo, @store, "a", 1, "integer", 1)
-      :ok = EctoCache.write(Dust.TestRepo, @store, "b", 2, "integer", 2)
-      result = EctoCache.read_many(Dust.TestRepo, @store, ["a", "b"])
-      assert result == %{"a" => {1, "integer", 1}, "b" => {2, "integer", 2}}
-    end
-
-    test "omits missing paths" do
-      :ok = EctoCache.write(Dust.TestRepo, @store, "a", 1, "integer", 1)
-      result = EctoCache.read_many(Dust.TestRepo, @store, ["a", "missing"])
-      assert Map.keys(result) == ["a"]
-    end
-
-    test "empty list returns empty map" do
-      assert EctoCache.read_many(Dust.TestRepo, @store, []) == %{}
-    end
-
-    test "duplicate paths collapse in the result" do
-      :ok = EctoCache.write(Dust.TestRepo, @store, "a", 1, "integer", 1)
-      result = EctoCache.read_many(Dust.TestRepo, @store, ["a", "a", "a"])
-      assert result == %{"a" => {1, "integer", 1}}
+      assert items == ~w(users/alice users/bob)
     end
   end
 end

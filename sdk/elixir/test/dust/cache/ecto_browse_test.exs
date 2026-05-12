@@ -8,7 +8,7 @@ defmodule Dust.Cache.EctoBrowseTest do
     store = "test/browse_store"
 
     for i <- 1..10 do
-      path = "items.item_#{String.pad_leading(to_string(i), 2, "0")}"
+      path = "items/item_#{String.pad_leading(to_string(i), 2, "0")}"
       EctoCache.write(Dust.TestRepo, store, path, "value_#{i}", "string", i)
     end
 
@@ -35,9 +35,9 @@ defmodule Dust.Cache.EctoBrowseTest do
   end
 
   test "browse/3 filters by glob pattern", %{store: store} do
-    EctoCache.write(Dust.TestRepo, store, "other.thing", "x", "string", 11)
+    EctoCache.write(Dust.TestRepo, store, "other/thing", "x", "string", 11)
 
-    {entries, _} = EctoCache.browse(Dust.TestRepo, store, pattern: "items.*", limit: 100)
+    {entries, _} = EctoCache.browse(Dust.TestRepo, store, pattern: "items/*", limit: 100)
     assert length(entries) == 10
   end
 end

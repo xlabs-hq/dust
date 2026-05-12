@@ -592,17 +592,24 @@ defmodule DustEcto.Repo do
   # delete). Handles dotted prefixes by splitting both strings and
   # comparing segment-by-segment.
   defp slug_from_path(path, prefix) when is_binary(path) and is_binary(prefix) do
-    prefix_segs = String.split(prefix, ".")
-    path_segs = String.split(path, ".")
-    prefix_len = length(prefix_segs)
+    # Path arrives canonical (slash-rendered) post-segment-first migration.
+    # Prefix is whatever the user declared on the schema — may be dotted
+    # legacy form or canonical slash. Decode both to segments via the
+    # same helpers used everywhere else.
+    with {:ok, prefix_segs} <- decode_prefix(prefix),
+         {:ok, path_segs} <- Dust.Protocol.Path.parse_rendered(path) do
+      prefix_len = length(prefix_segs)
 
-    if Enum.take(path_segs, prefix_len) == prefix_segs do
-      case Enum.drop(path_segs, prefix_len) do
-        [slug | rest] when slug != "" -> {:ok, slug, rest}
-        _ -> :error
+      if Enum.take(path_segs, prefix_len) == prefix_segs do
+        case Enum.drop(path_segs, prefix_len) do
+          [slug | rest] when slug != "" -> {:ok, slug, rest}
+          _ -> :error
+        end
+      else
+        :error
       end
     else
-      :error
+      _ -> :error
     end
   end
 
@@ -675,20 +682,34 @@ defmodule DustEcto.Repo do
   end
 
   defp parse_path(path, prefix) when is_binary(path) and is_binary(prefix) do
-    prefix_segs = String.split(prefix, ".")
-    path_segs = String.split(path, ".")
-    prefix_len = length(prefix_segs)
+    with {:ok, prefix_segs} <- decode_prefix(prefix),
+         {:ok, path_segs} <- Dust.Protocol.Path.parse_rendered(path) do
+      prefix_len = length(prefix_segs)
 
-    if Enum.take(path_segs, prefix_len) == prefix_segs do
-      case Enum.drop(path_segs, prefix_len) do
-        [slug | [_ | _] = field_segments] when slug != "" ->
-          {:ok, slug, field_segments}
+      if Enum.take(path_segs, prefix_len) == prefix_segs do
+        case Enum.drop(path_segs, prefix_len) do
+          [slug | [_ | _] = field_segments] when slug != "" ->
+            {:ok, slug, field_segments}
 
-        _ ->
-          :error
+          _ ->
+            :error
+        end
+      else
+        :error
       end
     else
-      :error
+      _ -> :error
+    end
+  end
+
+  # Schema prefixes may be declared as either legacy dotted strings
+  # (`"reading.links"`) or canonical slash strings (`"reading/links"`).
+  # Future work: accept segment-list prefixes per the dust_ecto
+  # migration design.
+  defp decode_prefix(prefix) when is_binary(prefix) do
+    cond do
+      String.contains?(prefix, "/") -> Dust.Protocol.Path.parse_rendered(prefix)
+      true -> Dust.Protocol.Path.LegacyDot.parse(prefix)
     end
   end
 

@@ -28,7 +28,7 @@ defmodule Dust.CallbackRegistry do
   """
   def register(table, store, pattern, callback, opts \\ []) when is_function(callback, 1) do
     ref = make_ref()
-    compiled = Dust.Protocol.Glob.compile(pattern)
+    {:ok, compiled} = Dust.Protocol.Glob.compile(pattern)
     max_queue_size = Keyword.get(opts, :max_queue_size, @default_max_queue_size)
     on_resync = Keyword.get(opts, :on_resync)
     mode = Keyword.get(opts, :mode, :all)
@@ -85,14 +85,18 @@ defmodule Dust.CallbackRegistry do
   `{worker_pid, ref, max_queue_size, on_resync, mode}` tuples.
   """
   def match(table, store, path) do
-    path_segments = String.split(path, ".")
+    case Dust.Protocol.Path.parse_rendered(path) do
+      {:ok, path_segments} ->
+        :ets.lookup(table, store)
+        |> Enum.filter(fn {_store, compiled, _pattern, _pid, _ref, _max, _resync, _mode} ->
+          Dust.Protocol.Glob.match?(compiled, path_segments)
+        end)
+        |> Enum.map(fn {_store, _compiled, _pattern, pid, ref, max, on_resync, mode} ->
+          {pid, ref, max, on_resync, mode}
+        end)
 
-    :ets.lookup(table, store)
-    |> Enum.filter(fn {_store, compiled, _pattern, _pid, _ref, _max, _resync, _mode} ->
-      Dust.Protocol.Glob.match?(compiled, path_segments)
-    end)
-    |> Enum.map(fn {_store, _compiled, _pattern, pid, ref, max, on_resync, mode} ->
-      {pid, ref, max, on_resync, mode}
-    end)
+      _ ->
+        []
+    end
   end
 end

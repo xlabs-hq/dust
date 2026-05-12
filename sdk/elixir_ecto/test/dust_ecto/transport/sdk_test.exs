@@ -26,19 +26,19 @@ defmodule DustEcto.Transport.SDKTest do
 
   describe "get/2 + exists?/2" do
     test "get returns the entry shape for a leaf" do
-      :ok = Dust.SyncEngine.seed_entry(@store, "users.alice.name", "Alice", "string")
+      :ok = Dust.SyncEngine.seed_entry(@store, "users/alice/name", "Alice", "string")
 
-      assert {:ok, entry} = SDK.get(@store, "users.alice.name")
-      assert entry.path == "users.alice.name"
+      assert {:ok, entry} = SDK.get(@store, "users/alice/name")
+      assert entry.path == "users/alice/name"
       assert entry.value == "Alice"
       assert entry.type == "string"
     end
 
     test "get falls back to subtree assembly for an interior path" do
-      :ok = Dust.SyncEngine.seed_entry(@store, "links.foo.title", "Foo", "string")
-      :ok = Dust.SyncEngine.seed_entry(@store, "links.foo.url", "u", "string")
+      :ok = Dust.SyncEngine.seed_entry(@store, "links/foo/title", "Foo", "string")
+      :ok = Dust.SyncEngine.seed_entry(@store, "links/foo/url", "u", "string")
 
-      assert {:ok, entry} = SDK.get(@store, "links.foo")
+      assert {:ok, entry} = SDK.get(@store, "links/foo")
       assert entry.value == %{"title" => "Foo", "url" => "u"}
       assert entry.type == "map"
     end

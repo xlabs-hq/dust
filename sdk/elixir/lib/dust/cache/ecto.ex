@@ -64,7 +64,7 @@ if Code.ensure_loaded?(Ecto.Query) do
 
     @impl Dust.Cache
     def read_all(repo, store, pattern) do
-      compiled = Dust.Protocol.Glob.compile(pattern)
+      {:ok, compiled} = Dust.Protocol.Glob.compile(pattern)
 
       query =
         from(c in CacheEntry,
@@ -73,10 +73,15 @@ if Code.ensure_loaded?(Ecto.Query) do
         )
 
       repo.all(query)
-      |> Enum.filter(fn {path, _} ->
-        Dust.Protocol.Glob.match?(compiled, String.split(path, "."))
-      end)
+      |> Enum.filter(fn {path, _} -> path_matches?(path, compiled) end)
       |> Enum.map(fn {path, json} -> {path, Jason.decode!(json)} end)
+    end
+
+    defp path_matches?(path, compiled) do
+      case Dust.Protocol.Path.parse_rendered(path) do
+        {:ok, segs} -> Dust.Protocol.Glob.match?(compiled, segs)
+        _ -> false
+      end
     end
 
     @impl Dust.Cache
@@ -138,7 +143,7 @@ if Code.ensure_loaded?(Ecto.Query) do
 
     @impl Dust.Cache
     def delete_subtree(repo, store, path) do
-      prefix_pattern = like_escape(path) <> ".%"
+      prefix_pattern = like_escape(path) <> "/%"
 
       query =
         from(c in CacheEntry,
@@ -154,7 +159,7 @@ if Code.ensure_loaded?(Ecto.Query) do
 
     @impl Dust.Cache
     def read_subtree(repo, store, path) do
-      prefix_pattern = like_escape(path) <> ".%"
+      prefix_pattern = like_escape(path) <> "/%"
 
       query =
         from(c in CacheEntry,
@@ -222,7 +227,7 @@ if Code.ensure_loaded?(Ecto.Query) do
           # is sufficient — no glob post-filter and no chunked walk.
           range_query(repo, store, from_key, to_key, cursor, order, limit)
         else
-          compiled = Dust.Protocol.Glob.compile(pattern)
+          {:ok, compiled} = Dust.Protocol.Glob.compile(pattern)
           literal_like_prefix = literal_like_prefix_of(pattern)
 
           # Keep fetching chunks of raw rows until we have at least limit+1
@@ -285,9 +290,7 @@ if Code.ensure_loaded?(Ecto.Query) do
         if pattern == "**" do
           rows
         else
-          Enum.filter(rows, fn {path, _, _, _} ->
-            Dust.Protocol.Glob.match?(compiled, String.split(path, "."))
-          end)
+          Enum.filter(rows, fn {path, _, _, _} -> path_matches?(path, compiled) end)
         end
 
       all = acc ++ filtered
@@ -375,12 +378,13 @@ if Code.ensure_loaded?(Ecto.Query) do
       repo.all(query)
     end
 
-    # Return the literal prefix of a glob pattern — everything before the first
-    # segment containing `*` or `**` — with SQL LIKE metacharacters escaped
-    # and a trailing dot appended (if non-empty). Returns "" when the pattern
-    # starts with a wildcard.
+    # Return the literal prefix of a (canonical, slash-rendered) glob
+    # pattern — everything before the first segment containing `*` or
+    # `**` — with SQL LIKE metacharacters escaped and a trailing slash
+    # appended (if non-empty). Returns "" when the pattern starts with
+    # a wildcard.
     defp literal_like_prefix_of(pattern) do
-      segments = String.split(pattern, ".")
+      segments = String.split(pattern, "/")
 
       literal =
         Enum.take_while(segments, fn seg ->
@@ -389,7 +393,7 @@ if Code.ensure_loaded?(Ecto.Query) do
 
       case literal do
         [] -> ""
-        segs -> (Enum.join(segs, ".") <> ".") |> escape_like()
+        segs -> (Enum.join(segs, "/") <> "/") |> escape_like()
       end
     end
 
@@ -420,30 +424,30 @@ if Code.ensure_loaded?(Ecto.Query) do
     defp literal_prefix_of("**"), do: ""
 
     defp literal_prefix_of(pattern) do
-      case String.split(pattern, ".**", parts: 2) do
+      case String.split(pattern, "/**", parts: 2) do
         [prefix, ""] ->
           prefix
 
         _ ->
           raise ArgumentError,
-                "select: :prefixes requires pattern ending in .** or ** (got #{inspect(pattern)})"
+                "select: :prefixes requires pattern ending in /** or ** (got #{inspect(pattern)})"
       end
     end
 
     defp extract_prefix(path, "") do
-      case String.split(path, ".", parts: 2) do
+      case String.split(path, "/", parts: 2) do
         [seg | _] -> seg
         [] -> nil
       end
     end
 
     defp extract_prefix(path, literal) do
-      prefix_with_dot = literal <> "."
+      prefix_with_slash = literal <> "/"
 
-      if String.starts_with?(path, prefix_with_dot) do
-        rest = String.replace_prefix(path, prefix_with_dot, "")
-        [next_seg | _] = String.split(rest, ".", parts: 2)
-        literal <> "." <> next_seg
+      if String.starts_with?(path, prefix_with_slash) do
+        rest = String.replace_prefix(path, prefix_with_slash, "")
+        [next_seg | _] = String.split(rest, "/", parts: 2)
+        literal <> "/" <> next_seg
       end
     end
 

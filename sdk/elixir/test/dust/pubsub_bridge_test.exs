@@ -22,13 +22,13 @@ defmodule Dust.PubSubBridgeTest do
   test "events broadcast to PubSub topic" do
     Phoenix.PubSub.subscribe(Dust.TestPubSub, "dust:test/store")
 
-    Dust.Testing.emit("test/store", "posts.hello",
+    Dust.Testing.emit("test/store", "posts/hello",
       op: :set,
       value: %{"title" => "Hello"}
     )
 
     assert_receive {:dust_event, event}, 500
-    assert event.path == "posts.hello"
+    assert event.path == "posts/hello"
     assert event.value == %{"title" => "Hello"}
   end
 
@@ -44,7 +44,7 @@ defmodule Dust.PubSubBridgeTest do
 
   test "unsubscribed processes do not receive events" do
     # Don't subscribe — just emit and verify nothing arrives
-    Dust.Testing.emit("test/store", "posts.hello",
+    Dust.Testing.emit("test/store", "posts/hello",
       op: :set,
       value: "val"
     )

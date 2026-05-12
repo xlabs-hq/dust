@@ -4,7 +4,7 @@ defmodule Dust.SubscriberTest do
   defmodule TestSubscriber do
     use Dust.Subscriber,
       store: "test/subscriber",
-      pattern: "posts.*"
+      pattern: "posts/*"
 
     @impl true
     def handle_event(event) do
@@ -48,7 +48,7 @@ defmodule Dust.SubscriberTest do
 
   test "subscriber module declares store and pattern" do
     assert TestSubscriber.__dust_store__() == "test/subscriber"
-    assert TestSubscriber.__dust_pattern__() == "posts.*"
+    assert TestSubscriber.__dust_pattern__() == "posts/*"
   end
 
   test "subscriber module declares max_queue_size with default" do
@@ -61,7 +61,7 @@ defmodule Dust.SubscriberTest do
 
   test "subscriber is called when matching server event arrives" do
     Dust.SyncEngine.handle_server_event("test/subscriber", %{
-      "path" => "posts.hello",
+      "path" => "posts/hello",
       "op" => "set",
       "value" => %{"title" => "Hello"},
       "store_seq" => 1,
@@ -75,7 +75,7 @@ defmodule Dust.SubscriberTest do
     events = Agent.get(:subscriber_test_collector, & &1)
     assert length(events) == 1
     [event] = events
-    assert event.path == "posts.hello"
+    assert event.path == "posts/hello"
     assert event.op == :set
     assert event.value == %{"title" => "Hello"}
     assert event.source == :server
@@ -84,7 +84,7 @@ defmodule Dust.SubscriberTest do
 
   test "subscriber is NOT called for non-matching paths" do
     Dust.SyncEngine.handle_server_event("test/subscriber", %{
-      "path" => "config.x",
+      "path" => "config/x",
       "op" => "set",
       "value" => "val",
       "store_seq" => 2,
@@ -101,7 +101,7 @@ defmodule Dust.SubscriberTest do
   test "subscriber handles multiple matching events" do
     for i <- 1..3 do
       Dust.SyncEngine.handle_server_event("test/subscriber", %{
-        "path" => "posts.post_#{i}",
+        "path" => "posts/post_#{i}",
         "op" => "set",
         "value" => "content_#{i}",
         "store_seq" => i,
@@ -115,12 +115,12 @@ defmodule Dust.SubscriberTest do
     events = Agent.get(:subscriber_test_collector, & &1)
     assert length(events) == 3
     paths = Enum.map(events, & &1.path) |> Enum.sort()
-    assert paths == ["posts.post_1", "posts.post_2", "posts.post_3"]
+    assert paths == ["posts/post_1", "posts/post_2", "posts/post_3"]
   end
 
   test "subscriber receives delete events" do
     Dust.SyncEngine.handle_server_event("test/subscriber", %{
-      "path" => "posts.removed",
+      "path" => "posts/removed",
       "op" => "delete",
       "value" => nil,
       "store_seq" => 10,
@@ -134,7 +134,7 @@ defmodule Dust.SubscriberTest do
     assert length(events) == 1
     [event] = events
     assert event.op == :delete
-    assert event.path == "posts.removed"
+    assert event.path == "posts/removed"
   end
 
   test "__dust_register__ can be called manually" do

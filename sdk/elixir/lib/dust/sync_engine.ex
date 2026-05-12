@@ -25,26 +25,61 @@ defmodule Dust.SyncEngine do
 
   def via(store), do: {:via, Registry, {Dust.SyncEngineRegistry, store}}
 
-  # Normalize a user-supplied path (slashes → dots, validate non-empty
-  # segments). Raises ArgumentError on invalid input — paths that
-  # can't be normalised are programmer errors, not runtime conditions.
-  defp norm!(path) do
-    case Dust.Protocol.Path.normalize(path) do
-      {:ok, p} ->
-        p
-
-      {:error, reason} ->
-        raise ArgumentError, "invalid path #{inspect(path)}: #{reason}"
+  # Normalize a user-supplied path to canonical slash-rendered form.
+  # Accepts segment lists, canonical slash strings, and legacy dotted
+  # strings; returns the slash-rendered form used everywhere downstream
+  # (cache keys, wire protocol). Raises ArgumentError on invalid input —
+  # paths that can't be normalised are programmer errors, not runtime
+  # conditions.
+  defp norm!(path) when is_list(path) do
+    case Dust.Protocol.Path.render(path) do
+      {:ok, p} -> p
+      {:error, reason} -> raise ArgumentError, "invalid path #{inspect(path)}: #{reason}"
     end
   end
 
-  defp norm_pattern!(pattern) do
-    case Dust.Protocol.Path.normalize_pattern(pattern) do
-      {:ok, p} ->
-        p
+  defp norm!(path) when is_binary(path) do
+    cond do
+      String.contains?(path, "/") ->
+        case Dust.Protocol.Path.normalize_rendered(path) do
+          {:ok, p} -> p
+          {:error, reason} -> raise ArgumentError, "invalid path #{inspect(path)}: #{reason}"
+        end
 
-      {:error, reason} ->
-        raise ArgumentError, "invalid pattern #{inspect(pattern)}: #{reason}"
+      true ->
+        case Dust.Protocol.Path.LegacyDot.parse(path) do
+          {:ok, segs} ->
+            case Dust.Protocol.Path.render(segs) do
+              {:ok, p} -> p
+              {:error, reason} -> raise ArgumentError, "invalid path #{inspect(path)}: #{reason}"
+            end
+
+          {:error, reason} ->
+            raise ArgumentError, "invalid path #{inspect(path)}: #{reason}"
+        end
+    end
+  end
+
+  # Wildcards in patterns survive both normalisation routes.
+  defp norm_pattern!("**"), do: "**"
+  defp norm_pattern!(pattern) when is_list(pattern), do: norm!(pattern)
+
+  defp norm_pattern!(pattern) when is_binary(pattern) do
+    cond do
+      String.contains?(pattern, "/") ->
+        case Dust.Protocol.Glob.compile(pattern) do
+          {:ok, _} -> pattern
+          {:error, reason} -> raise ArgumentError, "invalid pattern #{inspect(pattern)}: #{reason}"
+        end
+
+      true ->
+        case Dust.Protocol.Path.LegacyDot.normalize_pattern(pattern) do
+          {:ok, dotted} ->
+            dotted |> String.split(".") |> Enum.join("/")
+
+          {:error, reason} ->
+            raise ArgumentError, "invalid pattern #{inspect(pattern)}: #{reason}"
+        end
     end
   end
 
@@ -167,7 +202,7 @@ defmodule Dust.SyncEngine do
 
   @doc "Write directly to cache without the write pipeline. For test seeding only."
   def seed_entry(store, path, value, type) do
-    GenServer.call(via(store), {:seed_entry, path, value, type})
+    GenServer.call(via(store), {:seed_entry, norm!(path), value, type})
   end
 
   @doc "Update last_store_seq in state. For test harness only."
@@ -613,8 +648,11 @@ defmodule Dust.SyncEngine do
         _ = state.cache.delete_subtree(state.cache_target, state.store, path)
 
       :merge when is_map(value) ->
+        {:ok, prefix_segs} = Dust.Protocol.Path.parse_rendered(path)
+
         Enum.each(value, fn {key, v} ->
-          child_path = "#{path}.#{key}"
+          {:ok, child_segs} = Dust.Protocol.Path.child(prefix_segs, to_string(key))
+          {:ok, child_path} = Dust.Protocol.Path.render(child_segs)
           apply_set_to_cache(state, child_path, v, detect_type(v), store_seq)
         end)
 
@@ -810,9 +848,11 @@ defmodule Dust.SyncEngine do
 
   defp do_merge(path, map, from, state) do
     client_op_id = generate_op_id()
+    {:ok, prefix_segs} = Dust.Protocol.Path.parse_rendered(path)
 
     Enum.each(map, fn {key, value} ->
-      child_path = "#{path}.#{key}"
+      {:ok, child_segs} = Dust.Protocol.Path.child(prefix_segs, to_string(key))
+      {:ok, child_path} = Dust.Protocol.Path.render(child_segs)
       state.cache.write(state.cache_target, state.store, child_path, value, detect_type(value), 0)
     end)
 
@@ -922,7 +962,7 @@ defmodule Dust.SyncEngine do
   end
 
   defp valid_prefix_pattern?("**"), do: true
-  defp valid_prefix_pattern?(pattern), do: String.ends_with?(pattern, ".**")
+  defp valid_prefix_pattern?(pattern), do: String.ends_with?(pattern, "/**")
 
   defp wrap_items(items, :entries) do
     Enum.map(items, fn {path, value, type, seq} ->
@@ -965,17 +1005,18 @@ defmodule Dust.SyncEngine do
         nil
 
       rows ->
-        prefix = path <> "."
+        {:ok, prefix_segments} = Dust.Protocol.Path.parse_rendered(path)
+        prefix_len = length(prefix_segments)
 
         Enum.reduce(rows, %{}, fn {p, value, _type, _seq}, acc ->
-          relative = String.replace_prefix(p, prefix, "")
-          if relative == p do
-            # Exact-path row (shouldn't happen since :miss preceded us, but
-            # safe to skip if it does).
-            acc
-          else
-            keys = String.split(relative, ".")
-            put_nested(acc, keys, unwrap_value(value, state))
+          case Dust.Protocol.Path.parse_rendered(p) do
+            {:ok, entry_segments} when length(entry_segments) > prefix_len ->
+              keys = Enum.drop(entry_segments, prefix_len)
+              put_nested(acc, keys, unwrap_value(value, state))
+
+            _ ->
+              # Exact-path row or unparsable — skip.
+              acc
           end
         end)
     end
@@ -1038,8 +1079,11 @@ defmodule Dust.SyncEngine do
   end
 
   defp flatten_into_cache(state, base_path, map, seq) when is_map(map) do
+    {:ok, base_segs} = Dust.Protocol.Path.parse_rendered(base_path)
+
     Enum.each(map, fn {key, value} ->
-      child_path = "#{base_path}.#{key}"
+      {:ok, child_segs} = Dust.Protocol.Path.child(base_segs, to_string(key))
+      {:ok, child_path} = Dust.Protocol.Path.render(child_segs)
 
       if is_map(value) and not typed_map?(value) do
         flatten_into_cache(state, child_path, value, seq)

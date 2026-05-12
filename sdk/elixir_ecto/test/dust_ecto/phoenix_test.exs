@@ -38,13 +38,13 @@ defmodule DustEcto.PhoenixTest do
     } do
       :ok = DustEcto.Phoenix.subscribe_to_pubsub(Link, pubsub, topic)
 
-      :ok = Dust.SyncEngine.seed_entry(@store, "links.foo.title", "Foo", "string")
-      :ok = Dust.SyncEngine.seed_entry(@store, "links.foo.url", "https://foo", "string")
+      :ok = Dust.SyncEngine.seed_entry(@store, "links/foo/title", "Foo", "string")
+      :ok = Dust.SyncEngine.seed_entry(@store, "links/foo/url", "https://foo", "string")
 
       Dust.SyncEngine.handle_server_event(@store, %{
         "store_seq" => 5,
         "op" => "set",
-        "path" => "links.foo.title",
+        "path" => "links/foo/title",
         "value" => "Foo",
         "device_id" => "ext",
         "client_op_id" => "p-1"
@@ -62,7 +62,7 @@ defmodule DustEcto.PhoenixTest do
       Dust.SyncEngine.handle_server_event(@store, %{
         "store_seq" => 6,
         "op" => "delete",
-        "path" => "links.foo",
+        "path" => "links/foo",
         "value" => nil,
         "device_id" => "ext",
         "client_op_id" => "p-2"
@@ -105,13 +105,13 @@ defmodule DustEcto.PhoenixTest do
       assert_receive {:ready, 1}, 200
       assert_receive {:ready, 2}, 200
 
-      :ok = Dust.SyncEngine.seed_entry(@store, "links.fan.title", "Fan", "string")
-      :ok = Dust.SyncEngine.seed_entry(@store, "links.fan.url", "https://fan", "string")
+      :ok = Dust.SyncEngine.seed_entry(@store, "links/fan/title", "Fan", "string")
+      :ok = Dust.SyncEngine.seed_entry(@store, "links/fan/url", "https://fan", "string")
 
       Dust.SyncEngine.handle_server_event(@store, %{
         "store_seq" => 10,
         "op" => "set",
-        "path" => "links.fan.title",
+        "path" => "links/fan/title",
         "value" => "Fan",
         "device_id" => "ext",
         "client_op_id" => "fan-1"

@@ -29,8 +29,8 @@ defmodule Dust.InstanceTest do
 
   test "facade module delegates merge" do
     :ok = TestDust.merge("test/instance", "settings", %{"theme" => "dark", "locale" => "en"})
-    assert {:ok, "dark"} = TestDust.get("test/instance", "settings.theme")
-    assert {:ok, "en"} = TestDust.get("test/instance", "settings.locale")
+    assert {:ok, "dark"} = TestDust.get("test/instance", "settings/theme")
+    assert {:ok, "en"} = TestDust.get("test/instance", "settings/locale")
   end
 
   test "facade module delegates increment" do
@@ -52,19 +52,19 @@ defmodule Dust.InstanceTest do
   end
 
   test "facade module delegates enum" do
-    :ok = TestDust.put("test/instance", "posts.a", "1")
-    :ok = TestDust.put("test/instance", "posts.b", "2")
-    :ok = TestDust.put("test/instance", "config.x", "3")
+    :ok = TestDust.put("test/instance", "posts/a", "1")
+    :ok = TestDust.put("test/instance", "posts/b", "2")
+    :ok = TestDust.put("test/instance", "config/x", "3")
 
-    results = TestDust.enum("test/instance", "posts.*")
+    results = TestDust.enum("test/instance", "posts/*")
     assert length(results) == 2
   end
 
   test "facade module delegates on (callbacks)" do
     test_pid = self()
     TestDust.on("test/instance", "events.*", fn event -> send(test_pid, {:event, event}) end)
-    TestDust.put("test/instance", "events.click", "data")
-    assert_receive {:event, %{path: "events.click", committed: false, source: :local}}, 500
+    TestDust.put("test/instance", "events/click", "data")
+    assert_receive {:event, %{path: "events/click", committed: false, source: :local}}, 500
   end
 
   test "facade module exposes status" do

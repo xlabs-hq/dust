@@ -17,38 +17,38 @@ defmodule Dust.TestingTest do
 
   test "seed populates cache for get" do
     Dust.Testing.seed("test/store", %{
-      "posts.hello" => %{"title" => "Hello"},
-      "posts.goodbye" => %{"title" => "Goodbye"}
+      "posts/hello" => %{"title" => "Hello"},
+      "posts/goodbye" => %{"title" => "Goodbye"}
     })
 
-    assert {:ok, %{"title" => "Hello"}} = TestDust.get("test/store", "posts.hello")
-    assert {:ok, %{"title" => "Goodbye"}} = TestDust.get("test/store", "posts.goodbye")
+    assert {:ok, %{"title" => "Hello"}} = TestDust.get("test/store", "posts/hello")
+    assert {:ok, %{"title" => "Goodbye"}} = TestDust.get("test/store", "posts/goodbye")
   end
 
   test "seed populates cache for enum" do
     Dust.Testing.seed("test/store", %{
-      "posts.a" => "1",
-      "posts.b" => "2",
-      "config.x" => "3"
+      "posts/a" => "1",
+      "posts/b" => "2",
+      "config/x" => "3"
     })
 
-    results = TestDust.enum("test/store", "posts.*")
+    results = TestDust.enum("test/store", "posts/*")
     assert length(results) == 2
   end
 
   test "emit triggers subscriber callbacks synchronously" do
     test_pid = self()
 
-    TestDust.on("test/store", "posts.*", fn event ->
+    TestDust.on("test/store", "posts/*", fn event ->
       send(test_pid, {:event_received, event})
     end)
 
-    Dust.Testing.emit("test/store", "posts.hello",
+    Dust.Testing.emit("test/store", "posts/hello",
       op: :set,
       value: %{"title" => "New"}
     )
 
-    assert_receive {:event_received, %{path: "posts.hello", value: %{"title" => "New"}}}, 100
+    assert_receive {:event_received, %{path: "posts/hello", value: %{"title" => "New"}}}, 100
   end
 
   test "emit updates cache state" do
@@ -69,14 +69,14 @@ defmodule Dust.TestingTest do
   end
 
   test "build_event creates a properly shaped event map" do
-    event = Dust.Testing.build_event("test/store", "posts.hello",
+    event = Dust.Testing.build_event("test/store", "posts/hello",
       op: :set,
       value: %{"title" => "Hello"},
       store_seq: 5
     )
 
     assert event.store == "test/store"
-    assert event.path == "posts.hello"
+    assert event.path == "posts/hello"
     assert event.op == :set
     assert event.value == %{"title" => "Hello"}
     assert event.store_seq == 5

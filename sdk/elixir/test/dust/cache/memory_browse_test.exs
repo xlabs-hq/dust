@@ -7,7 +7,7 @@ defmodule Dust.Cache.MemoryBrowseTest do
 
     # Seed 10 entries
     for i <- 1..10 do
-      path = "items.item_#{String.pad_leading(to_string(i), 2, "0")}"
+      path = "items/item_#{String.pad_leading(to_string(i), 2, "0")}"
       Dust.Cache.Memory.write(pid, store, path, "value_#{i}", "string", i)
     end
 
@@ -29,7 +29,7 @@ defmodule Dust.Cache.MemoryBrowseTest do
 
     # Entries are {path, value, type, seq} tuples sorted by path
     [{path1, _, _, _} | _] = entries
-    assert path1 == "items.item_01"
+    assert path1 == "items/item_01"
   end
 
   test "browse/3 paginates through all entries", %{pid: pid, store: store} do
@@ -50,9 +50,9 @@ defmodule Dust.Cache.MemoryBrowseTest do
 
   test "browse/3 filters by glob pattern", %{pid: pid, store: store} do
     # Add some entries outside the pattern
-    Dust.Cache.Memory.write(pid, store, "other.thing", "x", "string", 11)
+    Dust.Cache.Memory.write(pid, store, "other/thing", "x", "string", 11)
 
-    {entries, _} = Dust.Cache.Memory.browse(pid, store, pattern: "items.*", limit: 100)
+    {entries, _} = Dust.Cache.Memory.browse(pid, store, pattern: "items/*", limit: 100)
     assert length(entries) == 10
   end
 

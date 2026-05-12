@@ -9,7 +9,7 @@ defmodule Dust.ActivityBufferTest do
 
   test "append and recent", %{buf: buf} do
     Dust.ActivityBuffer.append(buf, "test/store", %{
-      path: "posts.hello",
+      path: "posts/hello",
       op: :set,
       source: :server,
       seq: 1
@@ -17,7 +17,7 @@ defmodule Dust.ActivityBufferTest do
 
     entries = Dust.ActivityBuffer.recent(buf, "test/store")
     assert length(entries) == 1
-    assert hd(entries).path == "posts.hello"
+    assert hd(entries).path == "posts/hello"
     assert hd(entries).op == :set
     assert %DateTime{} = hd(entries).timestamp
   end

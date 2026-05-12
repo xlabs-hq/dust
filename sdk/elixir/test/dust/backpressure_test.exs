@@ -46,7 +46,7 @@ defmodule Dust.BackpressureTest do
     for i <- 1..10 do
       SyncEngine.handle_server_event(store, %{
         "op" => "set",
-        "path" => "items.item_#{i}",
+        "path" => "items/item_#{i}",
         "value" => "val_#{i}",
         "store_seq" => i,
         "client_op_id" => nil,
@@ -63,7 +63,7 @@ defmodule Dust.BackpressureTest do
     for i <- 11..15 do
       SyncEngine.handle_server_event(store, %{
         "op" => "set",
-        "path" => "items.item_#{i}",
+        "path" => "items/item_#{i}",
         "value" => "val_#{i}",
         "store_seq" => i,
         "client_op_id" => nil,
@@ -98,7 +98,7 @@ defmodule Dust.BackpressureTest do
     for i <- 1..3 do
       SyncEngine.handle_server_event(store, %{
         "op" => "set",
-        "path" => "items.item_#{i}",
+        "path" => "items/item_#{i}",
         "value" => "val_#{i}",
         "store_seq" => i,
         "client_op_id" => nil,
@@ -153,7 +153,7 @@ defmodule Dust.BackpressureTest do
     for i <- 1..8 do
       SyncEngine.handle_server_event(store, %{
         "op" => "set",
-        "path" => "items.item_#{i}",
+        "path" => "items/item_#{i}",
         "value" => "val_#{i}",
         "store_seq" => i,
         "client_op_id" => nil,
@@ -198,7 +198,7 @@ defmodule Dust.BackpressureTest do
 
     # Flood with local writes instead of server events
     for i <- 1..10 do
-      SyncEngine.put(store, "items.item_#{i}", "val_#{i}")
+      SyncEngine.put(store, "items/item_#{i}", "val_#{i}")
     end
 
     assert_receive {:resync_required, %{error: :resync_required, ref: ^ref}}, 2_000

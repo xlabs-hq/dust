@@ -39,10 +39,10 @@ defmodule DustEcto.RepoTest do
         # Two records: foo and bar.
         Req.Test.json(conn, %{
           "items" => [
-            %{"path" => "links.foo.title", "value" => "Foo", "type" => "string", "revision" => 1},
-            %{"path" => "links.foo.url", "value" => "https://foo", "type" => "string", "revision" => 2},
-            %{"path" => "links.bar.title", "value" => "Bar", "type" => "string", "revision" => 3},
-            %{"path" => "links.bar.url", "value" => "https://bar", "type" => "string", "revision" => 4}
+            %{"path" => "links/foo/title", "value" => "Foo", "type" => "string", "revision" => 1},
+            %{"path" => "links/foo/url", "value" => "https://foo", "type" => "string", "revision" => 2},
+            %{"path" => "links/bar/title", "value" => "Bar", "type" => "string", "revision" => 3},
+            %{"path" => "links/bar/url", "value" => "https://bar", "type" => "string", "revision" => 4}
           ],
           "next_cursor" => nil
         })
@@ -60,9 +60,9 @@ defmodule DustEcto.RepoTest do
         # foo has both required fields; bar is missing :url.
         Req.Test.json(conn, %{
           "items" => [
-            %{"path" => "links.foo.title", "value" => "Foo", "type" => "string", "revision" => 1},
-            %{"path" => "links.foo.url", "value" => "https://foo", "type" => "string", "revision" => 2},
-            %{"path" => "links.bar.title", "value" => "Bar", "type" => "string", "revision" => 3}
+            %{"path" => "links/foo/title", "value" => "Foo", "type" => "string", "revision" => 1},
+            %{"path" => "links/foo/url", "value" => "https://foo", "type" => "string", "revision" => 2},
+            %{"path" => "links/bar/title", "value" => "Bar", "type" => "string", "revision" => 3}
           ],
           "next_cursor" => nil
         })
@@ -90,17 +90,17 @@ defmodule DustEcto.RepoTest do
             1 ->
               %{
                 "items" => [
-                  %{"path" => "links.a.title", "value" => "A", "type" => "string", "revision" => 1},
-                  %{"path" => "links.a.url", "value" => "u", "type" => "string", "revision" => 1}
+                  %{"path" => "links/a/title", "value" => "A", "type" => "string", "revision" => 1},
+                  %{"path" => "links/a/url", "value" => "u", "type" => "string", "revision" => 1}
                 ],
-                "next_cursor" => "links.a.url"
+                "next_cursor" => "links/a/url"
               }
 
             _ ->
               %{
                 "items" => [
-                  %{"path" => "links.b.title", "value" => "B", "type" => "string", "revision" => 2},
-                  %{"path" => "links.b.url", "value" => "u", "type" => "string", "revision" => 2}
+                  %{"path" => "links/b/title", "value" => "B", "type" => "string", "revision" => 2},
+                  %{"path" => "links/b/url", "value" => "u", "type" => "string", "revision" => 2}
                 ],
                 "next_cursor" => nil
               }
@@ -119,7 +119,7 @@ defmodule DustEcto.RepoTest do
     test "returns an assembled record on hit" do
       stub(fn conn ->
         Req.Test.json(conn, %{
-          "path" => "links.foo",
+          "path" => "links/foo",
           "value" => %{"title" => "Foo", "url" => "https://foo", "note" => nil},
           "type" => "map",
           "revision" => 5
@@ -257,7 +257,7 @@ defmodule DustEcto.RepoTest do
       stub(fn conn ->
         Req.Test.json(conn, %{
           "items" => [
-            %{"path" => "reading.links.foo.title", "value" => "Foo", "type" => "string", "revision" => 1}
+            %{"path" => "reading/links/foo/title", "value" => "Foo", "type" => "string", "revision" => 1}
           ],
           "next_cursor" => nil
         })
@@ -273,8 +273,8 @@ defmodule DustEcto.RepoTest do
       stub(fn conn ->
         Req.Test.json(conn, %{
           "items" => [
-            %{"path" => "things.foo.meta.a", "value" => 1, "type" => "integer", "revision" => 1},
-            %{"path" => "things.foo.meta.b", "value" => 2, "type" => "integer", "revision" => 2}
+            %{"path" => "things/foo/meta/a", "value" => 1, "type" => "integer", "revision" => 1},
+            %{"path" => "things/foo/meta/b", "value" => 2, "type" => "integer", "revision" => 2}
           ],
           "next_cursor" => nil
         })
@@ -305,16 +305,16 @@ defmodule DustEcto.RepoTest do
           if n == 1 do
             %{
               "items" => [
-                %{"path" => "links.a.title", "value" => "A", "type" => "string", "revision" => 1},
-                %{"path" => "links.a.url", "value" => "u", "type" => "string", "revision" => 1}
+                %{"path" => "links/a/title", "value" => "A", "type" => "string", "revision" => 1},
+                %{"path" => "links/a/url", "value" => "u", "type" => "string", "revision" => 1}
               ],
-              "next_cursor" => "links.a.url"
+              "next_cursor" => "links/a/url"
             }
           else
             %{
               "items" => [
-                %{"path" => "links.b.title", "value" => "B", "type" => "string", "revision" => 2},
-                %{"path" => "links.b.url", "value" => "u", "type" => "string", "revision" => 2}
+                %{"path" => "links/b/title", "value" => "B", "type" => "string", "revision" => 2},
+                %{"path" => "links/b/url", "value" => "u", "type" => "string", "revision" => 2}
               ],
               "next_cursor" => nil
             }

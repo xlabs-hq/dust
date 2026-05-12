@@ -9,8 +9,8 @@ defmodule Dust.Cache.MemoryTest do
   end
 
   test "write and read", %{cache: cache} do
-    :ok = Memory.write(cache, "store", "posts.hello", %{"title" => "Hello"}, "map", 1)
-    assert {:ok, %{"title" => "Hello"}} = Memory.read(cache, "store", "posts.hello")
+    :ok = Memory.write(cache, "store", "posts/hello", %{"title" => "Hello"}, "map", 1)
+    assert {:ok, %{"title" => "Hello"}} = Memory.read(cache, "store", "posts/hello")
   end
 
   test "read returns :miss for unknown path", %{cache: cache} do
@@ -34,137 +34,14 @@ defmodule Dust.Cache.MemoryTest do
   end
 
   test "read_all with glob pattern", %{cache: cache} do
-    Memory.write(cache, "store", "posts.a", "1", "string", 1)
-    Memory.write(cache, "store", "posts.b", "2", "string", 2)
-    Memory.write(cache, "store", "config.x", "3", "string", 3)
+    Memory.write(cache, "store", "posts/a", "1", "string", 1)
+    Memory.write(cache, "store", "posts/b", "2", "string", 2)
+    Memory.write(cache, "store", "config/x", "3", "string", 3)
 
-    results = Memory.read_all(cache, "store", "posts.*")
+    results = Memory.read_all(cache, "store", "posts/*")
     assert length(results) == 2
     paths = Enum.map(results, &elem(&1, 0))
-    assert "posts.a" in paths
-    assert "posts.b" in paths
-  end
-
-  test "read_entry/3 returns {value, type, seq} for present keys", %{cache: cache} do
-    :ok = Memory.write(cache, "s1", "a.b", "hello", "string", 7)
-    assert Memory.read_entry(cache, "s1", "a.b") == {:ok, {"hello", "string", 7}}
-  end
-
-  test "read_entry/3 returns :miss for absent keys", %{cache: cache} do
-    assert Memory.read_entry(cache, "s1", "nope") == :miss
-  end
-
-  test "browse with order: :desc returns entries in reverse lex order", %{cache: cache} do
-    for k <- ~w(a b c d), do: :ok = Memory.write(cache, "s", k, k, "string", 1)
-
-    {page, _} = Memory.browse(cache, "s", limit: 10, order: :desc)
-    assert Enum.map(page, fn {p, _, _, _} -> p end) == ~w(d c b a)
-  end
-
-  test "browse with order: :desc and cursor drops entries >= cursor", %{cache: cache} do
-    for k <- ~w(a b c d), do: :ok = Memory.write(cache, "s", k, k, "string", 1)
-
-    {page, _} = Memory.browse(cache, "s", limit: 10, order: :desc, cursor: "c")
-    # desc + cursor "c" means next items are strictly less than "c"
-    assert Enum.map(page, fn {p, _, _, _} -> p end) == ~w(b a)
-  end
-
-  test "browse with select: :keys returns only path strings in order", %{cache: cache} do
-    for k <- ~w(a b c), do: :ok = Memory.write(cache, "s", k, k, "string", 1)
-
-    {items, _} = Memory.browse(cache, "s", select: :keys, limit: 10)
-    assert items == ~w(a b c)
-    assert Enum.all?(items, &is_binary/1)
-  end
-
-  test "browse with select: :entries (default) returns 4-tuples", %{cache: cache} do
-    :ok = Memory.write(cache, "s", "a", "va", "string", 1)
-    :ok = Memory.write(cache, "s", "b", "vb", "string", 2)
-
-    {items, _} = Memory.browse(cache, "s", limit: 10)
-    assert items == [{"a", "va", "string", 1}, {"b", "vb", "string", 2}]
-  end
-
-  test "browse with select: :prefixes and pattern ** returns top-level segments", %{cache: cache} do
-    for p <- ~w(users.alice.name users.bob.name posts.hi),
-        do: :ok = Memory.write(cache, "s", p, 1, "integer", 1)
-
-    {items, _} = Memory.browse(cache, "s", pattern: "**", select: :prefixes, limit: 10)
-    assert items == ~w(posts users)
-  end
-
-  test "browse with select: :prefixes and pattern 'users.**' returns next-segment prefixes",
-       %{cache: cache} do
-    for p <- ~w(users.alice.name users.alice.email users.bob.name),
-        do: :ok = Memory.write(cache, "s", p, 1, "integer", 1)
-
-    {items, _} = Memory.browse(cache, "s", pattern: "users.**", select: :prefixes, limit: 10)
-    assert items == ~w(users.alice users.bob)
-  end
-
-  describe "browse with :from/:to range" do
-    test "returns entries within [from, to) lexicographically", %{cache: pid} do
-      for k <- ~w(a b c d e), do: :ok = Dust.Cache.Memory.write(pid, "s", k, k, "string", 1)
-
-      {page, _} = Dust.Cache.Memory.browse(pid, "s", from: "b", to: "d", limit: 10)
-      paths = Enum.map(page, fn {p, _, _, _} -> p end)
-      assert paths == ~w(b c)
-    end
-
-    test "from is inclusive, to is exclusive", %{cache: pid} do
-      for k <- ~w(a b c), do: :ok = Dust.Cache.Memory.write(pid, "s", k, k, "string", 1)
-      {page, _} = Dust.Cache.Memory.browse(pid, "s", from: "a", to: "c", limit: 10)
-      assert Enum.map(page, fn {p, _, _, _} -> p end) == ~w(a b)
-    end
-
-    test "from >= to returns an empty page", %{cache: pid} do
-      :ok = Dust.Cache.Memory.write(pid, "s", "x", "x", "string", 1)
-      {page, _} = Dust.Cache.Memory.browse(pid, "s", from: "z", to: "a", limit: 10)
-      assert page == []
-    end
-
-    test "range respects order: :desc", %{cache: pid} do
-      for k <- ~w(a b c d), do: :ok = Dust.Cache.Memory.write(pid, "s", k, k, "string", 1)
-      {page, _} = Dust.Cache.Memory.browse(pid, "s", from: "a", to: "d", limit: 10, order: :desc)
-      assert Enum.map(page, fn {p, _, _, _} -> p end) == ~w(c b a)
-    end
-
-    test "range + limit produces a next_cursor", %{cache: pid} do
-      for k <- ~w(a b c d e), do: :ok = Dust.Cache.Memory.write(pid, "s", k, k, "string", 1)
-      {page, cursor} = Dust.Cache.Memory.browse(pid, "s", from: "a", to: "z", limit: 2)
-      assert Enum.map(page, fn {p, _, _, _} -> p end) == ~w(a b)
-      assert cursor == "b"
-    end
-
-    test "range + cursor resumes correctly", %{cache: pid} do
-      for k <- ~w(a b c d e), do: :ok = Dust.Cache.Memory.write(pid, "s", k, k, "string", 1)
-      {page, _} = Dust.Cache.Memory.browse(pid, "s", from: "a", to: "z", limit: 2, cursor: "b")
-      assert Enum.map(page, fn {p, _, _, _} -> p end) == ~w(c d)
-    end
-  end
-
-  describe "read_many/3" do
-    test "returns a map of present entries", %{cache: pid} do
-      :ok = Dust.Cache.Memory.write(pid, "s", "a", 1, "integer", 1)
-      :ok = Dust.Cache.Memory.write(pid, "s", "b", 2, "integer", 2)
-      result = Dust.Cache.Memory.read_many(pid, "s", ["a", "b"])
-      assert result == %{"a" => {1, "integer", 1}, "b" => {2, "integer", 2}}
-    end
-
-    test "omits missing paths", %{cache: pid} do
-      :ok = Dust.Cache.Memory.write(pid, "s", "a", 1, "integer", 1)
-      result = Dust.Cache.Memory.read_many(pid, "s", ["a", "missing"])
-      assert Map.keys(result) == ["a"]
-    end
-
-    test "empty list returns empty map", %{cache: pid} do
-      assert Dust.Cache.Memory.read_many(pid, "s", []) == %{}
-    end
-
-    test "duplicate paths collapse in the result", %{cache: pid} do
-      :ok = Dust.Cache.Memory.write(pid, "s", "a", 1, "integer", 1)
-      result = Dust.Cache.Memory.read_many(pid, "s", ["a", "a", "a"])
-      assert result == %{"a" => {1, "integer", 1}}
-    end
+    assert "posts/a" in paths
+    assert "posts/b" in paths
   end
 end

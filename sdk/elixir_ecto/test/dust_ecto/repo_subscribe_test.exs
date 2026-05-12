@@ -31,15 +31,15 @@ defmodule DustEcto.RepoSubscribeTest do
 
       # Seed a complete record's leaves into cache so the subscribe
       # wrapper can reassemble the struct on demand.
-      :ok = Dust.SyncEngine.seed_entry(@store, "links.foo.title", "Foo", "string")
-      :ok = Dust.SyncEngine.seed_entry(@store, "links.foo.url", "https://foo", "string")
+      :ok = Dust.SyncEngine.seed_entry(@store, "links/foo/title", "Foo", "string")
+      :ok = Dust.SyncEngine.seed_entry(@store, "links/foo/url", "https://foo", "string")
 
       # Simulate an external server event that pulls the wrapper into
       # action.
       Dust.SyncEngine.handle_server_event(@store, %{
         "store_seq" => 5,
         "op" => "set",
-        "path" => "links.foo.title",
+        "path" => "links/foo/title",
         "value" => "Foo",
         "device_id" => "other-dev",
         "client_op_id" => "external-1"
@@ -55,7 +55,7 @@ defmodule DustEcto.RepoSubscribeTest do
       Dust.SyncEngine.handle_server_event(@store, %{
         "store_seq" => 7,
         "op" => "delete",
-        "path" => "links.foo",
+        "path" => "links/foo",
         "value" => nil,
         "device_id" => "other-dev",
         "client_op_id" => "external-2"
@@ -69,12 +69,12 @@ defmodule DustEcto.RepoSubscribeTest do
       {:ok, _ref} = Repo.subscribe(Link, fn evt -> send(test_pid, {:rec, evt}) end)
 
       # Seed only :title (missing required :url).
-      :ok = Dust.SyncEngine.seed_entry(@store, "links.bar.title", "Bar", "string")
+      :ok = Dust.SyncEngine.seed_entry(@store, "links/bar/title", "Bar", "string")
 
       Dust.SyncEngine.handle_server_event(@store, %{
         "store_seq" => 8,
         "op" => "set",
-        "path" => "links.bar.title",
+        "path" => "links/bar/title",
         "value" => "Bar",
         "device_id" => "other-dev",
         "client_op_id" => "external-3"
@@ -93,14 +93,14 @@ defmodule DustEcto.RepoSubscribeTest do
       Dust.SyncEngine.handle_server_event(@store, %{
         "store_seq" => 9,
         "op" => "set",
-        "path" => "links.foo.title",
+        "path" => "links/foo/title",
         "value" => "Foo",
         "device_id" => "other-dev",
         "client_op_id" => "external-4"
       })
 
       assert_receive {:raw,
-                      %{path: "links.foo.title", value: "Foo", store_seq: 9, committed: true}},
+                      %{path: "links/foo/title", value: "Foo", store_seq: 9, committed: true}},
                      500
     end
   end
@@ -113,12 +113,12 @@ defmodule DustEcto.RepoSubscribeTest do
       {:ok, _ref} =
         Repo.subscribe(DottedPrefixLink, fn evt -> send(test_pid, {:rec, evt}) end)
 
-      :ok = Dust.SyncEngine.seed_entry(@store, "reading.links.foo.title", "Foo", "string")
+      :ok = Dust.SyncEngine.seed_entry(@store, "reading/links/foo/title", "Foo", "string")
 
       Dust.SyncEngine.handle_server_event(@store, %{
         "store_seq" => 21,
         "op" => "set",
-        "path" => "reading.links.foo.title",
+        "path" => "reading/links/foo/title",
         "value" => "Foo",
         "device_id" => "other",
         "client_op_id" => "dp-1"
@@ -134,15 +134,15 @@ defmodule DustEcto.RepoSubscribeTest do
       {:ok, _ref} = Repo.subscribe(Link, fn evt -> send(test_pid, {:rec, evt}) end)
 
       # Record has all required fields seeded.
-      :ok = Dust.SyncEngine.seed_entry(@store, "links.foo.title", "Foo", "string")
-      :ok = Dust.SyncEngine.seed_entry(@store, "links.foo.url", "https://foo", "string")
-      :ok = Dust.SyncEngine.seed_entry(@store, "links.foo.note", "n", "string")
+      :ok = Dust.SyncEngine.seed_entry(@store, "links/foo/title", "Foo", "string")
+      :ok = Dust.SyncEngine.seed_entry(@store, "links/foo/url", "https://foo", "string")
+      :ok = Dust.SyncEngine.seed_entry(@store, "links/foo/note", "n", "string")
 
       # Server emits a :delete event for a non-required field path.
       Dust.SyncEngine.handle_server_event(@store, %{
         "store_seq" => 30,
         "op" => "delete",
-        "path" => "links.foo.note",
+        "path" => "links/foo/note",
         "value" => nil,
         "device_id" => "other",
         "client_op_id" => "fd-1"
@@ -159,7 +159,7 @@ defmodule DustEcto.RepoSubscribeTest do
       Dust.SyncEngine.handle_server_event(@store, %{
         "store_seq" => 31,
         "op" => "delete",
-        "path" => "links.foo",
+        "path" => "links/foo",
         "value" => nil,
         "device_id" => "other",
         "client_op_id" => "rd-1"
@@ -179,7 +179,7 @@ defmodule DustEcto.RepoSubscribeTest do
       Dust.SyncEngine.handle_server_event(@store, %{
         "store_seq" => 10,
         "op" => "set",
-        "path" => "links.foo.title",
+        "path" => "links/foo/title",
         "value" => "Foo",
         "device_id" => "other-dev",
         "client_op_id" => "external-5"
