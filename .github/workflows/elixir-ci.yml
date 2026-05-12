@@ -79,6 +79,24 @@ jobs:
         working-directory: server
         run: mix compile
 
+      # The root layout renders a PhoenixVite.Components.assets block
+      # that reads priv/static/.vite/manifest.json. Locally that file
+      # is produced by `mix assets.build` (which needs bun); in CI we
+      # don't need real assets — every test that touches this code
+      # path is asserting controller behaviour, not asset paths — so
+      # we drop in a minimal manifest covering the two names the
+      # layout references.
+      - name: Write placeholder Vite manifest
+        working-directory: server
+        run: |
+          mkdir -p priv/static/.vite
+          cat > priv/static/.vite/manifest.json <<'JSON'
+          {
+            "js/app.js": { "file": "assets/app.js" },
+            "css/app.css": { "file": "assets/app.css" }
+          }
+          JSON
+
       - name: Run tests
         working-directory: server
         run: mix test
