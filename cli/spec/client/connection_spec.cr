@@ -64,5 +64,4 @@ describe Dust::Connection do
       conn.build_params["device_id"].should eq "dev_custom123"
     end
   end
-
 end
