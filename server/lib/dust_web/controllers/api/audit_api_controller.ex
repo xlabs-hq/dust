@@ -115,7 +115,7 @@ defmodule DustWeb.Api.AuditApiController do
   defp normalize_filter_path(""), do: nil
 
   defp normalize_filter_path(path) when is_binary(path) do
-    case DustProtocol.Path.normalize_pattern(path) do
+    case DustProtocol.Path.LegacyDot.normalize_pattern(path) do
       {:ok, normalized} -> normalized
       {:error, _} -> path
     end

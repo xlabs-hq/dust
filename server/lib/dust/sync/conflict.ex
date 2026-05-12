@@ -1,9 +1,10 @@
 defmodule Dust.Sync.Conflict do
   alias DustProtocol.Path
+  alias DustProtocol.Path.LegacyDot
 
   @doc "Apply a set operation to the entry map. Replaces value at path and removes descendants."
   def apply_set(entries, path, value, type) do
-    {:ok, segments} = Path.parse(path)
+    {:ok, segments} = LegacyDot.parse(path)
 
     entries
     |> remove_descendants(segments)
@@ -12,7 +13,7 @@ defmodule Dust.Sync.Conflict do
 
   @doc "Apply a delete operation. Removes the path and all descendants."
   def apply_delete(entries, path) do
-    {:ok, segments} = Path.parse(path)
+    {:ok, segments} = LegacyDot.parse(path)
 
     entries
     |> Map.delete(path)
@@ -29,7 +30,7 @@ defmodule Dust.Sync.Conflict do
 
   defp remove_descendants(entries, ancestor_segments) do
     Map.reject(entries, fn {entry_path, _} ->
-      case Path.parse(entry_path) do
+      case LegacyDot.parse(entry_path) do
         {:ok, entry_segments} -> Path.ancestor?(ancestor_segments, entry_segments)
         _ -> false
       end

@@ -262,7 +262,7 @@ defmodule Dust.Sync.Writer do
   defp apply_to_entries(db, seq, %{op: :set, path: path, value: value} = attrs) do
     decrement_file_ref_at(db, path)
 
-    {:ok, segments} = DustProtocol.Path.parse(path)
+    {:ok, segments} = DustProtocol.Path.LegacyDot.parse(path)
     delete_descendants(db, segments)
 
     if is_map(value) and not ValueCodec.typed_value?(value) do
@@ -284,7 +284,7 @@ defmodule Dust.Sync.Writer do
 
   defp apply_to_entries(db, _seq, %{op: :delete, path: path}) do
     decrement_file_ref_at(db, path)
-    {:ok, segments} = DustProtocol.Path.parse(path)
+    {:ok, segments} = DustProtocol.Path.LegacyDot.parse(path)
     exec(db, "DELETE FROM store_entries WHERE path = ?", [path])
     delete_descendants(db, segments)
     nil
@@ -296,7 +296,7 @@ defmodule Dust.Sync.Writer do
 
       if is_map(value) and not ValueCodec.typed_value?(value) do
         decrement_file_ref_at(db, child_path)
-        {:ok, segs} = DustProtocol.Path.parse(child_path)
+        {:ok, segs} = DustProtocol.Path.LegacyDot.parse(child_path)
         delete_descendants(db, segs)
         exec(db, "DELETE FROM store_entries WHERE path = ?", [child_path])
 
@@ -338,7 +338,7 @@ defmodule Dust.Sync.Writer do
 
   defp apply_to_entries(db, seq, %{op: :put_file, path: path, value: ref}) when is_map(ref) do
     decrement_file_ref_at(db, path)
-    {:ok, segments} = DustProtocol.Path.parse(path)
+    {:ok, segments} = DustProtocol.Path.LegacyDot.parse(path)
     delete_descendants(db, segments)
     upsert_entry(db, path, ref, "file", seq)
     ref

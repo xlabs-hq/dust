@@ -471,7 +471,7 @@ defmodule DustWeb.StoreChannel do
   end
 
   defp validate_path(nil), do: {:error, :missing_path}
-  defp validate_path(path) when is_binary(path), do: DustProtocol.Path.parse(path)
+  defp validate_path(path) when is_binary(path), do: DustProtocol.Path.LegacyDot.parse(path)
   defp validate_path(_), do: {:error, :invalid_path}
 
   defp validate_merge_value(:merge, value) when is_map(value), do: :ok

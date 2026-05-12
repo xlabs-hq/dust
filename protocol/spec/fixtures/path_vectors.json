@@ -1,8 +1,24 @@
 [
-  {"input": "a.b.c", "segments": ["a", "b", "c"], "valid": true},
-  {"input": "hello", "segments": ["hello"], "valid": true},
-  {"input": "", "valid": false, "error": "empty_path"},
-  {"input": "a..b", "valid": false, "error": "empty_segment"},
-  {"input": ".a", "valid": false, "error": "empty_segment"},
-  {"input": "a.", "valid": false, "error": "empty_segment"}
+  {"segments": ["a", "b", "c"], "rendered": "a/b/c", "valid": true},
+  {"segments": ["hello"], "rendered": "hello", "valid": true},
+  {"segments": ["hello.world"], "rendered": "hello.world", "valid": true},
+  {"segments": ["posts", "hello.world", "title"], "rendered": "posts/hello.world/title", "valid": true},
+  {"segments": ["example.com"], "rendered": "example.com", "valid": true},
+  {"segments": ["files", "image/file"], "rendered": "files/image~1file", "valid": true},
+  {"segments": ["a~b"], "rendered": "a~0b", "valid": true},
+  {"segments": ["a/b~c"], "rendered": "a~1b~0c", "valid": true},
+  {"segments": ["~~"], "rendered": "~0~0", "valid": true},
+  {"segments": ["//"], "rendered": "~1~1", "valid": true},
+  {"segments": ["packages", "@scope", "name"], "rendered": "packages/@scope/name", "valid": true},
+  {"segments": ["a", "b.c", "d/e", "f~g"], "rendered": "a/b.c/d~1e/f~0g", "valid": true},
+  {"segments": ["x", "*"], "rendered": "x/*", "valid": true, "note": "literal `*` in a segment is fine; glob-significance is decided at the glob layer, not here"},
+
+  {"rendered": "", "valid": false, "error": "empty_path"},
+  {"rendered": "/users", "valid": false, "error": "empty_segment"},
+  {"rendered": "users/", "valid": false, "error": "empty_segment"},
+  {"rendered": "users//alice", "valid": false, "error": "empty_segment"},
+  {"rendered": "a~", "valid": false, "error": "invalid_escape"},
+  {"rendered": "a~b", "valid": false, "error": "invalid_escape"},
+  {"rendered": "a~2b", "valid": false, "error": "invalid_escape"},
+  {"rendered": "~", "valid": false, "error": "invalid_escape"}
 ]

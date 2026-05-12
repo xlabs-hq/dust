@@ -91,7 +91,7 @@ defmodule DustWeb.Api.EntriesApiController do
   end
 
   defp url_path(segments) do
-    case DustProtocol.Path.from_url_segments(List.wrap(segments)) do
+    case DustProtocol.Path.LegacyDot.from_url_segments(List.wrap(segments)) do
       {:ok, path} ->
         {:ok, path}
 
@@ -438,7 +438,7 @@ defmodule DustWeb.Api.EntriesApiController do
   end
 
   defp fetch_body_path(%{"path" => path}) when is_binary(path) and path != "" do
-    case DustProtocol.Path.normalize(path) do
+    case DustProtocol.Path.LegacyDot.normalize(path) do
       {:ok, normalized} -> {:ok, normalized}
       {:error, reason} -> {:error, {:invalid_params, "invalid path (#{reason})"}}
     end
@@ -689,7 +689,7 @@ defmodule DustWeb.Api.EntriesApiController do
 
   defp normalize_batch_paths(paths) do
     Enum.reduce_while(paths, {:ok, []}, fn path, {:ok, acc} ->
-      case DustProtocol.Path.normalize(path) do
+      case DustProtocol.Path.LegacyDot.normalize(path) do
         {:ok, normalized} ->
           {:cont, {:ok, [normalized | acc]}}
 
@@ -901,7 +901,7 @@ defmodule DustWeb.Api.EntriesApiController do
     do: {:error, {:invalid_params, "op #{index}: missing 'op' field"}}
 
   defp parse_batch_op_path(%{"path" => path}, index) when is_binary(path) do
-    case DustProtocol.Path.normalize(path) do
+    case DustProtocol.Path.LegacyDot.normalize(path) do
       {:ok, normalized} -> {:ok, normalized}
       {:error, reason} -> {:error, {:invalid_params, "op #{index}: invalid path (#{reason})"}}
     end
@@ -1041,7 +1041,7 @@ defmodule DustWeb.Api.EntriesApiController do
   end
 
   defp parse_from(%{"from" => f}) when is_binary(f) and f != "" do
-    case DustProtocol.Path.normalize(f) do
+    case DustProtocol.Path.LegacyDot.normalize(f) do
       {:ok, normalized} -> {:ok, normalized}
       {:error, _} -> {:error, {:invalid_params, "from must be a valid path"}}
     end
@@ -1050,7 +1050,7 @@ defmodule DustWeb.Api.EntriesApiController do
   defp parse_from(_), do: {:error, {:invalid_params, "from must be a non-empty string"}}
 
   defp parse_to(%{"to" => t}) when is_binary(t) and t != "" do
-    case DustProtocol.Path.normalize(t) do
+    case DustProtocol.Path.LegacyDot.normalize(t) do
       {:ok, normalized} -> {:ok, normalized}
       {:error, _} -> {:error, {:invalid_params, "to must be a valid path"}}
     end
@@ -1095,7 +1095,7 @@ defmodule DustWeb.Api.EntriesApiController do
   defp maybe_put(opts, key, value), do: Keyword.put(opts, key, value)
 
   defp parse_pattern(%{"pattern" => p}) when is_binary(p) and p != "" do
-    case DustProtocol.Path.normalize_pattern(p) do
+    case DustProtocol.Path.LegacyDot.normalize_pattern(p) do
       {:ok, normalized} -> {:ok, normalized}
       {:error, _} -> {:error, {:invalid_params, "pattern has empty segments"}}
     end
