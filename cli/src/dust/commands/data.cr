@@ -190,7 +190,14 @@ module Dust
           if flags.empty?
             # Flagless backwards-compat behavior: {path => value} map.
             entries = cache.read_all(store_name)
-            matched = entries.select { |path, _| Glob.match?(pattern, path) }
+            compiled = Glob.compile(pattern)
+            matched = entries.select do |path, _|
+              begin
+                Glob.match?(compiled, Path.parse_rendered(path))
+              rescue Path::InvalidPathError
+                false
+              end
+            end
 
             result = JSON::Any.new(
               matched.map { |path, value|

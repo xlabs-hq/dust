@@ -2,8 +2,10 @@ require "json"
 
 module Dust
   class Config
-    CONFIG_DIR = Path.new(ENV.fetch("XDG_CONFIG_HOME", Path.home.join(".config").to_s)).join("dust").to_s
-    DATA_DIR   = Path.new(ENV.fetch("XDG_DATA_HOME", Path.home.join(".local", "share").to_s)).join("dust").to_s
+    # `::Path` to disambiguate from `Dust::Path` (the segment-first
+    # path module).
+    CONFIG_DIR = ::Path.new(ENV.fetch("XDG_CONFIG_HOME", ::Path.home.join(".config").to_s)).join("dust").to_s
+    DATA_DIR   = ::Path.new(ENV.fetch("XDG_DATA_HOME", ::Path.home.join(".local", "share").to_s)).join("dust").to_s
 
     CREDENTIALS_FILE = File.join(CONFIG_DIR, "credentials.json")
     CONFIG_FILE      = File.join(CONFIG_DIR, "config.json")

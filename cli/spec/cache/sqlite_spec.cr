@@ -118,13 +118,13 @@ describe Dust::Cache do
   describe "#browse" do
     it "returns entries matching pattern with default order asc and limit 50" do
       cache = Dust::Cache.new(":memory:")
-      %w(a.1 a.2 a.3 b.1).each_with_index do |p, i|
+      %w(a/1 a/2 a/3 b/1).each_with_index do |p, i|
         cache.write("store", p, JSON::Any.new(p), "string", (i + 1).to_i64)
       end
 
-      items, cursor = cache.browse("store", pattern: "a.*", limit: 50)
+      items, cursor = cache.browse("store", pattern: "a/*", limit: 50)
       items.size.should eq 3
-      items.map { |row| row.as(NamedTuple(path: String, value: JSON::Any, type: String, seq: Int64))[:path] }.should eq ["a.1", "a.2", "a.3"]
+      items.map { |row| row.as(NamedTuple(path: String, value: JSON::Any, type: String, seq: Int64))[:path] }.should eq ["a/1", "a/2", "a/3"]
       cursor.should be_nil
     end
 
@@ -170,7 +170,7 @@ describe Dust::Cache do
 
     it "supports select: prefixes for ** pattern" do
       cache = Dust::Cache.new(":memory:")
-      %w(users.alice.name users.bob.name posts.hi).each_with_index do |p, i|
+      %w(users/alice/name users/bob/name posts/hi).each_with_index do |p, i|
         cache.write("store", p, JSON::Any.new(p), "string", (i + 1).to_i64)
       end
 
@@ -178,21 +178,21 @@ describe Dust::Cache do
       items.should eq ["posts", "users"]
     end
 
-    it "supports select: prefixes for users.** pattern" do
+    it "supports select: prefixes for users/** pattern" do
       cache = Dust::Cache.new(":memory:")
-      %w(users.alice.name users.alice.email users.bob.name).each_with_index do |p, i|
+      %w(users/alice/name users/alice/email users/bob/name).each_with_index do |p, i|
         cache.write("store", p, JSON::Any.new(p), "string", (i + 1).to_i64)
       end
 
-      items, _ = cache.browse("store", pattern: "users.**", limit: 10, select_as: "prefixes")
-      items.should eq ["users.alice", "users.bob"]
+      items, _ = cache.browse("store", pattern: "users/**", limit: 10, select_as: "prefixes")
+      items.should eq ["users/alice", "users/bob"]
     end
 
     it "rejects select: prefixes with invalid pattern" do
       cache = Dust::Cache.new(":memory:")
 
       expect_raises(ArgumentError, /prefixes/) do
-        cache.browse("store", pattern: "a.*.b", limit: 10, select_as: "prefixes")
+        cache.browse("store", pattern: "a/*/b", limit: 10, select_as: "prefixes")
       end
     end
   end

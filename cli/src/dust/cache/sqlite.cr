@@ -132,7 +132,14 @@ module Dust
       literal_prefix = literal_prefix_of(pattern)
       rows = fetch_rows(store, literal_prefix, after, order, limit + 1)
 
-      matched = rows.select { |row| Glob.match?(pattern, row[:path]) }
+      compiled = Glob.compile(pattern)
+      matched = rows.select do |row|
+        begin
+          Glob.match?(compiled, Path.parse_rendered(row[:path]))
+        rescue Path::InvalidPathError
+          false
+        end
+      end
       page = matched.first(limit)
 
       next_cursor =
@@ -243,13 +250,13 @@ module Dust
 
     private def literal_prefix_of(pattern : String) : String?
       return "" if pattern == "**"
-      segments = pattern.split('.')
+      segments = pattern.split('/')
       literal = [] of String
       segments.each do |seg|
         break if seg.includes?('*')
         literal << seg
       end
-      literal.empty? ? nil : literal.join('.')
+      literal.empty? ? nil : literal.join('/')
     end
 
     private def escape_like(s : String) : String
@@ -257,8 +264,8 @@ module Dust
     end
 
     private def validate_select_pattern!(select_as : String, pattern : String)
-      if select_as == "prefixes" && pattern != "**" && !pattern.ends_with?(".**")
-        raise ArgumentError.new("select: prefixes requires pattern ending in .** or being ** (got #{pattern})")
+      if select_as == "prefixes" && pattern != "**" && !pattern.ends_with?("/**")
+        raise ArgumentError.new("select: prefixes requires pattern ending in /** or being ** (got #{pattern})")
       end
     end
 
@@ -292,19 +299,19 @@ module Dust
 
     private def literal_prefix_of_for_prefixes(pattern : String) : String
       return "" if pattern == "**"
-      pattern.sub(/\.\*\*$/, "")
+      pattern.sub(/\/\*\*$/, "")
     end
 
     private def extract_prefix(path : String, literal : String) : String?
       if literal.empty?
-        segments = path.split('.', 2)
+        segments = path.split('/', 2)
         segments.first?
       else
-        prefix_dot = literal + "."
-        return nil unless path.starts_with?(prefix_dot)
-        rest = path[prefix_dot.size..]
-        next_seg = rest.split('.', 2).first
-        "#{literal}.#{next_seg}"
+        prefix_slash = literal + "/"
+        return nil unless path.starts_with?(prefix_slash)
+        rest = path[prefix_slash.size..]
+        next_seg = rest.split('/', 2).first
+        "#{literal}/#{next_seg}"
       end
     end
 

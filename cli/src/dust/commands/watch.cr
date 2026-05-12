@@ -103,11 +103,21 @@ module Dust
         pending = [] of JSON::Any
 
         pattern_str = pattern.not_nil!
+        compiled = Glob.compile(pattern_str)
         emit_live = ->(payload : JSON::Any) do
           op = payload["op"]?.try(&.as_s)
           path = payload["path"]?.try(&.as_s)
 
-          if op && path && Glob.match?(pattern_str, path)
+          path_segments =
+            if path
+              begin
+                Path.parse_rendered(path)
+              rescue Path::InvalidPathError
+                nil
+              end
+            end
+
+          if op && path_segments && Glob.match?(compiled, path_segments)
             filter_ok = true
             if f = op_filter
               filter_ok = op == f

@@ -109,7 +109,9 @@ module Dust
       {
         "token"     => @config.token.not_nil!,
         "device_id" => @config.device_id,
-        "capver"    => "2",
+        # capver 3 = segment-first paths (RFC 6901 escaping on the wire).
+        # Pre-launch break — no back-compat to capver 2 servers.
+        "capver"    => "3",
       }
     end
   end

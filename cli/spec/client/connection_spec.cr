@@ -43,7 +43,7 @@ describe Dust::Connection do
   end
 
   describe "#build_params" do
-    it "includes token, device_id, and capver=2" do
+    it "includes token, device_id, and capver=3" do
       config = Dust::Config.new
       config.token = "test_token_abc"
 
@@ -52,7 +52,7 @@ describe Dust::Connection do
 
       params["token"].should eq "test_token_abc"
       params["device_id"].should eq config.device_id
-      params["capver"].should eq "2"
+      params["capver"].should eq "3"
     end
 
     it "includes device_id from config" do
