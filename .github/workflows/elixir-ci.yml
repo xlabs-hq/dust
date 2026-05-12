@@ -34,7 +34,12 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16
+        # Need PG 18+ for native uuidv7(). The EnableUuidv7 migration
+        # probes for it and falls back to CREATE EXTENSION pg_uuidv7,
+        # which isn't in any stock postgres image. uuidv7() is then
+        # used as a column DEFAULT on several tables — not removable
+        # without a schema rewrite.
+        image: postgres:18
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
