@@ -23,10 +23,10 @@ describe('Dust', () => {
     it('handleEvent updates cache on set', () => {
       const dust = createDust() as any
       dust.handleEvent('test/store', {
-        store_seq: 1, op: 'set', path: 'users.alice', value: 'hello',
+        store_seq: 1, op: 'set', path: 'users/alice', value: 'hello',
         device_id: 'dev_1', client_op_id: 'op_1',
       })
-      expect(dust.cache.get('test/store', 'users.alice')?.value).toBe('hello')
+      expect(dust.cache.get('test/store', 'users/alice')?.value).toBe('hello')
       expect(dust.cache.lastSeq('test/store')).toBe(1)
     })
 
@@ -46,19 +46,19 @@ describe('Dust', () => {
     it('handleEvent deletes descendants on delete', () => {
       const dust = createDust() as any
       dust.handleEvent('test/store', {
-        store_seq: 1, op: 'set', path: 'users.alice.name', value: 'Alice',
+        store_seq: 1, op: 'set', path: 'users/alice/name', value: 'Alice',
         device_id: 'd', client_op_id: 'o1',
       })
       dust.handleEvent('test/store', {
-        store_seq: 2, op: 'set', path: 'users.alice.email', value: 'a@b.com',
+        store_seq: 2, op: 'set', path: 'users/alice/email', value: 'a@b.com',
         device_id: 'd', client_op_id: 'o2',
       })
       dust.handleEvent('test/store', {
-        store_seq: 3, op: 'delete', path: 'users.alice', value: null,
+        store_seq: 3, op: 'delete', path: 'users/alice', value: null,
         device_id: 'd', client_op_id: 'o3',
       })
-      expect(dust.cache.get('test/store', 'users.alice.name')).toBeNull()
-      expect(dust.cache.get('test/store', 'users.alice.email')).toBeNull()
+      expect(dust.cache.get('test/store', 'users/alice/name')).toBeNull()
+      expect(dust.cache.get('test/store', 'users/alice/email')).toBeNull()
     })
 
     it('advances lastSeq monotonically', () => {
@@ -87,12 +87,12 @@ describe('Dust', () => {
       dust.handleSnapshot('test/store', {
         snapshot_seq: 10,
         entries: {
-          'new.key': { value: 'fresh', type: 'string' },
+          'new/key': { value: 'fresh', type: 'string' },
         },
       })
 
       expect(dust.cache.get('test/store', 'old')).toBeNull()
-      expect(dust.cache.get('test/store', 'new.key')?.value).toBe('fresh')
+      expect(dust.cache.get('test/store', 'new/key')?.value).toBe('fresh')
       expect(dust.cache.lastSeq('test/store')).toBe(10)
     })
   })
@@ -154,16 +154,16 @@ describe('Dust', () => {
       const dust = createDust() as any
       const events: any[] = []
       dust.subscriptions.set('test/store', new Set([
-        { pattern: 'users.*', callback: (e: any) => events.push(e) },
+        { pattern: 'users/*', callback: (e: any) => events.push(e) },
       ]))
 
       dust.handleEvent('test/store', {
-        store_seq: 1, op: 'set', path: 'users.alice', value: 'hello',
+        store_seq: 1, op: 'set', path: 'users/alice', value: 'hello',
         device_id: 'd', client_op_id: 'o1',
       })
 
       expect(events.length).toBe(1)
-      expect(events[0].path).toBe('users.alice')
+      expect(events[0].path).toBe('users/alice')
       expect(events[0].storeSeq).toBe(1)
       expect(events[0].op).toBe('set')
       expect(events[0].value).toBe('hello')
@@ -173,11 +173,11 @@ describe('Dust', () => {
       const dust = createDust() as any
       const events: any[] = []
       dust.subscriptions.set('test/store', new Set([
-        { pattern: 'users.*', callback: (e: any) => events.push(e) },
+        { pattern: 'users/*', callback: (e: any) => events.push(e) },
       ]))
 
       dust.handleEvent('test/store', {
-        store_seq: 1, op: 'set', path: 'posts.hello', value: 'v',
+        store_seq: 1, op: 'set', path: 'posts/hello', value: 'v',
         device_id: 'd', client_op_id: 'o1',
       })
 
@@ -189,12 +189,12 @@ describe('Dust', () => {
       const events1: any[] = []
       const events2: any[] = []
       dust.subscriptions.set('test/store', new Set([
-        { pattern: 'users.*', callback: (e: any) => events1.push(e) },
+        { pattern: 'users/*', callback: (e: any) => events1.push(e) },
         { pattern: '**', callback: (e: any) => events2.push(e) },
       ]))
 
       dust.handleEvent('test/store', {
-        store_seq: 1, op: 'set', path: 'users.alice', value: 'v',
+        store_seq: 1, op: 'set', path: 'users/alice', value: 'v',
         device_id: 'd', client_op_id: 'o1',
       })
 
@@ -205,11 +205,11 @@ describe('Dust', () => {
     it('unsubscribe removes callback', () => {
       const dust = createDust()
       const events: any[] = []
-      const unsub = dust.on('test/store', 'users.*', (e) => events.push(e))
+      const unsub = dust.on('test/store', 'users/*', (e) => events.push(e))
       unsub()
 
       ;(dust as any).handleEvent('test/store', {
-        store_seq: 1, op: 'set', path: 'users.alice', value: 'v',
+        store_seq: 1, op: 'set', path: 'users/alice', value: 'v',
         device_id: 'd', client_op_id: 'o1',
       })
 
@@ -235,17 +235,17 @@ describe('Dust', () => {
   describe('watch', () => {
     it('dispatches current matching entries as present events', async () => {
       const dust = createDust() as any
-      seedEntry(dust, 'store', 'users.alice.name', 'Alice', 'string', 1)
-      seedEntry(dust, 'store', 'users.bob.name', 'Bob', 'string', 2)
+      seedEntry(dust, 'store', 'users/alice/name', 'Alice', 'string', 1)
+      seedEntry(dust, 'store', 'users/bob/name', 'Bob', 'string', 2)
 
       const received: WatchEvent[] = []
-      const unsubscribe = await dust.watch('store', 'users.**', (event: WatchEvent) => {
+      const unsubscribe = await dust.watch('store', 'users/**', (event: WatchEvent) => {
         received.push(event)
       })
 
       expect(received).toHaveLength(2)
-      expect(received[0]).toMatchObject({ op: 'present', path: 'users.alice.name', value: 'Alice', type: 'string', seq: 1 })
-      expect(received[1]).toMatchObject({ op: 'present', path: 'users.bob.name', value: 'Bob', type: 'string', seq: 2 })
+      expect(received[0]).toMatchObject({ op: 'present', path: 'users/alice/name', value: 'Alice', type: 'string', seq: 1 })
+      expect(received[1]).toMatchObject({ op: 'present', path: 'users/bob/name', value: 'Bob', type: 'string', seq: 2 })
 
       unsubscribe()
     })
@@ -253,10 +253,10 @@ describe('Dust', () => {
     it('watch honors limit', async () => {
       const dust = createDust() as any
       for (let i = 1; i <= 10; i++) {
-        seedEntry(dust, 'store', `k.${i}`, i, 'integer', i)
+        seedEntry(dust, 'store', `k/${i}`, i, 'integer', i)
       }
       const received: WatchEvent[] = []
-      await dust.watch('store', 'k.**', (e: WatchEvent) => { received.push(e) }, { limit: 3 })
+      await dust.watch('store', 'k/**', (e: WatchEvent) => { received.push(e) }, { limit: 3 })
       expect(received).toHaveLength(3)
     })
 
@@ -264,7 +264,7 @@ describe('Dust', () => {
       const dust = createDust() as any
       dust.joinedStores.set('store', Promise.resolve())
       const received: WatchEvent[] = []
-      const unsubscribe = await dust.watch('store', 'no.match.**', (e: WatchEvent) => { received.push(e) })
+      const unsubscribe = await dust.watch('store', 'no/match/**', (e: WatchEvent) => { received.push(e) })
       expect(received).toEqual([])
       expect(typeof unsubscribe).toBe('function')
       unsubscribe()
@@ -272,7 +272,7 @@ describe('Dust', () => {
 
     it('live events that arrive during bootstrap hydration are buffered and drained after present events', async () => {
       const dust = createDust() as any
-      seedEntry(dust, 'store', 'users.alice.name', 'Alice', 'string', 1)
+      seedEntry(dust, 'store', 'users/alice/name', 'Alice', 'string', 1)
 
       // Override ensureJoined so we can intercept the async gap and inject a live event.
       let resolveJoin: () => void = () => {}
@@ -282,7 +282,7 @@ describe('Dust', () => {
       }
 
       const received: WatchEvent[] = []
-      const watchPromise = dust.watch('store', 'users.**', (event: WatchEvent) => {
+      const watchPromise = dust.watch('store', 'users/**', (event: WatchEvent) => {
         received.push(event)
       })
 
@@ -296,7 +296,7 @@ describe('Dust', () => {
       //   (b) it's correctly filtered out (pattern mismatch), and
       //   (c) the bootstrap still fires Alice as a PresentEvent after resolve.
       dust.handleEvent('store', {
-        store_seq: 2, op: 'set', path: 'posts.hello', value: 'hi',
+        store_seq: 2, op: 'set', path: 'posts/hello', value: 'hi',
         device_id: 'd', client_op_id: 'o-live-nomatch',
       })
 
@@ -306,7 +306,7 @@ describe('Dust', () => {
       // ambiguity — but because handleEvent writes to cache first, browse
       // will also surface it as a PresentEvent. That's expected dual-delivery.
       dust.handleEvent('store', {
-        store_seq: 3, op: 'set', path: 'users.carol.name', value: 'Carol',
+        store_seq: 3, op: 'set', path: 'users/carol/name', value: 'Carol',
         device_id: 'd', client_op_id: 'o-live-match',
       })
 
@@ -320,9 +320,9 @@ describe('Dust', () => {
       // Bootstrap present events for alice + carol (cache now has both),
       // followed by the buffered live 'set' for carol from the pending queue.
       expect(received).toHaveLength(3)
-      expect(received[0]).toMatchObject({ op: 'present', path: 'users.alice.name' })
-      expect(received[1]).toMatchObject({ op: 'present', path: 'users.carol.name' })
-      expect(received[2]).toMatchObject({ op: 'set', path: 'users.carol.name', value: 'Carol' })
+      expect(received[0]).toMatchObject({ op: 'present', path: 'users/alice/name' })
+      expect(received[1]).toMatchObject({ op: 'present', path: 'users/carol/name' })
+      expect(received[2]).toMatchObject({ op: 'set', path: 'users/carol/name', value: 'Carol' })
     })
   })
 
@@ -331,17 +331,17 @@ describe('Dust', () => {
       const dust = createDust() as any
       // Mark store as joined so entry() skips the real join.
       dust.joinedStores.set('test/store', Promise.resolve())
-      dust.cache.set('test/store', 'users.alice.name', {
-        path: 'users.alice.name',
+      dust.cache.set('test/store', 'users/alice/name', {
+        path: 'users/alice/name',
         value: 'Alice',
         type: 'string',
         seq: 7,
       })
 
-      const result = await dust.entry('test/store', 'users.alice.name')
+      const result = await dust.entry('test/store', 'users/alice/name')
 
       expect(result).toEqual({
-        path: 'users.alice.name',
+        path: 'users/alice/name',
         value: 'Alice',
         type: 'string',
         seq: 7,
@@ -352,7 +352,7 @@ describe('Dust', () => {
       const dust = createDust() as any
       dust.joinedStores.set('test/store', Promise.resolve())
 
-      const result = await dust.entry('test/store', 'no.such')
+      const result = await dust.entry('test/store', 'no/such')
 
       expect(result).toBeNull()
     })

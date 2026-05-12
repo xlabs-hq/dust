@@ -1,7 +1,7 @@
 import { Connection } from './connection'
 import { MemoryCache } from './cache'
 import { match } from './glob'
-import { normalizePath, normalizePattern } from './path'
+import { normalizePath, normalizePattern, parseRendered } from './path'
 import { ConflictError } from './types'
 import type { DustOptions, EnumOptions, Entry, Event, EventCallback, Page, PresentEvent, Status } from './types'
 
@@ -390,10 +390,12 @@ export class Dust {
     const deviceId = raw.device_id as string
     const clientOpId = raw.client_op_id as string
 
-    // Update cache based on op
+    // Update cache based on op. `path + '/'` is the canonical
+    // descendant-prefix form (slash-rendered, trailing slash so a
+    // sibling like `posts/hello2` can't false-match `posts/hello`).
     if (op === 'delete') {
       this.cache.delete(store, path)
-      this.cache.deletePrefix(store, path + '.')
+      this.cache.deletePrefix(store, path + '/')
     } else {
       const type = inferType(value)
       this.cache.set(store, path, { path, value, type, seq: storeSeq })
@@ -404,12 +406,20 @@ export class Dust {
       this.cache.setLastSeq(store, storeSeq)
     }
 
-    // Fire matching subscription callbacks
+    // Fire matching subscription callbacks. Both pattern and path
+    // travel as slash-canonical strings; parse the path once into
+    // segments and match.
     const event: Event = { storeSeq, op, path, value, deviceId, clientOpId }
     const subs = this.subscriptions.get(store)
     if (subs) {
+      let pathSegments: string[]
+      try {
+        pathSegments = parseRendered(path)
+      } catch {
+        return
+      }
       for (const sub of subs) {
-        if (match(sub.pattern, path)) {
+        if (match(sub.pattern, pathSegments)) {
           if (sub.bootstrapPending) {
             sub.pendingEvents!.push(event)
           } else {

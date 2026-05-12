@@ -1,5 +1,6 @@
 import type { BrowseOptions, Entry, Page } from './types'
-import { match } from './glob'
+import { compile, match, type Compiled } from './glob'
+import { parseRendered } from './path'
 
 export interface Cache {
   get(store: string, path: string): Entry | null
@@ -71,9 +72,10 @@ export class MemoryCache implements Cache {
   }
 
   entries(store: string, pattern: string): Entry[] {
+    const compiled = compile(pattern)
     const results: Entry[] = []
-    for (const [path, entry] of this.getStore(store)) {
-      if (match(pattern, path)) {
+    for (const [_path, entry] of this.getStore(store)) {
+      if (matchPath(compiled, entry.path)) {
         results.push(entry)
       }
     }
@@ -91,8 +93,8 @@ export class MemoryCache implements Cache {
 
     // Validate prefixes pattern up front
     if (select === 'prefixes') {
-      if (pattern !== '**' && !pattern.endsWith('.**')) {
-        throw new Error('select: prefixes requires pattern ending in .** or **')
+      if (pattern !== '**' && !pattern.endsWith('/**')) {
+        throw new Error('select: prefixes requires pattern ending in /** or **')
       }
     }
 
@@ -112,7 +114,8 @@ export class MemoryCache implements Cache {
       entries = entries.filter((e) => e.path >= from && e.path < to)
     } else {
       // Glob mode
-      entries = entries.filter((e) => match(pattern, e.path))
+      const compiled = compile(pattern)
+      entries = entries.filter((e) => matchPath(compiled, e.path))
     }
 
     // Sort
@@ -173,17 +176,27 @@ function prefixesOf(entries: Entry[], pattern: string): string[] {
 
 function literalPrefixOf(pattern: string): string {
   if (pattern === '**') return ''
-  return pattern.replace(/\.\*\*$/, '')
+  return pattern.replace(/\/\*\*$/, '')
 }
 
 function extractPrefix(path: string, literal: string): string | null {
   if (literal === '') {
-    const i = path.indexOf('.')
+    const i = path.indexOf('/')
     return i === -1 ? path : path.slice(0, i)
   }
-  const prefix = literal + '.'
+  const prefix = literal + '/'
   if (!path.startsWith(prefix)) return null
   const rest = path.slice(prefix.length)
-  const i = rest.indexOf('.')
-  return literal + '.' + (i === -1 ? rest : rest.slice(0, i))
+  const i = rest.indexOf('/')
+  return literal + '/' + (i === -1 ? rest : rest.slice(0, i))
+}
+
+// Helper: parse a stored canonical path into segments, then run the
+// compiled glob match. Returns false on unparsable paths (defensive).
+function matchPath(compiled: Compiled, path: string): boolean {
+  try {
+    return match(compiled, parseRendered(path))
+  } catch {
+    return false
+  }
 }

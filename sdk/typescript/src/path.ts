@@ -1,35 +1,243 @@
 /**
- * Path utilities. Dust paths are dot-separated hierarchies, e.g.
- * "projects.alpha.title". Forward slashes are accepted as aliases for
- * dots — so `dust.put(store, "projects/alpha/title", v)` is equivalent
- * to `dust.put(store, "projects.alpha.title", v)`.
+ * Segment-first paths for the Dust TypeScript SDK.
  *
- * Path segments cannot be empty. There is no escape for a literal `.`
- * in a key — keys with dots in their names are not supported.
+ * A path is a non-empty array of non-empty string segments:
+ *
+ *     ["posts", "hello.world", "image/file"]
+ *
+ * Public SDK functions accept either a segment array or a canonical
+ * rendered slash string (see `fromInput`). Internally the SDK uses
+ * segment arrays; strings are rendered at boundaries (cache keys,
+ * wire protocol, log lines).
+ *
+ * Mirrors `DustProtocol.Path` from the canonical wire-protocol
+ * package.
+ *
+ * ## Rendering
+ *
+ * Canonical rendered paths join segments with `/` and escape per RFC
+ * 6901 (JSON Pointer) inside each segment:
+ *
+ *     `~` -> `~0`
+ *     `/` -> `~1`
+ *
+ * No other character has any special meaning. In particular, `.` is
+ * literal — `"example.com"` is one segment, not two.
  */
 
+export type Segments = string[]
+export type PathInput = string | Segments
+
 /**
- * Normalize a dotted-or-slashed path into the canonical dotted form.
- * Throws if the path is empty or contains empty segments.
+ * Validate a segment array. Throws if it's empty, contains an
+ * empty string, or contains non-string entries.
  */
-export function normalizePath(path: string): string {
-  if (path === '') throw new Error('path cannot be empty')
-  const canonical = path.replace(/\//g, '.')
-  if (canonical.split('.').some((s) => s === '')) {
-    throw new Error(`path "${path}" contains empty segments`)
+export function fromSegments(segments: Segments): Segments {
+  if (!Array.isArray(segments)) {
+    throw new Error('segments must be an array of non-empty strings')
   }
-  return canonical
+  if (segments.length === 0) {
+    throw new Error('path is empty')
+  }
+  for (const s of segments) {
+    if (typeof s !== 'string') {
+      throw new Error('segments must be an array of non-empty strings')
+    }
+    if (s === '') {
+      throw new Error('segment is empty')
+    }
+  }
+  return segments
 }
 
 /**
- * Normalize a glob pattern. Slashes become dots; `*` and `**` are
- * valid segments.
+ * Render a segment array to canonical slash form, escaping `~` and
+ * `/` inside each segment per RFC 6901.
+ *
+ * `~` must be escaped first or the `/` -> `~1` substitution would
+ * create false `~1` sequences in subsequent decoding.
+ */
+export function render(segments: Segments): string {
+  fromSegments(segments)
+  return segments.map(escapeSegment).join('/')
+}
+
+function escapeSegment(seg: string): string {
+  return seg.replace(/~/g, '~0').replace(/\//g, '~1')
+}
+
+/**
+ * Parse a canonical rendered path into segments. Rejects empty paths,
+ * empty segments (leading/trailing/double slash), and invalid `~`
+ * escapes.
+ */
+export function parseRendered(s: string): Segments {
+  if (typeof s !== 'string') {
+    throw new Error('rendered path must be a string')
+  }
+  if (s === '') {
+    throw new Error('path is empty')
+  }
+  const parts = s.split('/')
+  if (parts.some((p) => p === '')) {
+    throw new Error(`path "${s}" contains empty segments`)
+  }
+  return parts.map(unescapeSegment)
+}
+
+/**
+ * Walks the segment once, treating `~` as the start of a two-char
+ * escape. Anything else after `~` is rejected. Stricter than a
+ * pair of replaces — actually rejects bad input rather than
+ * silently leaving it.
+ */
+function unescapeSegment(seg: string): string {
+  let out = ''
+  let i = 0
+  while (i < seg.length) {
+    const ch = seg[i]
+    if (ch === '~') {
+      const next = seg[i + 1]
+      if (next === '0') {
+        out += '~'
+        i += 2
+      } else if (next === '1') {
+        out += '/'
+        i += 2
+      } else {
+        throw new Error(`invalid escape "~${next ?? ''}" in segment "${seg}"`)
+      }
+    } else {
+      out += ch
+      i += 1
+    }
+  }
+  return out
+}
+
+/**
+ * Round-trip a rendered path through parse + render. Useful at
+ * trust boundaries to canonicalise input.
+ */
+export function normalizeRendered(s: string): string {
+  return render(parseRendered(s))
+}
+
+/**
+ * Accept either a rendered slash string or a segment array, return
+ * validated segments. SDK entry points use this so callers can write
+ * `dust.put(store, "a/b/c", val)` or `dust.put(store, ["a","b","c"], val)`
+ * interchangeably.
+ */
+export function fromInput(input: PathInput): Segments {
+  if (typeof input === 'string') {
+    return parseRendered(input)
+  }
+  if (Array.isArray(input)) {
+    return fromSegments(input)
+  }
+  throw new Error('path must be a string or array of strings')
+}
+
+/**
+ * Append a single segment to a path. The new segment is taken
+ * literally — no parsing, no special meaning for `.` or `/`.
+ */
+export function child(parent: Segments, segment: string): Segments {
+  fromSegments(parent)
+  if (typeof segment !== 'string' || segment === '') {
+    throw new Error('child segment must be a non-empty string')
+  }
+  return [...parent, segment]
+}
+
+/**
+ * Append multiple segments. Equivalent to repeated `child` but
+ * cheaper for known-shape construction.
+ */
+export function concat(parent: Segments, tail: Segments): Segments {
+  fromSegments(parent)
+  fromSegments(tail)
+  return [...parent, ...tail]
+}
+
+/** True if `ancestor` is a strict ancestor of `descendant`. */
+export function isAncestor(ancestor: Segments, descendant: Segments): boolean {
+  if (ancestor.length >= descendant.length) return false
+  for (let i = 0; i < ancestor.length; i++) {
+    if (ancestor[i] !== descendant[i]) return false
+  }
+  return true
+}
+
+/**
+ * Rendered prefix string suitable for SQL/string prefix matches.
+ * Always has a trailing `/` so it can't false-match a sibling
+ * whose rendered form shares the parent's prefix bytes.
+ */
+export function renderDescendantPrefix(segments: Segments): string {
+  return render(segments) + '/'
+}
+
+// ----------------------------------------------------------------------
+// Legacy dotted-path helpers (transitional). Used by callers that still
+// pass dotted strings ("posts.alpha" rather than "posts/alpha" or
+// ["posts","alpha"]). Deleted at the end of the migration.
+// ----------------------------------------------------------------------
+
+export function parseLegacyDotted(s: string): Segments {
+  if (s === '') throw new Error('path is empty')
+  const parts = s.split('.')
+  if (parts.some((p) => p === '')) {
+    throw new Error(`legacy path "${s}" contains empty segments`)
+  }
+  return parts
+}
+
+/**
+ * Normalize a dotted-or-slashed legacy path into the canonical slash
+ * form. Heuristic: a string containing `/` is treated as canonical
+ * (re-validated); otherwise it's dot-split and re-rendered.
+ *
+ * SDK boundary helpers use this to keep dotted-form callers working
+ * through the migration. Once everyone speaks segment-first, this
+ * function and `parseLegacyDotted` go away.
+ */
+export function normalizePath(path: PathInput): string {
+  if (Array.isArray(path)) {
+    return render(fromSegments(path))
+  }
+  if (typeof path !== 'string') {
+    throw new Error('path must be a string or array of strings')
+  }
+  if (path.includes('/')) {
+    return normalizeRendered(path)
+  }
+  return render(parseLegacyDotted(path))
+}
+
+/**
+ * Normalize a glob pattern. Wildcards `*` / `**` survive the
+ * round-trip unchanged. Same legacy-vs-canonical heuristic as
+ * `normalizePath`.
  */
 export function normalizePattern(pattern: string): string {
-  if (pattern === '') throw new Error('pattern cannot be empty')
-  const canonical = pattern.replace(/\//g, '.')
-  if (canonical.split('.').some((s) => s === '')) {
+  if (pattern === '**') return '**'
+  if (typeof pattern !== 'string') {
+    throw new Error('pattern must be a string')
+  }
+  if (pattern.includes('/')) {
+    // Validate by compiling — we don't have the glob module imported
+    // here, so just do a lightweight check on segment shape.
+    const parts = pattern.split('/')
+    if (parts.some((p) => p === '')) {
+      throw new Error(`pattern "${pattern}" contains empty segments`)
+    }
+    return pattern
+  }
+  const parts = pattern.split('.')
+  if (parts.some((p) => p === '')) {
     throw new Error(`pattern "${pattern}" contains empty segments`)
   }
-  return canonical
+  return parts.join('/')
 }
