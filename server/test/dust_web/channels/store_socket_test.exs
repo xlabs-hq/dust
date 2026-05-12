@@ -26,17 +26,17 @@ defmodule DustWeb.StoreSocketTest do
   end
 
   describe "connect/3" do
-    test "connects with valid capver string", %{raw_token: raw_token} do
+    test "connects with current capver", %{raw_token: raw_token} do
       socket = socket(DustWeb.StoreSocket, "test", %{})
 
       params = %{
         "token" => raw_token,
         "device_id" => "dev_1",
-        "capver" => "1"
+        "capver" => to_string(DustProtocol.current_capver())
       }
 
       assert {:ok, socket} = DustWeb.StoreSocket.connect(params, socket, %{})
-      assert socket.assigns.capver == 1
+      assert socket.assigns.capver == DustProtocol.current_capver()
     end
 
     test "rejects connection when capver is below minimum", %{raw_token: raw_token} do
@@ -45,13 +45,15 @@ defmodule DustWeb.StoreSocketTest do
       params = %{
         "token" => raw_token,
         "device_id" => "dev_1",
-        "capver" => "0"
+        # capver 2 was the last pre-segment-first version — now below minimum
+        "capver" => "2"
       }
 
       assert :error = DustWeb.StoreSocket.connect(params, socket, %{})
     end
 
-    test "accepts connection when capver is missing (defaults to 1)", %{raw_token: raw_token} do
+    test "rejects connection when capver is missing (defaults to 1)",
+         %{raw_token: raw_token} do
       socket = socket(DustWeb.StoreSocket, "test", %{})
 
       params = %{
@@ -59,8 +61,11 @@ defmodule DustWeb.StoreSocketTest do
         "device_id" => "dev_1"
       }
 
-      assert {:ok, socket} = DustWeb.StoreSocket.connect(params, socket, %{})
-      assert socket.assigns.capver == 1
+      # Pre-launch, after the capver bump to 3, missing-capver clients
+      # are rejected. parse_capver/1 still defaults to 1 so the server
+      # can identify ancient clients in logs — but the check_capver/1
+      # gate then rejects them.
+      assert :error = DustWeb.StoreSocket.connect(params, socket, %{})
     end
 
     test "stores capver as integer in socket assigns", %{raw_token: raw_token} do
@@ -69,7 +74,7 @@ defmodule DustWeb.StoreSocketTest do
       params = %{
         "token" => raw_token,
         "device_id" => "dev_1",
-        "capver" => "1"
+        "capver" => to_string(DustProtocol.current_capver())
       }
 
       assert {:ok, socket} = DustWeb.StoreSocket.connect(params, socket, %{})
@@ -96,7 +101,8 @@ defmodule DustWeb.StoreSocketTest do
       assert :error = DustWeb.StoreSocket.connect(params, socket, %{})
     end
 
-    test "defaults unparseable capver to 1", %{raw_token: raw_token} do
+    test "rejects connection when capver is unparseable",
+         %{raw_token: raw_token} do
       socket = socket(DustWeb.StoreSocket, "test", %{})
 
       params = %{
@@ -105,8 +111,9 @@ defmodule DustWeb.StoreSocketTest do
         "capver" => "not_a_number"
       }
 
-      assert {:ok, socket} = DustWeb.StoreSocket.connect(params, socket, %{})
-      assert socket.assigns.capver == 1
+      # parse_capver/1 falls back to 1 on garbage input; 1 < min_capver
+      # so the connection is rejected.
+      assert :error = DustWeb.StoreSocket.connect(params, socket, %{})
     end
   end
 end

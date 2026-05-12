@@ -1,13 +1,34 @@
 [
-  {"pattern": "**", "path": ["a"], "match": true},
-  {"pattern": "**", "path": ["a", "b", "c"], "match": true},
-  {"pattern": "*", "path": ["a"], "match": true},
-  {"pattern": "*", "path": ["a", "b"], "match": false},
-  {"pattern": "posts.*", "path": ["posts", "hello"], "match": true},
-  {"pattern": "posts.*", "path": ["posts", "hello", "title"], "match": false},
-  {"pattern": "posts.**", "path": ["posts", "hello", "title"], "match": true},
-  {"pattern": "a.b.c", "path": ["a", "b", "c"], "match": true},
-  {"pattern": "a.b.c", "path": ["a", "b", "d"], "match": false},
-  {"pattern": "a.*.c", "path": ["a", "b", "c"], "match": true},
-  {"pattern": "a.*.c", "path": ["a", "b", "d"], "match": false}
+  {"valid": true, "pattern_segments": ["**"], "pattern_rendered": "**", "path": ["a"], "match": true},
+  {"valid": true, "pattern_segments": ["**"], "pattern_rendered": "**", "path": ["a", "b", "c"], "match": true},
+
+  {"valid": true, "pattern_segments": ["*"], "pattern_rendered": "*", "path": ["a"], "match": true},
+  {"valid": true, "pattern_segments": ["*"], "pattern_rendered": "*", "path": ["a", "b"], "match": false},
+  {"valid": true, "pattern_segments": ["*"], "pattern_rendered": "*", "path": [], "match": false},
+
+  {"valid": true, "pattern_segments": ["posts", "*"], "pattern_rendered": "posts/*", "path": ["posts", "hello"], "match": true},
+  {"valid": true, "pattern_segments": ["posts", "*"], "pattern_rendered": "posts/*", "path": ["posts", "hello", "title"], "match": false},
+  {"valid": true, "pattern_segments": ["posts", "**"], "pattern_rendered": "posts/**", "path": ["posts", "hello", "title"], "match": true},
+  {"valid": true, "pattern_segments": ["posts", "**"], "pattern_rendered": "posts/**", "path": ["posts"], "match": false, "note": "** is one-or-more"},
+
+  {"valid": true, "pattern_segments": ["a", "b", "c"], "pattern_rendered": "a/b/c", "path": ["a", "b", "c"], "match": true},
+  {"valid": true, "pattern_segments": ["a", "b", "c"], "pattern_rendered": "a/b/c", "path": ["a", "b", "d"], "match": false},
+  {"valid": true, "pattern_segments": ["a", "*", "c"], "pattern_rendered": "a/*/c", "path": ["a", "b", "c"], "match": true},
+  {"valid": true, "pattern_segments": ["a", "*", "c"], "pattern_rendered": "a/*/c", "path": ["a", "b", "d"], "match": false},
+
+  {"valid": true, "pattern_segments": ["hello.world"], "pattern_rendered": "hello.world", "path": ["hello.world"], "match": true, "note": "dots are literal"},
+  {"valid": true, "pattern_segments": ["hello.world"], "pattern_rendered": "hello.world", "path": ["hello", "world"], "match": false, "note": "dots are literal — two segments don't match a one-segment pattern"},
+
+  {"valid": true, "pattern_segments": ["files", "image/file"], "pattern_rendered": "files/image~1file", "path": ["files", "image/file"], "match": true, "note": "literal slash via ~1"},
+
+  {"valid": true, "pattern_segments": ["a", "\\*"], "pattern_rendered": "a/\\*", "path": ["a", "*"], "match": true, "note": "literal-asterisk segment escape"},
+  {"valid": true, "pattern_segments": ["a", "\\*"], "pattern_rendered": "a/\\*", "path": ["a", "x"], "match": false, "note": "escape is exact, not wildcard"},
+
+  {"valid": true, "pattern_segments": ["a", "\\**"], "pattern_rendered": "a/\\**", "path": ["a", "**"], "match": true, "note": "literal-double-asterisk escape"},
+  {"valid": true, "pattern_segments": ["a", "\\**"], "pattern_rendered": "a/\\**", "path": ["a", "x", "y"], "match": false},
+
+  {"valid": false, "pattern_rendered": "a/**/z", "error": "wildcard_many_not_tail"},
+  {"valid": false, "pattern_rendered": "**/z", "error": "wildcard_many_not_tail"},
+  {"valid": false, "pattern_rendered": "", "error": "empty_path"},
+  {"valid": false, "pattern_rendered": "a//b", "error": "empty_segment"}
 ]

@@ -28,7 +28,7 @@ defmodule Dust.IntegrationHelpers do
         %{
           "token" => token.raw_token,
           "device_id" => device_id,
-          "capver" => 1
+          "capver" => DustProtocol.current_capver()
         },
         []
       )
