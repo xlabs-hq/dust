@@ -305,7 +305,42 @@ children = [
 ]
 ```
 
-### Subscribing
+### Recommended: `Phoenix.PubSub` bridge
+
+If you're in a Phoenix app, **use the PubSub bridge** — one line in
+`mount/3`, no callback discipline to remember, automatic cleanup:
+
+```elixir
+defmodule MyAppWeb.LinksLive do
+  use MyAppWeb, :live_view
+  alias MyApp.Reading.Link
+
+  def mount(_, _, socket) do
+    if connected?(socket) do
+      :ok = DustEcto.Phoenix.subscribe_to_pubsub(Link, MyApp.PubSub, "links")
+    end
+
+    {:ok, assign(socket, links: load_links())}
+  end
+
+  def handle_info({:dust_event, {:upserted, %Link{} = link}}, socket),
+    do: {:noreply, update(socket, :links, &upsert_by_slug(&1, link))}
+
+  def handle_info({:dust_event, {:deleted, slug}}, socket),
+    do: {:noreply, update(socket, :links, &delete_by_slug(&1, slug))}
+end
+```
+
+Add `{:phoenix_pubsub, "~> 2.0"}` to your deps (most Phoenix projects
+already have it). No `terminate/2` cleanup — `Phoenix.PubSub` monitors
+subscribers and unsubscribes automatically. The bridge starts one
+shared broadcaster per topic so 100 LiveViews subscribed to `"links"`
+cost one Dust subscription, not 100.
+
+### Raw `Repo.subscribe/2`
+
+If you can't use Phoenix.PubSub (release script, non-Phoenix app,
+custom fan-out), drop down to `Repo.subscribe/2` directly:
 
 ```elixir
 {:ok, ref} =
@@ -318,54 +353,24 @@ children = [
 DustEcto.Repo.unsubscribe(ref)
 ```
 
-### Callback isolation — important
-
 The callback runs **inside the SDK's per-store sync engine process**.
 If it blocks, every subscriber on that store waits. The standard safe
 pattern is to send a message and return immediately:
 
 ```elixir
-DustEcto.Repo.subscribe(Link, fn event ->
-  send(self_or_a_named_process, {:link_event, event})
-  :ok
-end)
+pid = self()
+
+{:ok, _ref} =
+  DustEcto.Repo.subscribe(Link, fn event ->
+    send(pid, {:link, event})
+    :ok
+  end)
 ```
 
-In a Phoenix LiveView, capture `self()` at `mount/3` and route events
-to a `handle_info/2`:
-
-```elixir
-def mount(_, _, socket) do
-  socket =
-    if connected?(socket) do
-      pid = self()
-      {:ok, ref} =
-        DustEcto.Repo.subscribe(Link, fn event -> send(pid, {:link, event}) end)
-
-      assign(socket, dust_ref: ref)
-    else
-      socket
-    end
-
-  {:ok, assign(socket, links: load_links())}
-end
-
-def handle_info({:link, {:upserted, link}}, socket),
-  do: {:noreply, update(socket, :links, &upsert_by_slug(&1, link))}
-
-def handle_info({:link, {:deleted, slug}}, socket),
-  do: {:noreply, update(socket, :links, &delete_by_slug(&1, slug))}
-
-def terminate(_reason, %{assigns: %{dust_ref: ref}}) when is_reference(ref),
-  do: DustEcto.Repo.unsubscribe(ref)
-
-def terminate(_, _), do: :ok
-```
-
-`terminate/2` matters — if the LiveView dies without unsubscribing,
-the SDK's registry keeps the callback and quietly `send/2`s into a
-dead pid for every subsequent write. Stash the ref, unsubscribe on
-shutdown.
+If `pid` dies without unsubscribing, the SDK registry keeps the
+callback and `send/2`s into a dead pid for every subsequent write.
+Track the ref and `Repo.unsubscribe/1` it on shutdown. This is exactly
+the bookkeeping the PubSub bridge eliminates.
 
 `subscribe_raw/2` is the lower-level escape hatch — callback receives
 the raw event map `%{op:, path:, value:, store_seq:, ...}` instead of

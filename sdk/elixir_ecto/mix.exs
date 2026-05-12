@@ -27,7 +27,8 @@ defmodule DustEcto.MixProject do
 
   def application do
     [
-      extra_applications: [:logger, :crypto]
+      extra_applications: [:logger, :crypto],
+      mod: {DustEcto.Application, []}
     ]
   end
 
@@ -44,6 +45,11 @@ defmodule DustEcto.MixProject do
       # :dust via Phoenix-shaped tooling, so production users won't see
       # an extra dep here.
       {:plug, "~> 1.0", only: [:dev, :test]},
+      # phoenix_pubsub is an optional integration: dust_ecto's
+      # DustEcto.Phoenix module compiles without it and only activates
+      # at runtime if the user has it loaded. The test-only dep here
+      # exists so our own tests can exercise the bridge.
+      {:phoenix_pubsub, "~> 2.0", optional: true},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false}
     ]
   end
