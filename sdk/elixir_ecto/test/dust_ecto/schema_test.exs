@@ -3,6 +3,7 @@ defmodule DustEcto.SchemaTest do
 
   alias DustEcto.Test.Link
   alias DustEcto.Test.FlatNote
+  alias DustEcto.Test.MapLink
 
   describe "macro reflection" do
     test "exposes the prefix" do
@@ -10,9 +11,13 @@ defmodule DustEcto.SchemaTest do
       assert FlatNote.__dust_prefix__() == "notes"
     end
 
-    test "exposes the mode (defaults to :map)" do
-      assert Link.__dust_mode__() == :map
+    test "exposes the mode (defaults to :flat)" do
+      # Link declares no :mode option → gets the default.
+      assert Link.__dust_mode__() == :flat
+      # FlatNote explicitly sets :flat (same as the default).
       assert FlatNote.__dust_mode__() == :flat
+      # MapLink explicitly opts into :map.
+      assert MapLink.__dust_mode__() == :map
     end
 
     test "exposes the required-fields list" do

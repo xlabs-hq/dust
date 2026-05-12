@@ -354,6 +354,21 @@ defmodule DustEcto.Transport.HTTP do
      )}
   end
 
+  # A 404 that *reaches* translate_error has fallen past every per-action
+  # `{:ok, %{status: 404}}` clause — meaning the action treats 404 as a
+  # transport-level failure, not an entity miss. Almost always: the
+  # deployed server doesn't have that route (e.g. older Dust before
+  # DELETE/batch_write shipped). Distinct from `:not_found`, which is
+  # reserved for entity misses inside GET-style actions.
+  defp translate_error({:ok, %{status: 404, body: body}}),
+    do:
+      {:error,
+       Error.new(
+         :not_implemented,
+         %{status: 404, body: body, hint: "server doesn't expose this route — likely a deploy lag"},
+         retryable?: false
+       )}
+
   defp translate_error({:ok, %{status: status, body: body}}) when status >= 400 and status < 500,
     do: {:error, Error.new(:invalid_params, %{status: status, body: body}, retryable?: false)}
 

@@ -24,6 +24,10 @@ defmodule DustEcto.Error do
     * `:invalid_params` — server rejected the request shape.
     * `:rate_limited` — server returned 429. `detail` may include
       `Retry-After`.
+    * `:not_implemented` — server returned a whole-route 404 (the
+      method/path isn't registered). Usually means the deployed Dust
+      server is older than the SDK expects. Distinct from
+      `:not_found`, which is an *entity* miss inside a working route.
   """
 
   @type kind ::
@@ -36,6 +40,7 @@ defmodule DustEcto.Error do
           | :unauthorized
           | :invalid_params
           | :rate_limited
+          | :not_implemented
 
   @type t :: %__MODULE__{
           kind: kind(),

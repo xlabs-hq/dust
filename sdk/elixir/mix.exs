@@ -32,7 +32,11 @@ defmodule Dust.MixProject do
       {:slipstream, "~> 1.2"},
       {:msgpax, "~> 2.4"},
       {:jason, "~> 1.4"},
-      {:decimal, "~> 3.1"},
+      # Pinned wide: `decimal 2.0` is what most existing Phoenix apps
+      # carry via transitive Ecto/Jason deps. `~> 3.1` would force every
+      # adopter to add `override: true` to their lock — friction we don't
+      # need. Dust only uses `Decimal` for serialization round-trips.
+      {:decimal, "~> 2.0 or ~> 3.0"},
       {:req, "~> 0.5"},
 
       # Optional integrations

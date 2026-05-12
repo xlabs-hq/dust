@@ -225,12 +225,12 @@ defmodule DustEcto.Repo do
           {:ok, struct()} | {:error, Ecto.Changeset.t() | Error.t()}
   def insert(%Ecto.Changeset{} = cs) do
     case Ecto.Changeset.apply_action(cs, :insert) do
-      {:ok, struct} -> write_struct(struct, :all_fields)
+      {:ok, struct} -> write_struct(struct, :all_fields, [])
       {:error, _} = err -> err
     end
   end
 
-  def insert(%_{} = struct), do: write_struct(struct, :all_fields)
+  def insert(%_{} = struct), do: write_struct(struct, :all_fields, [])
 
   @doc "Like `insert/1` but raises on changeset/transport errors."
   @spec insert!(Ecto.Changeset.t() | struct()) :: struct()
@@ -246,22 +246,38 @@ defmodule DustEcto.Repo do
   Validated upsert. Runs the changeset; on success, dumps the struct
   and writes only the changed fields (in flat mode) or the full
   record (in map mode). Returns the same shapes as `insert/1`.
+
+  ## Options
+
+    * `:if_match` — optimistic-concurrency revision. Only supported on
+      `:map`-mode schemas (single leaf write at `<prefix>.<slug>`). In
+      `:flat` mode the update is N PUTs, none of which have a meaningful
+      whole-record revision — pass `:if_match` and the call raises
+      `ArgumentError`. For atomic multi-field CAS use `batch_write/2`.
   """
-  @spec update(Ecto.Changeset.t()) ::
+  @spec update(Ecto.Changeset.t(), keyword()) ::
           {:ok, struct()} | {:error, Ecto.Changeset.t() | Error.t()}
-  def update(%Ecto.Changeset{} = cs) do
+  def update(%Ecto.Changeset{} = cs, opts \\ []) do
     case Ecto.Changeset.apply_action(cs, :update) do
       {:ok, struct} ->
-        case struct.__struct__.__dust_mode__() do
+        mode = struct.__struct__.__dust_mode__()
+
+        if Keyword.has_key?(opts, :if_match) and mode == :flat do
+          raise ArgumentError,
+                ":if_match is only supported on :map-mode schemas. " <>
+                  "For atomic multi-field CAS in :flat mode, use Repo.batch_write/2."
+        end
+
+        case mode do
           :map ->
-            write_struct(struct, :all_fields)
+            write_struct(struct, :all_fields, opts)
 
           :flat ->
             changed = cs.changes |> Map.keys() |> Enum.reject(&(&1 == :slug))
 
             case changed do
               [] -> {:ok, struct}
-              fields -> write_struct(struct, fields)
+              fields -> write_struct(struct, fields, opts)
             end
         end
 
@@ -271,24 +287,189 @@ defmodule DustEcto.Repo do
   end
 
   @doc """
-  Removes a record. Accepts a struct, a changeset, or a `{schema,
-  slug}` tuple. Always issues a single `DELETE` against
-  `<prefix>.<slug>` — server clears the leaf and every descendant.
+  Removes a record. Accepts a struct or changeset; `delete/2` also
+  accepts a `(schema, slug)` shape. Always issues a single `DELETE`
+  against `<prefix>.<slug>` — server clears the leaf and every
+  descendant.
+
+  ## Options
+
+    * `:if_match` — optimistic-concurrency revision. Server enforces
+      leaf-only CAS in capver 2; meaningful for `:map`-mode records
+      where the slug path itself is a leaf. On a subtree delete the
+      server may ignore or reject — surface as `:conflict`.
   """
   @spec delete(struct() | Ecto.Changeset.t()) ::
           {:ok, %{store_seq: integer()}} | {:error, Error.t()}
-  def delete(%Ecto.Changeset{data: struct}), do: delete(struct)
+  def delete(struct_or_cs), do: delete(struct_or_cs, [])
 
-  def delete(%schema{slug: slug}) when is_atom(schema), do: delete(schema, slug)
-
-  @spec delete(module(), String.t()) ::
+  @spec delete(struct() | Ecto.Changeset.t() | module(), keyword() | String.t()) ::
           {:ok, %{store_seq: integer()}} | {:error, Error.t()}
-  def delete(schema, slug) when is_atom(schema) and is_binary(slug) do
+  def delete(%Ecto.Changeset{data: struct}, opts) when is_list(opts), do: delete(struct, opts)
+
+  def delete(%schema{slug: slug}, opts) when is_atom(schema) and is_list(opts),
+    do: delete(schema, slug, opts)
+
+  def delete(schema, slug) when is_atom(schema) and is_binary(slug),
+    do: delete(schema, slug, [])
+
+  @doc """
+  Three-arg convenience form accepting `(schema, slug, opts)`. Equivalent
+  to `delete(%schema{slug: slug}, opts)`.
+  """
+  @spec delete(module(), String.t(), keyword()) ::
+          {:ok, %{store_seq: integer()}} | {:error, Error.t()}
+  def delete(schema, slug, opts) when is_atom(schema) and is_binary(slug) and is_list(opts) do
     prefix = schema.__dust_prefix__()
     {transport, _} = Transport.pick()
     store = Transport.store!()
 
-    transport.delete(store, "#{prefix}.#{slug}", [])
+    transport.delete(store, "#{prefix}.#{slug}", Keyword.take(opts, [:if_match]))
+  end
+
+  @doc """
+  Atomic multi-record write. Accepts a list of operation tuples:
+
+      Repo.batch_write([
+        {:insert, Link.changeset(%Link{}, attrs1)},
+        {:insert, Link.changeset(%Link{}, attrs2)},
+        {:update, existing_cs, if_match: 7},
+        {:delete, Link, "stale-slug"},
+        {:delete, Link, "old", if_match: 4}
+      ])
+
+  Returns `{:ok, %{store_seq:, ops: [...]}}` on a server-side commit,
+  `{:error, %Ecto.Changeset{}}` if any changeset fails validation
+  (short-circuits before the batch is sent), or `{:error,
+  %DustEcto.Error{}}` on transport failure.
+
+  ## Mode interaction
+
+    * `:map`-mode schemas produce one wire op per record (PUT at
+      `<prefix>.<slug>`). `:if_match` applies to that single op.
+    * `:flat`-mode schemas produce N wire ops per record (one PUT per
+      non-nil field). `:if_match` in `:flat` mode raises
+      `ArgumentError` — per-field CAS requires per-field revisions,
+      which this v1 API doesn't surface. Open an issue if you need it.
+
+  All ops in a single `batch_write/1` commit atomically server-side —
+  either every op lands or none of them does.
+  """
+  @spec batch_write([tuple()]) ::
+          {:ok, %{store_seq: integer(), ops: list()}}
+          | {:error, Ecto.Changeset.t() | Error.t()}
+  def batch_write(ops) when is_list(ops) do
+    case prepare_batch_ops(ops, []) do
+      {:ok, transport_ops} ->
+        {transport, _} = Transport.pick()
+        store = Transport.store!()
+        transport.batch_write(store, transport_ops, [])
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  defp prepare_batch_ops([], acc), do: {:ok, Enum.reverse(acc)}
+
+  defp prepare_batch_ops([op | rest], acc) do
+    case batch_op_to_wire(op) do
+      {:ok, wire_ops} -> prepare_batch_ops(rest, Enum.reverse(wire_ops) ++ acc)
+      {:error, _} = err -> err
+    end
+  end
+
+  defp batch_op_to_wire({:insert, %Ecto.Changeset{} = cs}), do: batch_op_to_wire({:insert, cs, []})
+
+  defp batch_op_to_wire({:insert, %Ecto.Changeset{} = cs, opts}) do
+    case Ecto.Changeset.apply_action(cs, :insert) do
+      {:ok, struct} -> struct_to_wire_ops(struct, :set, opts)
+      {:error, cs} -> {:error, cs}
+    end
+  end
+
+  defp batch_op_to_wire({:update, %Ecto.Changeset{} = cs}), do: batch_op_to_wire({:update, cs, []})
+
+  defp batch_op_to_wire({:update, %Ecto.Changeset{} = cs, opts}) do
+    case Ecto.Changeset.apply_action(cs, :update) do
+      {:ok, struct} -> struct_to_wire_ops(struct, :set, opts)
+      {:error, cs} -> {:error, cs}
+    end
+  end
+
+  defp batch_op_to_wire({:delete, %_{} = struct}), do: batch_op_to_wire({:delete, struct, []})
+
+  defp batch_op_to_wire({:delete, %schema{slug: slug}, opts}) when is_atom(schema),
+    do: batch_op_to_wire({:delete, schema, slug, opts})
+
+  defp batch_op_to_wire({:delete, schema, slug}) when is_atom(schema) and is_binary(slug),
+    do: batch_op_to_wire({:delete, schema, slug, []})
+
+  defp batch_op_to_wire({:delete, schema, slug, opts})
+       when is_atom(schema) and is_binary(slug) and is_list(opts) do
+    prefix = schema.__dust_prefix__()
+    op = %{op: :delete, path: "#{prefix}.#{slug}"}
+
+    case Keyword.fetch(opts, :if_match) do
+      {:ok, n} when is_integer(n) -> {:ok, [Map.put(op, :if_match, n)]}
+      :error -> {:ok, [op]}
+    end
+  end
+
+  defp batch_op_to_wire(other) do
+    {:error,
+     Error.new(
+       :invalid_params,
+       "unrecognised batch_write op: #{inspect(other)}",
+       retryable?: false
+     )}
+  end
+
+  defp struct_to_wire_ops(struct, set_atom, opts) do
+    schema = struct.__struct__
+    prefix = schema.__dust_prefix__()
+    slug = struct.slug
+    mode = schema.__dust_mode__()
+
+    cond do
+      is_nil(slug) or slug == "" ->
+        {:error, Error.new(:invalid_params, "missing slug", retryable?: false)}
+
+      Keyword.has_key?(opts, :if_match) and mode == :flat ->
+        raise ArgumentError,
+              ":if_match is not supported on :flat-mode schemas in batch_write. " <>
+                "Per-field CAS would require per-field revisions; that API isn't exposed yet."
+
+      mode == :map ->
+        body = dump_for_wire(struct)
+        op = %{op: set_atom, path: "#{prefix}.#{slug}", value: body}
+
+        case Keyword.fetch(opts, :if_match) do
+          {:ok, n} when is_integer(n) -> {:ok, [Map.put(op, :if_match, n)]}
+          :error -> {:ok, [op]}
+        end
+
+      mode == :flat ->
+        body = dump_for_wire(struct)
+
+        ops =
+          schema.__dust_field_names__()
+          |> Enum.reject(&(&1 == :slug))
+          |> Enum.flat_map(fn field ->
+            case Map.fetch(body, field) do
+              {:ok, value} -> [%{op: set_atom, path: "#{prefix}.#{slug}.#{field}", value: value}]
+              :error -> []
+            end
+          end)
+
+        case ops do
+          [] ->
+            {:error, Error.new(:nothing_to_write, "no fields to write", retryable?: false)}
+
+          ops ->
+            {:ok, ops}
+        end
+    end
   end
 
   @doc """
@@ -575,7 +756,7 @@ defmodule DustEcto.Repo do
     ArgumentError -> :__unknown__
   end
 
-  defp write_struct(struct, fields) do
+  defp write_struct(struct, fields, opts) do
     schema = struct.__struct__
     slug = struct.slug
 
@@ -585,13 +766,13 @@ defmodule DustEcto.Repo do
 
       true ->
         case schema.__dust_mode__() do
-          :map -> write_map_mode(struct, slug)
-          :flat -> write_flat_mode(struct, slug, fields)
+          :map -> write_map_mode(struct, slug, opts)
+          :flat -> write_flat_mode(struct, slug, fields, opts)
         end
     end
   end
 
-  defp write_map_mode(struct, slug) do
+  defp write_map_mode(struct, slug, opts) do
     schema = struct.__struct__
     prefix = schema.__dust_prefix__()
     {transport, _} = Transport.pick()
@@ -602,20 +783,25 @@ defmodule DustEcto.Repo do
     if map_size(body) == 0 do
       {:error, Error.new(:nothing_to_write, "struct dumped to an empty body", retryable?: false)}
     else
-      case transport.put(store, "#{prefix}.#{slug}", body, []) do
+      put_opts = Keyword.take(opts, [:if_match])
+
+      case transport.put(store, "#{prefix}.#{slug}", body, put_opts) do
         {:ok, _} -> {:ok, struct}
         err -> err
       end
     end
   end
 
-  defp write_flat_mode(struct, slug, :all_fields) do
+  defp write_flat_mode(struct, slug, :all_fields, opts) do
     schema = struct.__struct__
     fields = schema.__dust_field_names__() |> Enum.reject(&(&1 == :slug))
-    write_flat_mode(struct, slug, fields)
+    write_flat_mode(struct, slug, fields, opts)
   end
 
-  defp write_flat_mode(struct, slug, fields) when is_list(fields) do
+  defp write_flat_mode(struct, slug, fields, _opts) when is_list(fields) do
+    # `opts` deliberately unused — flat-mode :if_match is rejected in
+    # update/2 before we get here. Any future per-field opt would land
+    # in this signature.
     schema = struct.__struct__
     prefix = schema.__dust_prefix__()
     {transport, _} = Transport.pick()

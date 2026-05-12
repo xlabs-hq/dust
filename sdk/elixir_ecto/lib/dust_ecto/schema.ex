@@ -10,7 +10,7 @@ defmodule DustEcto.Schema do
         use DustEcto.Schema,
           prefix: "links",                  # required
           required: [:slug, :title, :url],  # used by changeset + Repo.all guard
-          mode: :map                        # :map (default) | :flat
+          mode: :flat                       # :flat (default) | :map
 
         embedded_schema do
           field :title, :string
@@ -26,15 +26,34 @@ defmodule DustEcto.Schema do
         end
       end
 
-  Records are stored under `<prefix>.<slug>.<field>` regardless of
-  mode; the modes differ in how writes are issued (one PUT vs N PUTs).
+  ## Storage modes
+
+  Pick `:flat` (the default) unless you know you want `:map`.
+
+  **`:flat` (default)** — one PUT per field; record lives on the wire as
+  N leaves at `<prefix>.<slug>.<field>`. This is the natural Dust shape:
+  other writers (MCP, curl, sibling clients) can edit a single field
+  without knowing the rest of the record, and per-field subscriptions
+  are granular. Cost: writes are not atomic across fields; a partial
+  update is observable until the last PUT lands.
+
+  **`:map`** — one PUT for the whole record at `<prefix>.<slug>`, with
+  the dumped struct as the value. Atomic, single revision per record.
+  Cost: writes from outside the schema (a curl that PUTs
+  `links.foo.title` directly) race with the next `:map` write that
+  clobbers the whole record. Use when *you are the only writer* and you
+  need whole-record atomicity.
+
+  Reads work identically in both modes — Dust stores everything as flat
+  leaves on disk, and `Repo.get/2` GETs the slug path which the server
+  assembles back to a map.
 
   ## What the macro provides
 
   - `use Ecto.Schema` + `import Ecto.Changeset`
   - `@primary_key {:slug, :string, autogenerate: false}`
   - `__dust_prefix__/0` — the prefix string
-  - `__dust_mode__/0` — `:map` or `:flat`
+  - `__dust_mode__/0` — `:flat` (default) or `:map`
   - `__dust_required_fields__/0` — the `:required` list, used by both
     the user's `validate_required` *and* `DustEcto.Repo.all/1`'s
     read-time guard so they stay in sync. Necessary because Ecto's
@@ -48,7 +67,7 @@ defmodule DustEcto.Schema do
   defmacro __using__(opts) do
     prefix = Keyword.fetch!(opts, :prefix)
     required = Keyword.get(opts, :required, [])
-    mode = Keyword.get(opts, :mode, :map)
+    mode = Keyword.get(opts, :mode, :flat)
 
     unless is_binary(prefix) and prefix != "" do
       raise ArgumentError,
