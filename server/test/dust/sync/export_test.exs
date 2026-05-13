@@ -25,6 +25,7 @@ defmodule Dust.Sync.ExportTest do
       assert header["_header"] == true
       assert header["store"] == "exporttest/blog"
       assert header["entry_count"] == 2
+      assert header["path_schema_version"] == 3
 
       entry1 = Jason.decode!(Enum.at(lines, 1))
       assert entry1["path"] == "a"

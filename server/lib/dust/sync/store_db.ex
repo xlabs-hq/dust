@@ -81,6 +81,11 @@ defmodule Dust.Sync.StoreDB do
     Exqlite.Sqlite3.close(conn)
   end
 
+  # Stamped onto fresh SQLite files so future tooling can tell a newly
+  # created store is already at the segment-first format. Existing files
+  # retain their current value (the migrator bumps them).
+  @path_schema_version 3
+
   @doc """
   Create the SQLite file and schema tables for a store.
   No-op if the file already exists.
@@ -88,19 +93,10 @@ defmodule Dust.Sync.StoreDB do
   def ensure_created(store_id) do
     case path_for_id(store_id) do
       {:ok, db_path} ->
+        fresh? = not File.exists?(db_path)
         File.mkdir_p!(Path.dirname(db_path))
         {:ok, conn} = Exqlite.Sqlite3.open(db_path)
-
-        @schema_sql
-        |> String.split(";")
-        |> Enum.each(fn stmt ->
-          stmt = String.trim(stmt)
-
-          if stmt != "" do
-            :ok = Exqlite.Sqlite3.execute(conn, stmt)
-          end
-        end)
-
+        apply_schema(conn, fresh?)
         Exqlite.Sqlite3.close(conn)
         :ok
 
@@ -116,21 +112,27 @@ defmodule Dust.Sync.StoreDB do
   def write_conn(store_id) do
     case path_for_id(store_id) do
       {:ok, db_path} ->
+        fresh? = not File.exists?(db_path)
         File.mkdir_p!(Path.dirname(db_path))
         {:ok, conn} = Exqlite.Sqlite3.open(db_path)
-
-        # Ensure schema exists and WAL mode is on
-        @schema_sql
-        |> String.split(";")
-        |> Enum.each(fn stmt ->
-          stmt = String.trim(stmt)
-          if stmt != "", do: :ok = Exqlite.Sqlite3.execute(conn, stmt)
-        end)
-
+        apply_schema(conn, fresh?)
         {:ok, conn}
 
       error ->
         error
+    end
+  end
+
+  defp apply_schema(conn, fresh?) do
+    @schema_sql
+    |> String.split(";")
+    |> Enum.each(fn stmt ->
+      stmt = String.trim(stmt)
+      if stmt != "", do: :ok = Exqlite.Sqlite3.execute(conn, stmt)
+    end)
+
+    if fresh? do
+      :ok = Exqlite.Sqlite3.execute(conn, "PRAGMA user_version = #{@path_schema_version}")
     end
   end
 

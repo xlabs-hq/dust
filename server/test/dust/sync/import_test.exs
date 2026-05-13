@@ -16,7 +16,7 @@ defmodule Dust.Sync.ImportTest do
   describe "from_jsonl/3" do
     test "imports entries from JSONL lines", %{store: store} do
       lines = [
-        ~s({"_header": true, "store": "importtest/source", "seq": 5, "entry_count": 2}),
+        ~s({"_header": true, "store": "importtest/source", "seq": 5, "entry_count": 2, "path_schema_version": 3}),
         ~s({"path": "a", "value": "hello", "type": "string"}),
         ~s({"path": "b/c", "value": 42, "type": "integer"})
       ]
@@ -38,7 +38,7 @@ defmodule Dust.Sync.ImportTest do
       })
 
       lines = [
-        ~s({"_header": true, "store": "x", "seq": 1, "entry_count": 1}),
+        ~s({"_header": true, "store": "x", "seq": 1, "entry_count": 1, "path_schema_version": 3}),
         ~s({"path": "a", "value": "new", "type": "string"})
       ]
 
@@ -50,7 +50,7 @@ defmodule Dust.Sync.ImportTest do
 
     test "skips header line and blank lines", %{store: store} do
       lines = [
-        ~s({"_header": true, "store": "x", "seq": 0, "entry_count": 1}),
+        ~s({"_header": true, "store": "x", "seq": 0, "entry_count": 1, "path_schema_version": 3}),
         "",
         ~s({"path": "only", "value": true, "type": "boolean"}),
         ""
@@ -60,10 +60,28 @@ defmodule Dust.Sync.ImportTest do
                Sync.Import.from_jsonl(store.id, lines, "system:import")
     end
 
+    test "rewrites legacy dotted paths when dump has no path_schema_version", %{store: store} do
+      # Pre-segment-first dumps wrote dotted paths and no version field.
+      # Import should detect the missing field, parse paths as dotted, and
+      # re-render them in JSON Pointer form before writing.
+      lines = [
+        ~s({"_header": true, "store": "old/dump", "seq": 5, "entry_count": 2}),
+        ~s({"path": "users.alice", "value": "hello", "type": "string"}),
+        ~s({"path": "users.bob", "value": "world", "type": "string"})
+      ]
+
+      assert {:ok, %{imported: 2, failed: []}} =
+               Sync.Import.from_jsonl(store.id, lines, "system:import")
+
+      assert Sync.get_entry(store.id, "users/alice").value == "hello"
+      assert Sync.get_entry(store.id, "users/bob").value == "world"
+      assert Sync.get_entry(store.id, "users.alice") == nil
+    end
+
     test "preserves type from JSONL on import", %{store: store} do
       # Simulate a JSONL export that contains a file entry and a counter entry
       lines = [
-        ~s({"_header": true, "store": "x", "seq": 2, "entry_count": 2}),
+        ~s({"_header": true, "store": "x", "seq": 2, "entry_count": 2, "path_schema_version": 3}),
         ~s({"path": "avatar", "value": {"_type": "file", "hash": "sha256:abc123"}, "type": "file"}),
         ~s({"path": "views", "value": 42, "type": "counter"})
       ]
