@@ -70,6 +70,72 @@ defmodule Dust.Sync.WriterTest do
       assert Sync.get_entry(store.id, "x") == nil
     end
 
+    test "subtree delete treats `%` and `_` in segments as literals", %{store: store} do
+      # Without LIKE-escaping the descendant prefix, `a%b/...` would
+      # act as the SQL wildcard `a` + any-chars + `b/...` and
+      # incidentally match (and delete) `axb/...`.
+      for {path, suffix} <- [
+            {"a%b/child", "pct"},
+            {"axb/child", "x"},
+            {"foo_bar/child", "us"},
+            {"fooxbar/child", "xb"}
+          ] do
+        Sync.write(store.id, %{
+          op: :set,
+          path: path,
+          value: suffix,
+          device_id: "d",
+          client_op_id: "seed:#{path}"
+        })
+      end
+
+      {:ok, _} =
+        Sync.write(store.id, %{
+          op: :delete,
+          path: "a%b",
+          value: nil,
+          device_id: "d",
+          client_op_id: "del:pct"
+        })
+
+      assert Sync.get_entry(store.id, "a%b/child") == nil
+      assert %{value: "x"} = Sync.get_entry(store.id, "axb/child")
+
+      {:ok, _} =
+        Sync.write(store.id, %{
+          op: :delete,
+          path: "foo_bar",
+          value: nil,
+          device_id: "d",
+          client_op_id: "del:us"
+        })
+
+      assert Sync.get_entry(store.id, "foo_bar/child") == nil
+      assert %{value: "xb"} = Sync.get_entry(store.id, "fooxbar/child")
+    end
+
+    test "subtree read treats `%` and `_` in segments as literals", %{store: store} do
+      Sync.write(store.id, %{
+        op: :set,
+        path: "a%b/child",
+        value: "pct",
+        device_id: "d",
+        client_op_id: "seed:pct"
+      })
+
+      Sync.write(store.id, %{
+        op: :set,
+        path: "axb/child",
+        value: "x",
+        device_id: "d",
+        client_op_id: "seed:x"
+      })
+
+      # get_entry on a subtree path assembles only matching descendants.
+      assert %{value: %{"child" => "pct"}, type: "map"} = Sync.get_entry(store.id, "a%b")
+      assert %{value: %{"child" => "x"}, type: "map"} = Sync.get_entry(store.id, "axb")
+    end
+
     test "merge updates named children only", %{store: store} do
       Sync.write(store.id, %{
         op: :set,

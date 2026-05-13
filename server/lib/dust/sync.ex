@@ -225,8 +225,8 @@ defmodule Dust.Sync do
     rows =
       query_all(
         conn,
-        "SELECT path, value, type, seq FROM store_entries WHERE path LIKE ? ORDER BY path",
-        ["#{prefix}%"]
+        ~s|SELECT path, value, type, seq FROM store_entries WHERE path LIKE ? ESCAPE '\\' ORDER BY path|,
+        ["#{escape_like(prefix)}%"]
       )
 
     case rows do
@@ -601,7 +601,12 @@ defmodule Dust.Sync do
     end) || []
   end
 
-  defp escape_like(literal) do
+  @doc """
+  Escape a rendered path so it can be safely bound as a SQL `LIKE`
+  pattern. Use together with `LIKE ? ESCAPE '\\\\'` so literal `%` and
+  `_` inside a segment can't act as wildcards.
+  """
+  def escape_like(literal) do
     literal
     |> String.replace("\\", "\\\\")
     |> String.replace("%", "\\%")

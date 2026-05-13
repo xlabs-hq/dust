@@ -368,7 +368,12 @@ defmodule Dust.Sync.Writer do
   defp delete_descendants(db, ancestor_segments) do
     {:ok, prefix} = Path.render_descendant_prefix(ancestor_segments)
     decrement_file_refs(db, prefix)
-    exec(db, "DELETE FROM store_entries WHERE path LIKE ?", ["#{prefix}%"])
+
+    exec(
+      db,
+      ~s|DELETE FROM store_entries WHERE path LIKE ? ESCAPE '\\'|,
+      ["#{Dust.Sync.escape_like(prefix)}%"]
+    )
   end
 
   defp read_entry_value(db, path) do
@@ -400,9 +405,11 @@ defmodule Dust.Sync.Writer do
 
   defp decrement_file_refs(db, prefix) do
     rows =
-      query_all(db, "SELECT value FROM store_entries WHERE type = 'file' AND path LIKE ?", [
-        "#{prefix}%"
-      ])
+      query_all(
+        db,
+        ~s|SELECT value FROM store_entries WHERE type = 'file' AND path LIKE ? ESCAPE '\\'|,
+        ["#{Dust.Sync.escape_like(prefix)}%"]
+      )
 
     Enum.each(rows, fn [json] ->
       case Jason.decode!(json) do
