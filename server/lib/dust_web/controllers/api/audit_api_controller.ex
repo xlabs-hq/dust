@@ -7,7 +7,7 @@ defmodule DustWeb.Api.AuditApiController do
 
   action_fallback DustWeb.Api.FallbackController
 
-  operation :index,
+  operation(:index,
     operation_id: "audit.list",
     summary: "List audit log entries for a store",
     description:
@@ -52,6 +52,7 @@ defmodule DustWeb.Api.AuditApiController do
       not_found: Refs.not_found(),
       too_many_requests: Refs.rate_limited()
     ]
+  )
 
   def index(conn, %{"org" => org_slug, "store" => store_name} = params) do
     organization = conn.assigns.organization
@@ -111,15 +112,12 @@ defmodule DustWeb.Api.AuditApiController do
     |> maybe_add(:since, params["since"])
   end
 
+  # `Dust.Sync.Audit.list_ops/2` does its own canonical normalization
+  # for both exact paths and wildcard patterns; the controller just
+  # gates out absent/blank filters.
   defp normalize_filter_path(nil), do: nil
   defp normalize_filter_path(""), do: nil
-
-  defp normalize_filter_path(path) when is_binary(path) do
-    case DustProtocol.Path.LegacyDot.normalize_pattern(path) do
-      {:ok, normalized} -> normalized
-      {:error, _} -> path
-    end
-  end
+  defp normalize_filter_path(path) when is_binary(path), do: path
 
   defp maybe_add(opts, _key, nil), do: opts
   defp maybe_add(opts, _key, ""), do: opts
