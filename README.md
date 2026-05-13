@@ -21,14 +21,14 @@ cp dust /usr/local/bin/
 dust login
 
 # Write and read
-dust put james/blog posts.hello '{"title": "Hello", "body": "First post"}'
-dust get james/blog posts.hello
+dust put james/blog posts/hello '{"title": "Hello", "body": "First post"}'
+dust get james/blog posts/hello
 
 # Subscribe to changes (streams JSON lines)
-dust watch james/blog "posts.*"
+dust watch james/blog "posts/*"
 
 # In another terminal — this triggers the watcher
-dust merge james/blog posts.hello '{"updated": true}'
+dust merge james/blog posts/hello '{"updated": true}'
 ```
 
 ### Elixir SDK
@@ -63,13 +63,13 @@ children = [
 
 ```elixir
 # Write
-MyApp.Dust.put("james/blog", "posts.hello", %{title: "Hello", body: "First post"})
+MyApp.Dust.put("james/blog", "posts/hello", %{title: "Hello", body: "First post"})
 
 # Read (instant, from local cache)
-{:ok, post} = MyApp.Dust.get("james/blog", "posts.hello")
+{:ok, post} = MyApp.Dust.get("james/blog", "posts/hello")
 
 # Subscribe to changes
-MyApp.Dust.on("james/blog", "posts.*", fn event ->
+MyApp.Dust.on("james/blog", "posts/*", fn event ->
   IO.puts("#{event.path} changed!")
 end)
 ```
@@ -91,13 +91,13 @@ const dust = new Dust({
 })
 
 // Write
-await dust.put("james/blog", "posts.hello", { title: "Hello", body: "First post" })
+await dust.put("james/blog", "posts/hello", { title: "Hello", body: "First post" })
 
 // Read (instant, from local cache)
-const post = await dust.get("james/blog", "posts.hello")
+const post = await dust.get("james/blog", "posts/hello")
 
 // Subscribe to changes
-const unsub = dust.on("james/blog", "posts.*", (event) => {
+const unsub = dust.on("james/blog", "posts/*", (event) => {
   console.log(`${event.path} changed!`)
 })
 ```
@@ -107,15 +107,15 @@ const unsub = dust.on("james/blog", "posts.*", (event) => {
 ### Set, Get, Delete
 
 ```elixir
-Dust.put("james/blog", "posts.hello", %{title: "Hello", body: "World"})
-{:ok, post} = Dust.get("james/blog", "posts.hello")
-Dust.delete("james/blog", "posts.hello")
+Dust.put("james/blog", "posts/hello", %{title: "Hello", body: "World"})
+{:ok, post} = Dust.get("james/blog", "posts/hello")
+Dust.delete("james/blog", "posts/hello")
 ```
 
 ```bash
-dust put james/blog posts.hello '{"title": "Hello"}'
-dust get james/blog posts.hello
-dust delete james/blog posts.hello
+dust put james/blog posts/hello '{"title": "Hello"}'
+dust get james/blog posts/hello
+dust delete james/blog posts/hello
 ```
 
 ### Merge
@@ -123,10 +123,10 @@ dust delete james/blog posts.hello
 Merge updates named child keys without replacing siblings:
 
 ```elixir
-Dust.put("james/blog", "settings.theme", "light")
-Dust.put("james/blog", "settings.locale", "en")
+Dust.put("james/blog", "settings/theme", "light")
+Dust.put("james/blog", "settings/locale", "en")
 Dust.merge("james/blog", "settings", %{"theme" => "dark"})
-# settings.theme is now "dark", settings.locale is still "en"
+# settings/theme is now "dark", settings/locale is still "en"
 ```
 
 ### Enum
@@ -134,26 +134,26 @@ Dust.merge("james/blog", "settings", %{"theme" => "dark"})
 List entries matching a glob pattern:
 
 ```elixir
-entries = Dust.enum("james/blog", "posts.*")
-# => [{"posts.hello", %{...}}, {"posts.goodbye", %{...}}]
+entries = Dust.enum("james/blog", "posts/*")
+# => [{"posts/hello", %{...}}, {"posts/goodbye", %{...}}]
 ```
 
 With pagination and ordering:
 
 ```elixir
-page = Dust.enum("james/blog", "posts.**", limit: 20, order: :desc)
+page = Dust.enum("james/blog", "posts/**", limit: 20, order: :desc)
 # => %Dust.Page{items: [...], next_cursor: "..."}
 
 # Cursor-based pagination
-next_page = Dust.enum("james/blog", "posts.**", limit: 20, after: page.next_cursor)
+next_page = Dust.enum("james/blog", "posts/**", limit: 20, after: page.next_cursor)
 
 # Select modes: :entries (default), :keys, :prefixes
-keys = Dust.enum("james/blog", "posts.**", select: :keys)
+keys = Dust.enum("james/blog", "posts/**", select: :keys)
 ```
 
 ```bash
-dust enum james/blog "posts.**" --limit 20 --order desc
-dust enum james/blog "posts.**" --select keys
+dust enum james/blog "posts/**" --limit 20 --order desc
+dust enum james/blog "posts/**" --select keys
 ```
 
 ### Entry
@@ -161,8 +161,8 @@ dust enum james/blog "posts.**" --select keys
 Get the full entry (path, value, type, revision) instead of just the value:
 
 ```elixir
-{:ok, entry} = Dust.entry("james/blog", "posts.hello")
-# => %Dust.Entry{path: "posts.hello", value: %{...}, type: "map", revision: 42}
+{:ok, entry} = Dust.entry("james/blog", "posts/hello")
+# => %Dust.Entry{path: "posts/hello", value: %{...}, type: "map", revision: 42}
 ```
 
 ### GetMany
@@ -170,8 +170,8 @@ Get the full entry (path, value, type, revision) instead of just the value:
 Batch-read up to 1000 paths in one call:
 
 ```elixir
-values = Dust.get_many("james/blog", ["posts.hello", "posts.goodbye", "settings.theme"])
-# => %{"posts.hello" => %{...}, "settings.theme" => "dark"}
+values = Dust.get_many("james/blog", ["posts/hello", "posts/goodbye", "settings/theme"])
+# => %{"posts/hello" => %{...}, "settings/theme" => "dark"}
 ```
 
 ### Range
@@ -179,12 +179,12 @@ values = Dust.get_many("james/blog", ["posts.hello", "posts.goodbye", "settings.
 Read entries in a lexicographic range `[from, to)`:
 
 ```elixir
-page = Dust.range("james/blog", "metrics.2026-04-01", "metrics.2026-04-30", limit: 100)
+page = Dust.range("james/blog", "metrics/2026-04-01", "metrics/2026-04-30", limit: 100)
 # => %Dust.Page{items: [...], next_cursor: "..."}
 ```
 
 ```bash
-dust range james/blog metrics.2026-04-01 metrics.2026-04-30 --limit 100
+dust range james/blog metrics/2026-04-01 metrics/2026-04-30 --limit 100
 ```
 
 ### Compare-and-Swap
@@ -192,15 +192,15 @@ dust range james/blog metrics.2026-04-01 metrics.2026-04-30 --limit 100
 Conditional writes using optimistic concurrency. Pass the expected revision — the write fails with `:conflict` if another write landed first:
 
 ```elixir
-{:ok, entry} = Dust.entry("james/blog", "posts.hello")
-case Dust.put("james/blog", "posts.hello", updated_post, if_match: entry.revision) do
+{:ok, entry} = Dust.entry("james/blog", "posts/hello")
+case Dust.put("james/blog", "posts/hello", updated_post, if_match: entry.revision) do
   :ok -> :saved
   {:error, :conflict} -> :retry
 end
 ```
 
 ```bash
-dust put james/blog posts.hello '{"title":"Updated"}' --if-match 42
+dust put james/blog posts/hello '{"title":"Updated"}' --if-match 42
 # Exit code 1 on conflict
 ```
 
@@ -211,14 +211,14 @@ dust put james/blog posts.hello '{"title":"Updated"}' --if-match 42
 Counters solve concurrent increments. Two clients incrementing the same counter both succeed — the server sums the deltas.
 
 ```elixir
-Dust.increment("james/blog", "stats.views")
-Dust.increment("james/blog", "stats.views", 5)
-{:ok, 6} = Dust.get("james/blog", "stats.views")
+Dust.increment("james/blog", "stats/views")
+Dust.increment("james/blog", "stats/views", 5)
+{:ok, 6} = Dust.get("james/blog", "stats/views")
 ```
 
 ```bash
-dust increment james/blog stats.views
-dust increment james/blog stats.views 5
+dust increment james/blog stats/views
+dust increment james/blog stats/views 5
 ```
 
 ### Sets
@@ -226,16 +226,16 @@ dust increment james/blog stats.views 5
 Sets solve concurrent additions. Two clients adding different members both survive.
 
 ```elixir
-Dust.add("james/blog", "post.tags", "elixir")
-Dust.add("james/blog", "post.tags", "crystal")
-Dust.remove("james/blog", "post.tags", "draft")
-{:ok, ["elixir", "crystal"]} = Dust.get("james/blog", "post.tags")
+Dust.add("james/blog", "post/tags", "elixir")
+Dust.add("james/blog", "post/tags", "crystal")
+Dust.remove("james/blog", "post/tags", "draft")
+{:ok, ["elixir", "crystal"]} = Dust.get("james/blog", "post/tags")
 ```
 
 ```bash
-dust add james/blog post.tags elixir
-dust add james/blog post.tags crystal
-dust remove james/blog post.tags draft
+dust add james/blog post/tags elixir
+dust add james/blog post/tags crystal
+dust remove james/blog post/tags draft
 ```
 
 ### Decimals and DateTimes
@@ -243,13 +243,13 @@ dust remove james/blog post.tags draft
 Typed values serialize losslessly:
 
 ```elixir
-Dust.put("james/blog", "product.price", Decimal.new("29.99"))
-Dust.put("james/blog", "post.published_at", ~U[2026-03-31 12:00:00Z])
+Dust.put("james/blog", "product/price", Decimal.new("29.99"))
+Dust.put("james/blog", "post/published_at", ~U[2026-03-31 12:00:00Z])
 ```
 
 ```bash
-dust put james/blog product.price --decimal "29.99"
-dust put james/blog post.published_at --datetime "2026-03-31T12:00:00Z"
+dust put james/blog product/price --decimal "29.99"
+dust put james/blog post/published_at --datetime "2026-03-31T12:00:00Z"
 ```
 
 ### Files
@@ -257,8 +257,8 @@ dust put james/blog post.published_at --datetime "2026-03-31T12:00:00Z"
 Files are stored as content-addressed blobs. The map stores a lightweight reference; content downloads on demand.
 
 ```elixir
-Dust.put_file("james/blog", "posts.hello.image", "/path/to/photo.jpg")
-{:ok, ref} = Dust.get("james/blog", "posts.hello.image")
+Dust.put_file("james/blog", "posts/hello/image", "/path/to/photo.jpg")
+{:ok, ref} = Dust.get("james/blog", "posts/hello/image")
 ref.hash          # => "sha256:abc123..."
 ref.size          # => 2_400_000
 {:ok, bytes} = ref.fetch()
@@ -266,21 +266,21 @@ ref.size          # => 2_400_000
 ```
 
 ```bash
-dust put-file james/blog posts.hello.image ./photo.jpg
-dust fetch-file james/blog posts.hello.image ./output.jpg
+dust put-file james/blog posts/hello/image ./photo.jpg
+dust fetch-file james/blog posts/hello/image ./output.jpg
 ```
 
 ## Reactive Subscriptions
 
 ### Glob Patterns
 
-- `*` matches one path segment: `posts.*` matches `posts.hello` but not `posts.hello.title`
-- `**` matches one or more segments: `posts.**` matches `posts.hello`, `posts.hello.title`, and deeper
+- `*` matches one path segment: `posts/*` matches `posts/hello` but not `posts/hello/title`
+- `**` matches one or more segments: `posts/**` matches `posts/hello`, `posts/hello/title`, and deeper
 
 ### Elixir Callbacks
 
 ```elixir
-Dust.on("james/blog", "posts.*", fn event ->
+Dust.on("james/blog", "posts/*", fn event ->
   # event.store, event.path, event.op, event.value
   # event.committed (true/false), event.source (:local/:server)
   rebuild_blog(event)
@@ -295,7 +295,7 @@ Define subscriber modules for automatic registration:
 defmodule MyApp.BlogSubscriber do
   use Dust.Subscriber,
     store: "james/blog",
-    pattern: "posts.*"
+    pattern: "posts/*"
 
   @impl true
   def handle_event(event) do
@@ -319,7 +319,7 @@ config :my_app, MyApp.Dust,
 
 ```elixir
 # Elixir — watch/4 is an alias for on/4
-Dust.on("james/blog", "posts.*", fn event ->
+Dust.on("james/blog", "posts/*", fn event ->
   # First batch: event.op == :present for cached entries
   # Then live: :set, :merge, :delete, etc.
 end)
@@ -327,7 +327,7 @@ end)
 
 ```typescript
 // TypeScript — watch() delivers present events then live events
-const unsub = await dust.watch("org/store", "posts.*", (event) => {
+const unsub = await dust.watch("org/store", "posts/*", (event) => {
   if (event.op === "present") {
     // Bootstrap: currently cached entry
   } else {
@@ -341,12 +341,12 @@ const unsub = await dust.watch("org/store", "posts.*", (event) => {
 Stream changes as JSON lines:
 
 ```bash
-dust watch james/blog "posts.*"
-# {"store_seq":42,"op":"set","path":"posts.hello","value":{"title":"Hello"},...}
-# {"store_seq":43,"op":"merge","path":"posts.hello","value":{"body":"Updated"},...}
+dust watch james/blog "posts/*"
+# {"store_seq":42,"op":"set","path":"posts/hello","value":{"title":"Hello"},...}
+# {"store_seq":43,"op":"merge","path":"posts/hello","value":{"body":"Updated"},...}
 
 # Include currently cached entries before streaming live events
-dust watch james/blog "posts.*" --include-current
+dust watch james/blog "posts/*" --include-current
 ```
 
 ### Phoenix PubSub
@@ -373,25 +373,25 @@ end
 Every write is logged. Query the audit trail by path, device, operation, or time range.
 
 ```elixir
-Dust.Sync.Audit.query_ops(store_id, path: "posts.*", op: :set, limit: 50)
+Dust.Sync.Audit.query_ops(store_id, path: "posts/*", op: :set, limit: 50)
 ```
 
 ```bash
-dust log james/blog --path "posts.*" --op set --limit 50
+dust log james/blog --path "posts/*" --op set --limit 50
 ```
 
 Rollback restores state to a previous point. It creates new forward operations — the audit trail is preserved.
 
 ```elixir
 # Restore a single path
-Dust.Sync.Rollback.rollback_path(store_id, "posts.hello", 40)
+Dust.Sync.Rollback.rollback_path(store_id, "posts/hello", 40)
 
 # Restore the entire store
 Dust.Sync.Rollback.rollback_store(store_id, 40)
 ```
 
 ```bash
-dust rollback james/blog posts.hello --to-seq 40
+dust rollback james/blog posts/hello --to-seq 40
 dust rollback james/blog --to-seq 40
 ```
 
@@ -427,18 +427,18 @@ config :my_app, MyApp.Dust, testing: :manual
 ```elixir
 # Seed the cache with known state
 Dust.Testing.seed("james/blog", %{
-  "posts.hello" => %{"title" => "Hello"},
-  "posts.goodbye" => %{"title" => "Goodbye"}
+  "posts/hello" => %{"title" => "Hello"},
+  "posts/goodbye" => %{"title" => "Goodbye"}
 })
 
 # Your code reads from the seeded state
-{:ok, post} = MyApp.Dust.get("james/blog", "posts.hello")
+{:ok, post} = MyApp.Dust.get("james/blog", "posts/hello")
 assert post["title"] == "Hello"
 ```
 
 ```elixir
 # Simulate a server event to test your subscribers
-Dust.Testing.emit("james/blog", "posts.hello",
+Dust.Testing.emit("james/blog", "posts/hello",
   op: :set,
   value: %{"title" => "Updated"}
 )

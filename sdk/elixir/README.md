@@ -44,38 +44,38 @@ MyApp.Dust
 
 ```elixir
 # Write
-MyApp.Dust.put("org/store", "users.alice", %{name: "Alice", role: "admin"})
+MyApp.Dust.put("org/store", "users/alice", %{name: "Alice", role: "admin"})
 
 # Read (instant, from local cache)
-{:ok, user} = MyApp.Dust.get("org/store", "users.alice")
+{:ok, user} = MyApp.Dust.get("org/store", "users/alice")
 
 # Delete
-MyApp.Dust.delete("org/store", "users.alice")
+MyApp.Dust.delete("org/store", "users/alice")
 
 # Merge (update children without replacing siblings)
-MyApp.Dust.merge("org/store", "users.alice", %{"role" => "superadmin"})
+MyApp.Dust.merge("org/store", "users/alice", %{"role" => "superadmin"})
 
 # Enum (list matching entries)
-entries = MyApp.Dust.enum("org/store", "users.*")
+entries = MyApp.Dust.enum("org/store", "users/*")
 
 # Paginated enum
-page = MyApp.Dust.enum("org/store", "users.**", limit: 20, order: :desc)
+page = MyApp.Dust.enum("org/store", "users/**", limit: 20, order: :desc)
 
 # Batch read
-values = MyApp.Dust.get_many("org/store", ["users.alice", "users.bob"])
+values = MyApp.Dust.get_many("org/store", ["users/alice", "users/bob"])
 
 # Range read [from, to)
 page = MyApp.Dust.range("org/store", "logs.2026-04-01", "logs.2026-04-30")
 
 # Compare-and-swap
-{:ok, entry} = MyApp.Dust.entry("org/store", "users.alice")
-case MyApp.Dust.put("org/store", "users.alice", updated, if_match: entry.revision) do
+{:ok, entry} = MyApp.Dust.entry("org/store", "users/alice")
+case MyApp.Dust.put("org/store", "users/alice", updated, if_match: entry.revision) do
   :ok -> :saved
   {:error, :conflict} -> :retry
 end
 
 # Subscribe to changes
-MyApp.Dust.on("org/store", "users.*", fn event ->
+MyApp.Dust.on("org/store", "users/*", fn event ->
   IO.puts("#{event.path} changed: #{inspect(event.value)}")
 end)
 ```

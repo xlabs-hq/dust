@@ -7,7 +7,7 @@ defmodule Dust.Subscriber do
       defmodule MyApp.PostSubscriber do
         use Dust.Subscriber,
           store: "myapp/data",
-          pattern: "posts.*"
+          pattern: "posts/*"
 
         @impl true
         def handle_event(event) do
@@ -26,7 +26,7 @@ defmodule Dust.Subscriber do
   ## Options
 
     * `:store` (required) - the store name to subscribe to
-    * `:pattern` (required) - glob pattern for matching paths (e.g. `"posts.*"`)
+    * `:pattern` (required) - glob pattern for matching paths (e.g. `"posts/*"`)
     * `:max_queue_size` - maximum pending events before the subscription is
       dropped due to backpressure (default: `1000`)
   """
