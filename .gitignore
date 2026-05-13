@@ -18,3 +18,7 @@ node_modules/
 .env.*
 !.env.example
 **/.DS_Store
+
+# Local editor/MCP configs
+.mcp.json
+.zed/

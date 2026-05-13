@@ -25,6 +25,12 @@ erl_crash.dump
 # Content-addressed blob storage (local dev/test)
 /priv/blobs/
 
+# Per-store SQLite databases (local dev/test)
+/priv/stores/
+
+# Local MCP server config
+.mcp.json
+
 # Ignore package tarball (built via "mix hex.build").
 dust-*.tar
 
