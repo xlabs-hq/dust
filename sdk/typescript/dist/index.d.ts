@@ -1,3 +1,52 @@
+/**
+ * Segment-first paths for the Dust TypeScript SDK.
+ *
+ * A path is a non-empty array of non-empty string segments:
+ *
+ *     ["posts", "hello.world", "image/file"]
+ *
+ * Public SDK functions accept either a segment array or a canonical
+ * rendered slash string (see `fromInput`). Internally the SDK uses
+ * segment arrays; strings are rendered at boundaries (cache keys,
+ * wire protocol, log lines).
+ *
+ * Mirrors `DustProtocol.Path` from the canonical wire-protocol
+ * package.
+ *
+ * ## Rendering
+ *
+ * Canonical rendered paths join segments with `/` and escape per RFC
+ * 6901 (JSON Pointer) inside each segment:
+ *
+ *     `~` -> `~0`
+ *     `/` -> `~1`
+ *
+ * No other character has any special meaning. In particular, `.` is
+ * literal — `"example.com"` is one segment, not two.
+ */
+type Segments = string[];
+type PathInput = string | Segments;
+/**
+ * Validate a segment array. Throws if it's empty, contains an
+ * empty string, or contains non-string entries.
+ */
+declare function fromSegments(segments: Segments): Segments;
+/**
+ * Render a segment array to canonical slash form, escaping `~` and
+ * `/` inside each segment per RFC 6901.
+ *
+ * `~` must be escaped first or the `/` -> `~1` substitution would
+ * create false `~1` sequences in subsequent decoding.
+ */
+declare function render(segments: Segments): string;
+/**
+ * Parse a canonical rendered path into segments. Rejects empty paths,
+ * empty segments (leading/trailing/double slash), and invalid `~`
+ * escapes.
+ */
+declare function parseRendered(s: string): Segments;
+declare function parseLegacyDotted(s: string): Segments;
+
 interface DustOptions {
     url: string;
     token: string;
@@ -69,26 +118,26 @@ declare class Dust {
     private joinedStores;
     private catchUpComplete;
     constructor(opts: DustOptions);
-    get(store: string, path: string): Promise<unknown>;
-    entry(store: string, path: string): Promise<Entry | null>;
-    put(store: string, path: string, value: unknown, opts?: {
+    get(store: string, path: PathInput): Promise<unknown>;
+    entry(store: string, path: PathInput): Promise<Entry | null>;
+    put(store: string, path: PathInput, value: unknown, opts?: {
         ifMatch?: number;
     }): Promise<{
         storeSeq: number;
     }>;
-    merge(store: string, path: string, value: Record<string, unknown>): Promise<{
+    merge(store: string, path: PathInput, value: Record<string, unknown>): Promise<{
         storeSeq: number;
     }>;
-    delete(store: string, path: string): Promise<{
+    delete(store: string, path: PathInput): Promise<{
         storeSeq: number;
     }>;
-    increment(store: string, path: string, delta?: number): Promise<{
+    increment(store: string, path: PathInput, delta?: number): Promise<{
         storeSeq: number;
     }>;
-    add(store: string, path: string, member: unknown): Promise<{
+    add(store: string, path: PathInput, member: unknown): Promise<{
         storeSeq: number;
     }>;
-    remove(store: string, path: string, member: unknown): Promise<{
+    remove(store: string, path: PathInput, member: unknown): Promise<{
         storeSeq: number;
     }>;
     on(store: string, pattern: string, callback: EventCallback): () => void;
@@ -129,8 +178,8 @@ declare class Dust {
     enum(store: string, pattern: string, opts: EnumOptions & {
         select?: 'entries';
     }): Promise<Page<Entry>>;
-    getMany(store: string, paths: string[]): Promise<Record<string, unknown>>;
-    range(store: string, from: string, to: string, opts?: Omit<EnumOptions, 'select'> & {
+    getMany(store: string, paths: PathInput[]): Promise<Record<string, unknown>>;
+    range(store: string, from: PathInput, to: PathInput, opts?: Omit<EnumOptions, 'select'> & {
         select?: 'entries' | 'keys';
     }): Promise<Page<Entry> | Page<string>>;
     status(store: string): Status;
@@ -233,7 +282,46 @@ declare class MemoryCache implements Cache {
     clear(store: string): void;
 }
 
-declare function match(pattern: string, path: string): boolean;
+/**
+ * Segment-aware glob matching against `path.ts` segment arrays.
+ *
+ * Mirrors `DustProtocol.Glob` from the canonical wire-protocol
+ * package.
+ *
+ * ## Pattern grammar
+ *
+ * A pattern is a non-empty array of pattern segments. Each segment is
+ * either:
+ *
+ *   - `"*"` — matches exactly one path segment
+ *   - `"**"` — matches one or more path segments; **only valid in the
+ *     tail position**
+ *   - `"\*"` — matches a path segment that is literally `"*"`
+ *   - `"\**"` — matches a path segment that is literally `"**"`
+ *   - any other string — matches that exact path segment
+ *
+ * Patterns can also be given as rendered slash strings, decoded with
+ * the same JSON Pointer escape rules as `path.ts`.
+ */
+
+type Token = {
+    kind: 'literal';
+    value: string;
+} | {
+    kind: 'one';
+} | {
+    kind: 'many';
+};
+interface Compiled {
+    readonly tokens: ReadonlyArray<Token>;
+}
+declare function compile(input: PathInput): Compiled;
+/**
+ * Test whether a (compiled or raw) pattern matches a segment-array
+ * path. If `pattern` is a string or array, it is compiled on the
+ * fly; compile errors propagate.
+ */
+declare function match(pattern: Compiled | PathInput, path: Segments): boolean;
 
 interface WireMessage {
     joinRef: string | null;
@@ -246,4 +334,4 @@ type Format = 'msgpack' | 'json';
 declare function encode(msg: WireMessage, format: Format): Buffer | string;
 declare function decode(data: Buffer | ArrayBuffer | string, format: Format): WireMessage;
 
-export { type Cache, ConflictError, Connection, Dust, type DustOptions, type Entry, type EnumOptions, type Event, type EventCallback, type Format, MemoryCache, type Page, type PresentEvent, type Status, type WireMessage, decode, encode, generateDeviceId, generateOpId, inferType, match };
+export { type Cache, ConflictError, Connection, Dust, type DustOptions, type Entry, type EnumOptions, type Event, type EventCallback, type Format, MemoryCache, type Page, type PathInput, type PresentEvent, type Segments, type Status, type WireMessage, compile, decode, encode, fromSegments, generateDeviceId, generateOpId, inferType, match, parseLegacyDotted, parseRendered, render };

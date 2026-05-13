@@ -151,7 +151,7 @@ var Connection = class {
     }
     base.searchParams.set("token", this.opts.token);
     base.searchParams.set("device_id", this.deviceId);
-    base.searchParams.set("capver", "2");
+    base.searchParams.set("capver", "3");
     base.searchParams.set("vsn", this.format === "msgpack" ? "3.0.0" : "2.0.0");
     return base.toString();
   }
@@ -266,30 +266,136 @@ function generateDeviceId() {
   return `dev_${hex}`;
 }
 
-// src/glob.ts
-function match(pattern, path) {
-  const patternParts = pattern.split(".");
-  const pathParts = path.split(".");
-  return matchParts(patternParts, pathParts, 0, 0);
-}
-function matchParts(pattern, path, pi, pa) {
-  if (pi === pattern.length && pa === path.length) return true;
-  if (pi === pattern.length) return false;
-  if (pa === path.length) {
-    return false;
+// src/path.ts
+function fromSegments(segments) {
+  if (!Array.isArray(segments)) {
+    throw new Error("segments must be an array of non-empty strings");
   }
-  const seg = pattern[pi];
-  if (seg === "**") {
-    for (let skip = 1; skip <= path.length - pa; skip++) {
-      if (matchParts(pattern, path, pi + 1, pa + skip)) return true;
+  if (segments.length === 0) {
+    throw new Error("path is empty");
+  }
+  for (const s of segments) {
+    if (typeof s !== "string") {
+      throw new Error("segments must be an array of non-empty strings");
     }
-    return false;
+    if (s === "") {
+      throw new Error("segment is empty");
+    }
   }
-  if (seg === "*") {
-    return matchParts(pattern, path, pi + 1, pa + 1);
+  return segments;
+}
+function render(segments) {
+  fromSegments(segments);
+  return segments.map(escapeSegment).join("/");
+}
+function escapeSegment(seg) {
+  return seg.replace(/~/g, "~0").replace(/\//g, "~1");
+}
+function parseRendered(s) {
+  if (typeof s !== "string") {
+    throw new Error("rendered path must be a string");
   }
-  if (seg === path[pa]) {
-    return matchParts(pattern, path, pi + 1, pa + 1);
+  if (s === "") {
+    throw new Error("path is empty");
+  }
+  const parts = s.split("/");
+  if (parts.some((p) => p === "")) {
+    throw new Error(`path "${s}" contains empty segments`);
+  }
+  return parts.map(unescapeSegment);
+}
+function unescapeSegment(seg) {
+  let out = "";
+  let i = 0;
+  while (i < seg.length) {
+    const ch = seg[i];
+    if (ch === "~") {
+      const next = seg[i + 1];
+      if (next === "0") {
+        out += "~";
+        i += 2;
+      } else if (next === "1") {
+        out += "/";
+        i += 2;
+      } else {
+        throw new Error(`invalid escape "~${next ?? ""}" in segment "${seg}"`);
+      }
+    } else {
+      out += ch;
+      i += 1;
+    }
+  }
+  return out;
+}
+function normalizeRendered(s) {
+  return render(parseRendered(s));
+}
+function parseLegacyDotted(s) {
+  if (s === "") throw new Error("path is empty");
+  const parts = s.split(".");
+  if (parts.some((p) => p === "")) {
+    throw new Error(`legacy path "${s}" contains empty segments`);
+  }
+  return parts;
+}
+function normalizePath(path) {
+  if (Array.isArray(path)) {
+    return render(fromSegments(path));
+  }
+  if (typeof path !== "string") {
+    throw new Error("path must be a string or array of strings");
+  }
+  return normalizeRendered(path);
+}
+function normalizePattern(pattern) {
+  if (pattern === "**") return "**";
+  if (typeof pattern !== "string") {
+    throw new Error("pattern must be a string");
+  }
+  const parts = pattern.split("/");
+  if (parts.some((p) => p === "")) {
+    throw new Error(`pattern "${pattern}" contains empty segments`);
+  }
+  return pattern;
+}
+
+// src/glob.ts
+function compile(input) {
+  const segments = typeof input === "string" ? parseRendered(input) : fromSegments(input);
+  const tokens = segments.map(classifySegment);
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i].kind === "many" && i !== tokens.length - 1) {
+      throw new Error("** is only valid in the tail position of a glob pattern");
+    }
+  }
+  return { tokens };
+}
+function classifySegment(seg) {
+  if (seg === "*") return { kind: "one" };
+  if (seg === "**") return { kind: "many" };
+  if (seg === "\\*") return { kind: "literal", value: "*" };
+  if (seg === "\\**") return { kind: "literal", value: "**" };
+  return { kind: "literal", value: seg };
+}
+function match(pattern, path) {
+  const compiled = isCompiled(pattern) ? pattern : compile(pattern);
+  return walk(compiled.tokens, 0, path, 0);
+}
+function isCompiled(v) {
+  return typeof v === "object" && v !== null && Array.isArray(v.tokens);
+}
+function walk(tokens, ti, path, pi) {
+  if (ti === tokens.length && pi === path.length) return true;
+  if (ti === tokens.length - 1 && tokens[ti].kind === "many") {
+    return pi < path.length;
+  }
+  if (ti === tokens.length || pi === path.length) return false;
+  const t = tokens[ti];
+  if (t.kind === "one") {
+    return walk(tokens, ti + 1, path, pi + 1);
+  }
+  if (t.kind === "literal") {
+    return t.value === path[pi] && walk(tokens, ti + 1, path, pi + 1);
   }
   return false;
 }
@@ -342,9 +448,10 @@ var MemoryCache = class {
     }
   }
   entries(store, pattern) {
+    const compiled = compile(pattern);
     const results = [];
-    for (const [path, entry] of this.getStore(store)) {
-      if (match(pattern, path)) {
+    for (const [_path, entry] of this.getStore(store)) {
+      if (matchPath(compiled, entry.path)) {
         results.push(entry);
       }
     }
@@ -356,8 +463,8 @@ var MemoryCache = class {
     const order = opts.order ?? "asc";
     const select = opts.select ?? "entries";
     if (select === "prefixes") {
-      if (pattern !== "**" && !pattern.endsWith(".**")) {
-        throw new Error("select: prefixes requires pattern ending in .** or **");
+      if (pattern !== "**" && !pattern.endsWith("/**")) {
+        throw new Error("select: prefixes requires pattern ending in /** or **");
       }
     }
     const storeMap = this.stores.get(store);
@@ -368,7 +475,8 @@ var MemoryCache = class {
       const to = opts.to;
       entries = entries.filter((e) => e.path >= from && e.path < to);
     } else {
-      entries = entries.filter((e) => match(pattern, e.path));
+      const compiled = compile(pattern);
+      entries = entries.filter((e) => matchPath(compiled, e.path));
     }
     entries.sort(
       (a, b) => order === "asc" ? a.path.localeCompare(b.path) : b.path.localeCompare(a.path)
@@ -411,36 +519,25 @@ function prefixesOf(entries, pattern) {
 }
 function literalPrefixOf(pattern) {
   if (pattern === "**") return "";
-  return pattern.replace(/\.\*\*$/, "");
+  return pattern.replace(/\/\*\*$/, "");
 }
 function extractPrefix(path, literal) {
   if (literal === "") {
-    const i2 = path.indexOf(".");
+    const i2 = path.indexOf("/");
     return i2 === -1 ? path : path.slice(0, i2);
   }
-  const prefix = literal + ".";
+  const prefix = literal + "/";
   if (!path.startsWith(prefix)) return null;
   const rest = path.slice(prefix.length);
-  const i = rest.indexOf(".");
-  return literal + "." + (i === -1 ? rest : rest.slice(0, i));
+  const i = rest.indexOf("/");
+  return literal + "/" + (i === -1 ? rest : rest.slice(0, i));
 }
-
-// src/path.ts
-function normalizePath(path) {
-  if (path === "") throw new Error("path cannot be empty");
-  const canonical = path.replace(/\//g, ".");
-  if (canonical.split(".").some((s) => s === "")) {
-    throw new Error(`path "${path}" contains empty segments`);
+function matchPath(compiled, path) {
+  try {
+    return match(compiled, parseRendered(path));
+  } catch {
+    return false;
   }
-  return canonical;
-}
-function normalizePattern(pattern) {
-  if (pattern === "") throw new Error("pattern cannot be empty");
-  const canonical = pattern.replace(/\//g, ".");
-  if (canonical.split(".").some((s) => s === "")) {
-    throw new Error(`pattern "${pattern}" contains empty segments`);
-  }
-  return canonical;
 }
 
 // src/types.ts
@@ -466,16 +563,21 @@ var Dust = class {
     });
   }
   // -- Public API --
+  //
+  // Path arguments accept either a canonical slash-rendered string
+  // (`"posts/hello"`) or a segment array (`["posts", "hello"]`). Both
+  // are validated and normalised at the boundary; internally the
+  // SDK always speaks canonical slash form.
   async get(store, path) {
-    path = normalizePath(path);
+    const normalized = normalizePath(path);
     await this.ensureJoined(store);
-    const entry = this.cache.get(store, path);
+    const entry = this.cache.get(store, normalized);
     return entry?.value ?? null;
   }
   async entry(store, path) {
-    path = normalizePath(path);
+    const normalized = normalizePath(path);
     await this.ensureJoined(store);
-    return this.cache.readEntry(store, path);
+    return this.cache.readEntry(store, normalized);
   }
   async put(store, path, value, opts) {
     return this.write(store, "set", normalizePath(path), value, opts);
@@ -608,10 +710,10 @@ var Dust = class {
     if (opts.select === "prefixes") {
       throw new Error("range: select prefixes is not supported");
     }
-    from = normalizePath(from);
-    to = normalizePath(to);
+    const fromNorm = normalizePath(from);
+    const toNorm = normalizePath(to);
     await this.ensureJoined(store);
-    return this.cache.browse(store, { ...opts, from, to });
+    return this.cache.browse(store, { ...opts, from: fromNorm, to: toNorm });
   }
   status(store) {
     return {
@@ -632,6 +734,7 @@ var Dust = class {
     const payload = {
       op,
       path,
+      path_segments: parseRendered(path),
       client_op_id: clientOpId
     };
     if (value !== null && value !== void 0) {
@@ -726,7 +829,7 @@ var Dust = class {
     const clientOpId = raw.client_op_id;
     if (op === "delete") {
       this.cache.delete(store, path);
-      this.cache.deletePrefix(store, path + ".");
+      this.cache.deletePrefix(store, path + "/");
     } else {
       const type = inferType(value);
       this.cache.set(store, path, { path, value, type, seq: storeSeq });
@@ -737,8 +840,14 @@ var Dust = class {
     const event = { storeSeq, op, path, value, deviceId, clientOpId };
     const subs = this.subscriptions.get(store);
     if (subs) {
+      let pathSegments;
+      try {
+        pathSegments = parseRendered(path);
+      } catch {
+        return;
+      }
       for (const sub of subs) {
-        if (match(sub.pattern, path)) {
+        if (match(sub.pattern, pathSegments)) {
           if (sub.bootstrapPending) {
             sub.pendingEvents.push(event);
           } else {
@@ -790,10 +899,15 @@ export {
   Connection,
   Dust,
   MemoryCache,
+  compile,
   decode,
   encode,
+  fromSegments,
   generateDeviceId,
   generateOpId,
   inferType,
-  match
+  match,
+  parseLegacyDotted,
+  parseRendered,
+  render
 };
