@@ -78,6 +78,7 @@ defmodule Dust.Cache.Memory do
   @impl true
   def handle_call({:read, store, path}, _from, state) do
     key = {store, path}
+
     case Map.get(state.entries, key) do
       nil -> {:reply, :miss, state}
       {value, _type, _seq} -> {:reply, {:ok, value}, state}
@@ -104,13 +105,6 @@ defmodule Dust.Cache.Memory do
       |> Enum.map(fn {{_s, path}, {value, _type, _seq}} -> {path, value} end)
 
     {:reply, results, state}
-  end
-
-  defp path_matches?(path, compiled) do
-    case Dust.Protocol.Path.parse_rendered(path) do
-      {:ok, segs} -> Dust.Protocol.Glob.match?(compiled, segs)
-      _ -> false
-    end
   end
 
   @impl true
@@ -280,7 +274,8 @@ defmodule Dust.Cache.Memory do
     end
   end
 
-  defp matches_filter?(path, _pattern, _compiled, from, to) when is_binary(from) and is_binary(to) do
+  defp matches_filter?(path, _pattern, _compiled, from, to)
+       when is_binary(from) and is_binary(to) do
     path >= from and path < to
   end
 
@@ -298,4 +293,11 @@ defmodule Dust.Cache.Memory do
 
   defp apply_cursor(entries, cursor, :desc),
     do: Enum.drop_while(entries, fn {p, _, _, _} -> p >= cursor end)
+
+  defp path_matches?(path, compiled) do
+    case Dust.Protocol.Path.parse_rendered(path) do
+      {:ok, segs} -> Dust.Protocol.Glob.match?(compiled, segs)
+      _ -> false
+    end
+  end
 end
