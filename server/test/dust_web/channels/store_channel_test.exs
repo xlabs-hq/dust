@@ -190,7 +190,44 @@ defmodule DustWeb.StoreChannelTest do
         })
 
       assert_reply ref, :ok, %{store_seq: 1}
-      assert_broadcast "event", %{store_seq: 1, op: :set, path: "posts/hello"}
+      # capver 3 broadcast carries both `path` and the authoritative
+      # `path_segments` array.
+      assert_broadcast "event", %{
+        store_seq: 1,
+        op: :set,
+        path: "posts/hello",
+        path_segments: ["posts", "hello"]
+      }
+    end
+
+    test "accepts capver 3 `path_segments` array as authoritative", %{socket: socket, store: store} do
+      {:ok, _, socket} =
+        subscribe_and_join(socket, DustWeb.StoreChannel, "store:#{store.id}", %{
+          "last_store_seq" => 0
+        })
+
+      # Pass ONLY path_segments — no `path` string. Segment with a
+      # literal dot survives intact (would have been split under the
+      # legacy dotted contract).
+      ref =
+        push(socket, "write", %{
+          "op" => "set",
+          "path_segments" => ["files", "hello.world"],
+          "value" => "v",
+          "client_op_id" => "seg_1"
+        })
+
+      assert_reply ref, :ok, %{store_seq: 1}
+
+      # Stored under the canonical slash-rendered path; the segment
+      # with a dot is preserved as one segment.
+      assert Sync.get_entry(store.id, "files/hello.world").value == "v"
+
+      # Broadcast carries the segments back.
+      assert_broadcast "event", %{
+        path_segments: ["files", "hello.world"],
+        path: "files/hello.world"
+      }
     end
 
     test "rejects invalid path", %{socket: socket, store: store} do

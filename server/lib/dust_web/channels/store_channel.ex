@@ -193,15 +193,18 @@ defmodule DustWeb.StoreChannel do
       op ->
         org = socket.assigns.store_token.store.organization
 
+        # capver 3 wire shape: `path_segments` is authoritative.
+        # `path` (slash-rendered string) is accepted as a fallback
+        # for clients still on the canonical string form.
         with :ok <- verify_store_active(socket.assigns.store_id),
-             {:ok, _} <- validate_path(params["path"]),
+             {:ok, path} <- resolve_incoming_path(params),
              :ok <- validate_merge_value(op, params["value"]),
              :ok <- validate_if_match(op, params, socket),
-             :ok <- check_billing_limits(op, params, socket.assigns.store_id, org) do
+             :ok <- check_billing_limits(op, Map.put(params, "path", path), socket.assigns.store_id, org) do
           op_attrs =
             %{
               op: op,
-              path: params["path"],
+              path: path,
               value: params["value"],
               device_id: socket.assigns.device_id,
               client_op_id: params["client_op_id"]
@@ -313,6 +316,7 @@ defmodule DustWeb.StoreChannel do
             store_seq: op.store_seq,
             op: op.op,
             path: op.path,
+            path_segments: path_to_segments(op.path),
             value: value,
             device_id: op.device_id,
             client_op_id: op.client_op_id
@@ -345,12 +349,27 @@ defmodule DustWeb.StoreChannel do
     %{
       store_seq: op.store_seq,
       op: op.op,
+      # capver 3 wire shape: `path_segments` is authoritative.
+      # `path` (slash-rendered string) is echoed for display + back-compat.
       path: op.path,
+      path_segments: path_to_segments(op.path),
       value: value,
       device_id: op.device_id,
       client_op_id: op.client_op_id
     }
   end
+
+  # Best-effort decode: returns `nil` if the stored path can't be
+  # parsed back to segments, which shouldn't happen for canonical
+  # paths but is defensive against malformed historical rows.
+  defp path_to_segments(path) when is_binary(path) do
+    case DustProtocol.Path.parse_rendered(path) do
+      {:ok, segs} -> segs
+      _ -> nil
+    end
+  end
+
+  defp path_to_segments(_), do: nil
 
   # Seed running state for paths that need incremental materialization.
   # For the first occurrence of each path with increment/add/remove in the batch,
@@ -473,6 +492,24 @@ defmodule DustWeb.StoreChannel do
   defp validate_path(nil), do: {:error, :missing_path}
   defp validate_path(path) when is_binary(path), do: DustProtocol.Path.parse_rendered(path)
   defp validate_path(_), do: {:error, :invalid_path}
+
+  # Pull a canonical path string out of incoming wire params. Prefers
+  # the authoritative `path_segments` array (capver 3) over the
+  # legacy/compatibility `path` string.
+  defp resolve_incoming_path(%{"path_segments" => segs}) when is_list(segs) do
+    with {:ok, segments} <- DustProtocol.Path.from_segments(segs),
+         {:ok, rendered} <- DustProtocol.Path.render(segments) do
+      {:ok, rendered}
+    end
+  end
+
+  defp resolve_incoming_path(%{"path" => path}) when is_binary(path) do
+    with {:ok, _segments} <- DustProtocol.Path.parse_rendered(path) do
+      {:ok, path}
+    end
+  end
+
+  defp resolve_incoming_path(_), do: {:error, :missing_path}
 
   defp validate_merge_value(:merge, value) when is_map(value), do: :ok
   defp validate_merge_value(:merge, _), do: {:error, :merge_requires_map_value}

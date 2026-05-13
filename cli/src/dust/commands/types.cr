@@ -62,11 +62,16 @@ module Dust
           conn.connect_sync
           channel = conn.join(store)
 
+          # capver 3 wire shape: send `path_segments` (authoritative)
+          # alongside `path` (slash-rendered, back-compat).
+          segments = Dust::Path.parse_rendered(path)
+
           payload = {
-            "op"           => JSON::Any.new(op),
-            "path"         => JSON::Any.new(path),
-            "value"        => value,
-            "client_op_id" => JSON::Any.new(Random::Secure.hex(8)),
+            "op"             => JSON::Any.new(op),
+            "path"           => JSON::Any.new(path),
+            "path_segments"  => JSON::Any.new(segments.map { |s| JSON::Any.new(s) }),
+            "value"          => value,
+            "client_op_id"   => JSON::Any.new(Random::Secure.hex(8)),
           } of String => JSON::Any
 
           result = channel.push("write", payload)

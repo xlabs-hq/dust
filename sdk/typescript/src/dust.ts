@@ -266,9 +266,13 @@ export class Dust {
     const topic = `store:${store}`
     const clientOpId = generateOpId()
 
+    // capver 3 wire shape: send `path_segments` (authoritative)
+    // alongside `path` (slash-rendered, back-compat). The server
+    // prefers segments when present.
     const payload: Record<string, unknown> = {
       op,
       path,
+      path_segments: parseRendered(path),
       client_op_id: clientOpId,
     }
 

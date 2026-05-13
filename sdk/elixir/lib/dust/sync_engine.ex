@@ -916,9 +916,21 @@ defmodule Dust.SyncEngine do
   defp send_to_connection(store, op_attrs) do
     case GenServer.whereis(Dust.Connection) do
       nil -> :ok
-      pid -> send(pid, {:send_write, store, op_attrs})
+      pid -> send(pid, {:send_write, store, with_path_segments(op_attrs)})
     end
   end
+
+  # capver 3 wire shape: send `path_segments` (authoritative) alongside
+  # `path` (slash-rendered, for back-compat / display). The server
+  # prefers segments when present.
+  defp with_path_segments(%{path: path} = op_attrs) when is_binary(path) do
+    case Dust.Protocol.Path.parse_rendered(path) do
+      {:ok, segs} -> Map.put(op_attrs, :path_segments, segs)
+      _ -> op_attrs
+    end
+  end
+
+  defp with_path_segments(op_attrs), do: op_attrs
 
   defp generate_op_id do
     "op_" <> Base.url_encode64(:crypto.strong_rand_bytes(12), padding: false)
