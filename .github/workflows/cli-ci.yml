@@ -49,7 +49,9 @@ jobs:
         run: shards install
       - name: Run unit tests
         working-directory: cli
-        run: crystal spec spec/config_spec.cr
+        # Explicit list keeps the integration_spec (which needs DUST_TEST_TOKEN
+        # and a running server) out of CI.
+        run: crystal spec spec/config_spec.cr spec/path_spec.cr spec/glob_spec.cr
 
   build-macos-arm64:
     name: Build (macos-arm64)
