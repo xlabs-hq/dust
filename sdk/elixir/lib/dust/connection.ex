@@ -77,7 +77,7 @@ defmodule Dust.Connection do
           URI.encode_query(%{
             "token" => token,
             "device_id" => device_id,
-            "capver" => "2",
+            "capver" => "3",
             "vsn" => "2.0.0"
           })
         )
@@ -149,7 +149,10 @@ defmodule Dust.Connection do
   @impl Slipstream
   def handle_message("store:" <> store_name, "catch_up_complete", payload, socket) do
     through_seq = payload["through_seq"]
-    Logger.debug("[Dust.Connection] Catch-up complete for #{store_name}, through_seq=#{through_seq}")
+
+    Logger.debug(
+      "[Dust.Connection] Catch-up complete for #{store_name}, through_seq=#{through_seq}"
+    )
 
     # Ack the seq back to the server
     topic = "store:#{store_name}"
@@ -237,13 +240,15 @@ defmodule Dust.Connection do
   def handle_info({:send_write, store_name, %{op: :put_file} = op_attrs}, socket) do
     topic = "store:#{store_name}"
 
-    params = %{
-      "path" => op_attrs.path,
-      "content" => op_attrs.content,
-      "filename" => op_attrs.filename,
-      "content_type" => op_attrs.content_type,
-      "client_op_id" => op_attrs.client_op_id
-    }
+    params =
+      %{
+        "path" => op_attrs.path,
+        "content" => op_attrs.content,
+        "filename" => op_attrs.filename,
+        "content_type" => op_attrs.content_type,
+        "client_op_id" => op_attrs.client_op_id
+      }
+      |> maybe_put_path_segments(op_attrs)
 
     if MapSet.member?(socket.assigns.joined_stores, store_name) do
       {:ok, ref} = push(socket, topic, "put_file", params)
@@ -269,6 +274,7 @@ defmodule Dust.Connection do
         "value" => op_attrs[:value],
         "client_op_id" => op_attrs.client_op_id
       }
+      |> maybe_put_path_segments(op_attrs)
       |> maybe_put_if_match(op_attrs)
 
     if MapSet.member?(socket.assigns.joined_stores, store_name) do
@@ -336,6 +342,15 @@ defmodule Dust.Connection do
   end
 
   defp maybe_put_if_match(params, _op_attrs), do: params
+
+  # SyncEngine populates :path_segments alongside :path for capver 3
+  # writes. Channels prefer segments when present and fall back to
+  # parsing the rendered path otherwise.
+  defp maybe_put_path_segments(params, %{path_segments: segs}) when is_list(segs) do
+    Map.put(params, "path_segments", segs)
+  end
+
+  defp maybe_put_path_segments(params, _op_attrs), do: params
 
   defp flush_outbox(socket, store_name) do
     outbox = Map.get(socket.assigns, :outbox, %{})
