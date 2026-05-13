@@ -1,5 +1,20 @@
 defmodule Dust.Sync.Audit do
-  @moduledoc "Rich filtering and pagination for store operations (audit log)."
+  @moduledoc """
+  Rich filtering and pagination for store operations (audit log).
+
+  ## Scalability note
+
+  Wildcard filters use SQL LIKE as a coarse candidate filter and then
+  post-filter rows in Elixir via `DustProtocol.Glob.match?/2` to enforce
+  segment-aware semantics (see `query_ops/2`). For stores with very
+  large op logs the full candidate set is materialised before
+  pagination, which can become expensive. The long-term fix is to
+  walk SQLite in chunks the way `Dust.Sync.enum_entries/3` does
+  (`@enum_chunk_size` in `lib/dust/sync.ex`) and accumulate matches
+  until the requested page is filled. For now the current xlabs-scale
+  load makes this a P3 — revisit before opening the audit endpoint to
+  high-volume tenants.
+  """
 
   alias Dust.Sync.StoreDB
   alias DustProtocol.Glob
