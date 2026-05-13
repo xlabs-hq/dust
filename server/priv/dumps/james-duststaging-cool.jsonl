@@ -1,0 +1,3 @@
+{"seq":3,"store":"james-duststaging/cool","entry_count":2,"_header":true,"exported_at":"2026-05-13T03:01:30.924769Z","path_schema_version":3}
+{"type":"string","value":"beagle2","path":"users/james/dog"}
+{"type":"string","value":"james@lvl4.net","path":"users/james/email"}
