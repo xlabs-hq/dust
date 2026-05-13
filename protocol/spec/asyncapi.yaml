@@ -151,7 +151,10 @@ components:
       name: write
       payload:
         type: object
-        required: [type, store, op, path, client_op_id]
+        required: [type, store, op, client_op_id]
+        oneOf:
+          - required: [path_segments]
+          - required: [path]
         properties:
           type:
             type: string
@@ -160,23 +163,26 @@ components:
             type: string
           op:
             type: string
-            enum: [set, delete, merge]
-          path:
-            type: string
+            enum: [set, delete, merge, increment, add, remove]
             description: |
-              Slash-separated canonical path (e.g. `posts/hello/title`).
-              Literal `/` and `~` in a segment are encoded as `~1` and
-              `~0` (RFC 6901). For capver >= 3 clients should also send
-              `path_segments` (authoritative segment list); the server
-              prefers it when present.
+              `set` / `delete` / `merge` are the base ops. `increment`
+              writes to a counter, `add` / `remove` mutate set members.
+              `put_file` is sent as a distinct message (see PutFile).
           path_segments:
             type: array
             items:
               type: string
             description: |
-              Authoritative segment list (capver 3+). When present, the
-              server uses these segments as-is and treats `path` as a
-              display/back-compat echo.
+              Authoritative segment list (capver 3+). Either this or
+              `path` is required; when both are present the server uses
+              `path_segments` and treats `path` as a display echo.
+          path:
+            type: string
+            description: |
+              Slash-separated canonical path (e.g. `posts/hello/title`).
+              Literal `/` and `~` in a segment are encoded as `~1` and
+              `~0` (RFC 6901). Capver 3+ clients should prefer
+              `path_segments`; capver 1/2 clients may send only `path`.
           value: {}
           client_op_id:
             type: string
@@ -190,6 +196,70 @@ components:
               non-dict (leaf) values. On mismatch the server replies with
               `{error: {reason: "conflict", current_revision: N | null}}` and the
               write is not applied.
+
+    PutFile:
+      name: put_file
+      description: |
+        Upload a file blob and link it as a typed entry. The file is
+        stored in the content-addressed blob store; the entry value is
+        a small reference (`{hash, size, filename, content_type}`).
+      payload:
+        type: object
+        required: [type, store, content, client_op_id]
+        oneOf:
+          - required: [path_segments]
+          - required: [path]
+        properties:
+          type:
+            type: string
+            const: put_file
+          store:
+            type: string
+          path_segments:
+            type: array
+            items:
+              type: string
+          path:
+            type: string
+          content:
+            type: string
+            description: Base64-encoded file bytes.
+          filename:
+            type: string
+          content_type:
+            type: string
+            description: |
+              MIME type. Defaults to `application/octet-stream` server-side
+              when absent.
+          client_op_id:
+            type: string
+
+    Rollback:
+      name: rollback
+      description: |
+        Rollback a single path to a prior store_seq, or (when `path` is
+        omitted) rewind the whole store. Server-authoritative: subscribers
+        receive synthetic ops describing the restored state.
+      payload:
+        type: object
+        required: [type, store, to_seq]
+        properties:
+          type:
+            type: string
+            const: rollback
+          store:
+            type: string
+          path_segments:
+            type: array
+            items:
+              type: string
+            description: Optional. When omitted, rolls back the entire store.
+          path:
+            type: string
+            description: Optional alternate to `path_segments`.
+          to_seq:
+            type: integer
+            description: Target store_seq to rewind to (must be < current).
 
     WriteReply:
       name: write_reply
