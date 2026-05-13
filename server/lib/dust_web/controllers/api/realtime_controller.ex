@@ -31,8 +31,7 @@ defmodule DustWeb.Api.RealtimeController do
     required: [:error, :detail, :ws_url],
     example: %{
       error: "upgrade_required",
-      detail:
-        "Realtime is via WebSocket. Connect to ws_url and join store:<org>/<store>.",
+      detail: "Realtime is via WebSocket. Connect to ws_url and join store:<org>/<store>.",
       ws_url: "wss://dustlayer.io/ws/sync",
       docs: "https://github.com/xlabs-hq/dust#realtime"
     }
@@ -48,7 +47,7 @@ defmodule DustWeb.Api.RealtimeController do
   moment when users try `/subscribe` or `/watch` from curl.
   """
 
-  operation :subscribe,
+  operation(:subscribe,
     operation_id: "realtime.subscribe_stub",
     summary: "Realtime subscribe — use WebSocket",
     description: @stub_description,
@@ -61,10 +60,11 @@ defmodule DustWeb.Api.RealtimeController do
       forbidden: @forbidden,
       too_many_requests: @rate_limited
     ]
+  )
 
   def subscribe(conn, params), do: do_stub(conn, params)
 
-  operation :watch,
+  operation(:watch,
     operation_id: "realtime.watch_stub",
     summary: "Realtime watch — use WebSocket",
     description: @stub_description,
@@ -77,6 +77,7 @@ defmodule DustWeb.Api.RealtimeController do
       forbidden: @forbidden,
       too_many_requests: @rate_limited
     ]
+  )
 
   def watch(conn, params), do: do_stub(conn, params)
 

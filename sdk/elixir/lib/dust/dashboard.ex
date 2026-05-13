@@ -212,7 +212,9 @@ if Code.ensure_loaded?(Phoenix.LiveDashboard.PageBuilder) do
 
     defp fetch_connection_info do
       case GenServer.whereis(Dust.Connection) do
-        nil -> %{status: :not_started, url: nil, device_id: nil, uptime_seconds: nil}
+        nil ->
+          %{status: :not_started, url: nil, device_id: nil, uptime_seconds: nil}
+
         pid when is_pid(pid) ->
           if Process.alive?(pid) do
             Dust.Connection.info(pid)
@@ -288,7 +290,10 @@ if Code.ensure_loaded?(Phoenix.LiveDashboard.PageBuilder) do
 
     defp format_uptime(nil), do: "—"
     defp format_uptime(seconds) when seconds < 60, do: "#{seconds}s"
-    defp format_uptime(seconds) when seconds < 3600, do: "#{div(seconds, 60)}m #{rem(seconds, 60)}s"
+
+    defp format_uptime(seconds) when seconds < 3600,
+      do: "#{div(seconds, 60)}m #{rem(seconds, 60)}s"
+
     defp format_uptime(seconds), do: "#{div(seconds, 3600)}h #{div(rem(seconds, 3600), 60)}m"
 
     defp format_time(%DateTime{} = dt) do
@@ -303,7 +308,10 @@ if Code.ensure_loaded?(Phoenix.LiveDashboard.PageBuilder) do
 
     defp truncate_value(value) when is_map(value) or is_list(value) do
       inspected = inspect(value, limit: 5, printable_limit: 80)
-      if String.length(inspected) > 80, do: String.slice(inspected, 0, 80) <> "...", else: inspected
+
+      if String.length(inspected) > 80,
+        do: String.slice(inspected, 0, 80) <> "...",
+        else: inspected
     end
 
     defp truncate_value(value), do: inspect(value)

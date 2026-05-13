@@ -31,11 +31,7 @@ defmodule Dust.Supervisor do
     engine_children =
       Enum.map(stores, fn store ->
         {Dust.SyncEngine,
-         store: store,
-         cache: cache,
-         activity_buffer: activity_name,
-         url: url,
-         token: token}
+         store: store, cache: cache, activity_buffer: activity_name, url: url, token: token}
       end)
 
     connection_children =
@@ -57,10 +53,8 @@ defmodule Dust.Supervisor do
 
     registry_children =
       for {name, spec} <- [
-            {Dust.SyncEngineRegistry,
-             {Registry, keys: :unique, name: Dust.SyncEngineRegistry}},
-            {Dust.ConnectionRegistry,
-             {Registry, keys: :unique, name: Dust.ConnectionRegistry}}
+            {Dust.SyncEngineRegistry, {Registry, keys: :unique, name: Dust.SyncEngineRegistry}},
+            {Dust.ConnectionRegistry, {Registry, keys: :unique, name: Dust.ConnectionRegistry}}
           ],
           !Process.whereis(name),
           do: spec

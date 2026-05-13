@@ -29,10 +29,11 @@ defmodule Dust.ActivityBuffer do
   end
 
   def append(name, store, attrs) do
-    entry = Map.merge(attrs, %{
-      timestamp: DateTime.utc_now(),
-      store: store
-    })
+    entry =
+      Map.merge(attrs, %{
+        timestamp: DateTime.utc_now(),
+        store: store
+      })
 
     # Get and increment the per-store index
     idx = :ets.update_counter(name, {:idx, store}, {2, 1}, {{:idx, store}, 0})

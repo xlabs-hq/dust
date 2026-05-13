@@ -7,10 +7,11 @@ defmodule Dust.SyncEngineTest do
     start_supervised!({Registry, keys: :unique, name: Dust.SyncEngineRegistry})
     start_supervised!({Registry, keys: :unique, name: Dust.ConnectionRegistry})
 
-    {:ok, _pid} = SyncEngine.start_link(
-      store: "test/store",
-      cache: {Dust.Cache.Memory, []}
-    )
+    {:ok, _pid} =
+      SyncEngine.start_link(
+        store: "test/store",
+        cache: {Dust.Cache.Memory, []}
+      )
 
     :ok
   end
@@ -217,7 +218,9 @@ defmodule Dust.SyncEngineTest do
     test_pid = self()
     SyncEngine.on("test/store", "stats/*", fn event -> send(test_pid, {:event, event}) end)
     SyncEngine.increment("test/store", "stats/views", 5)
-    assert_receive {:event, %{path: "stats/views", op: :increment, value: 5, committed: false}}, 500
+
+    assert_receive {:event, %{path: "stats/views", op: :increment, value: 5, committed: false}},
+                   500
   end
 
   # Set tests
@@ -257,7 +260,9 @@ defmodule Dust.SyncEngineTest do
     test_pid = self()
     SyncEngine.on("test/store", "post/*", fn event -> send(test_pid, {:event, event}) end)
     SyncEngine.add("test/store", "post/tags", "elixir")
-    assert_receive {:event, %{path: "post/tags", op: :add, value: "elixir", committed: false}}, 500
+
+    assert_receive {:event, %{path: "post/tags", op: :add, value: "elixir", committed: false}},
+                   500
   end
 
   test "remove fires callback" do
@@ -265,7 +270,9 @@ defmodule Dust.SyncEngineTest do
     SyncEngine.add("test/store", "post/tags", "elixir")
     SyncEngine.on("test/store", "post/*", fn event -> send(test_pid, {:event, event}) end)
     SyncEngine.remove("test/store", "post/tags", "elixir")
-    assert_receive {:event, %{path: "post/tags", op: :remove, value: "elixir", committed: false}}, 500
+
+    assert_receive {:event, %{path: "post/tags", op: :remove, value: "elixir", committed: false}},
+                   500
   end
 
   # Write rejection tests
@@ -279,8 +286,12 @@ defmodule Dust.SyncEngineTest do
 
     # Simulate server accepting the first write
     SyncEngine.handle_server_event("test/store", %{
-      "op" => "set", "path" => "key", "value" => "committed",
-      "store_seq" => 1, "device_id" => "d", "client_op_id" => first_op_id
+      "op" => "set",
+      "path" => "key",
+      "value" => "committed",
+      "store_seq" => 1,
+      "device_id" => "d",
+      "client_op_id" => first_op_id
     })
 
     # Now do an optimistic update
@@ -338,7 +349,9 @@ defmodule Dust.SyncEngineTest do
     test_pid = self()
     SyncEngine.on("test/store", "item/*", fn event -> send(test_pid, {:event, event}) end)
     SyncEngine.put("test/store", "item/price", Decimal.new("9.99"))
-    assert_receive {:event, %{path: "item/price", op: :set, value: %Decimal{}, committed: false}}, 500
+
+    assert_receive {:event, %{path: "item/price", op: :set, value: %Decimal{}, committed: false}},
+                   500
   end
 
   # DateTime tests
@@ -353,7 +366,10 @@ defmodule Dust.SyncEngineTest do
     test_pid = self()
     SyncEngine.on("test/store", "event/*", fn event -> send(test_pid, {:event, event}) end)
     SyncEngine.put("test/store", "event/starts_at", ~U[2026-03-31 12:00:00Z])
-    assert_receive {:event, %{path: "event/starts_at", op: :set, value: %DateTime{}, committed: false}}, 500
+
+    assert_receive {:event,
+                    %{path: "event/starts_at", op: :set, value: %DateTime{}, committed: false}},
+                   500
   end
 
   # File tests
@@ -367,7 +383,10 @@ defmodule Dust.SyncEngineTest do
 
     {:ok, ref} = SyncEngine.get("test/store", "docs/readme")
     assert %Dust.FileRef{} = ref
-    assert ref.hash == "sha256:" <> (:crypto.hash(:sha256, "hello world") |> Base.encode16(case: :lower))
+
+    assert ref.hash ==
+             "sha256:" <> (:crypto.hash(:sha256, "hello world") |> Base.encode16(case: :lower))
+
     assert ref.size == 11
     assert ref.filename == Path.basename(tmp)
     assert ref.content_type == "application/octet-stream"
@@ -376,13 +395,16 @@ defmodule Dust.SyncEngineTest do
   end
 
   test "put_file accepts filename and content_type opts" do
-    tmp = Path.join(System.tmp_dir!(), "dust_test_upload_#{System.unique_integer([:positive])}.bin")
+    tmp =
+      Path.join(System.tmp_dir!(), "dust_test_upload_#{System.unique_integer([:positive])}.bin")
+
     File.write!(tmp, <<0, 1, 2, 3>>)
 
-    :ok = SyncEngine.put_file("test/store", "files/data", tmp,
-      filename: "custom/dat",
-      content_type: "application/octet-stream"
-    )
+    :ok =
+      SyncEngine.put_file("test/store", "files/data", tmp,
+        filename: "custom/dat",
+        content_type: "application/octet-stream"
+      )
 
     {:ok, ref} = SyncEngine.get("test/store", "files/data")
     assert ref.filename == "custom/dat"
@@ -969,8 +991,7 @@ defmodule Dust.SyncEngineTest do
         "client_op_id" => id
       })
 
-      assert_receive {:event,
-                      %{committed: true, store_seq: 7, was_own: true, source: :server}},
+      assert_receive {:event, %{committed: true, store_seq: 7, was_own: true, source: :server}},
                      200
     end
 

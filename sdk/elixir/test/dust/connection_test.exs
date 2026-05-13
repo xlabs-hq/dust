@@ -28,11 +28,21 @@ defmodule Dust.ConnectionTest do
   end
 
   test "connects and joins store topic on connect", %{conn: conn} do
-    connect_and_assert_join conn, "store:test/mystore", %{"last_store_seq" => 0}, {:ok, %{"store_seq" => 0}}
+    connect_and_assert_join(
+      conn,
+      "store:test/mystore",
+      %{"last_store_seq" => 0},
+      {:ok, %{"store_seq" => 0}}
+    )
   end
 
   test "sets SyncEngine status to :connected after join", %{conn: conn} do
-    connect_and_assert_join conn, "store:test/mystore", %{"last_store_seq" => 0}, {:ok, %{"store_seq" => 5}}
+    connect_and_assert_join(
+      conn,
+      "store:test/mystore",
+      %{"last_store_seq" => 0},
+      {:ok, %{"store_seq" => 5}}
+    )
 
     # Give the cast time to process
     Process.sleep(50)
@@ -46,7 +56,12 @@ defmodule Dust.ConnectionTest do
     test_pid = self()
     SyncEngine.on("test/mystore", "posts/*", fn event -> send(test_pid, {:event, event}) end)
 
-    connect_and_assert_join conn, "store:test/mystore", %{"last_store_seq" => 0}, {:ok, %{"store_seq" => 0}}
+    connect_and_assert_join(
+      conn,
+      "store:test/mystore",
+      %{"last_store_seq" => 0},
+      {:ok, %{"store_seq" => 0}}
+    )
 
     # Server pushes an event
     push(conn, "store:test/mystore", "event", %{
@@ -62,21 +77,32 @@ defmodule Dust.ConnectionTest do
   end
 
   test "sends write to the server when SyncEngine writes", %{conn: conn} do
-    connect_and_assert_join conn, "store:test/mystore", %{"last_store_seq" => 0}, {:ok, %{"store_seq" => 0}}
+    connect_and_assert_join(
+      conn,
+      "store:test/mystore",
+      %{"last_store_seq" => 0},
+      {:ok, %{"store_seq" => 0}}
+    )
 
     # Trigger a write through SyncEngine
     :ok = SyncEngine.put("test/mystore", "posts/new", "content")
 
     # The Connection should push a "write" message
-    assert_push "store:test/mystore", "write", %{
+    assert_push("store:test/mystore", "write", %{
       "op" => "set",
       "path" => "posts/new",
       "value" => "content"
-    }
+    })
   end
 
   test "sets SyncEngine status to :reconnecting on disconnect", %{conn: conn} do
-    connect_and_assert_join conn, "store:test/mystore", %{"last_store_seq" => 0}, {:ok, %{"store_seq" => 0}}
+    connect_and_assert_join(
+      conn,
+      "store:test/mystore",
+      %{"last_store_seq" => 0},
+      {:ok, %{"store_seq" => 0}}
+    )
+
     Process.sleep(50)
 
     assert SyncEngine.status("test/mystore").connection == :connected

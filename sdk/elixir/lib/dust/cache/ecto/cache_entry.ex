@@ -4,11 +4,11 @@ if Code.ensure_loaded?(Ecto.Schema) do
 
     @primary_key false
     schema "dust_cache" do
-      field :store, :string
-      field :path, :string
-      field :value, :string
-      field :type, :string
-      field :seq, :integer
+      field(:store, :string)
+      field(:path, :string)
+      field(:value, :string)
+      field(:type, :string)
+      field(:seq, :integer)
     end
   end
 end

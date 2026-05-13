@@ -69,11 +69,12 @@ defmodule Dust.TestingTest do
   end
 
   test "build_event creates a properly shaped event map" do
-    event = Dust.Testing.build_event("test/store", "posts/hello",
-      op: :set,
-      value: %{"title" => "Hello"},
-      store_seq: 5
-    )
+    event =
+      Dust.Testing.build_event("test/store", "posts/hello",
+        op: :set,
+        value: %{"title" => "Hello"},
+        store_seq: 5
+      )
 
     assert event.store == "test/store"
     assert event.path == "posts/hello"

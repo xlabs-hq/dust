@@ -883,7 +883,15 @@ defmodule Dust.MCP.ToolsTest do
 
   describe "dust_import" do
     test "imports JSONL payload into store", ctx do
-      header = Jason.encode!(%{_header: true, store: ctx.store_full_name, seq: 0, entry_count: 1, path_schema_version: 3})
+      header =
+        Jason.encode!(%{
+          _header: true,
+          store: ctx.store_full_name,
+          seq: 0,
+          entry_count: 1,
+          path_schema_version: 3
+        })
+
       entry = Jason.encode!(%{path: "imported/foo", value: "bar"})
       payload = Enum.join([header, entry], "\n")
 
@@ -927,7 +935,15 @@ defmodule Dust.MCP.ToolsTest do
     end
 
     test "tolerates CRLF line endings in payload", ctx do
-      header = Jason.encode!(%{_header: true, store: ctx.store_full_name, seq: 0, entry_count: 1, path_schema_version: 3})
+      header =
+        Jason.encode!(%{
+          _header: true,
+          store: ctx.store_full_name,
+          seq: 0,
+          entry_count: 1,
+          path_schema_version: 3
+        })
+
       entry = Jason.encode!(%{path: "crlf/foo", value: "bar"})
       payload = Enum.join([header, entry], "\r\n")
 

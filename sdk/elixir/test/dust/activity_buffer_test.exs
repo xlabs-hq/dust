@@ -65,7 +65,12 @@ defmodule Dust.ActivityBufferTest do
 
   test "recent with limit", %{buf: buf} do
     for i <- 1..10 do
-      Dust.ActivityBuffer.append(buf, "test/store", %{path: "item.#{i}", op: :set, source: :server, seq: i})
+      Dust.ActivityBuffer.append(buf, "test/store", %{
+        path: "item.#{i}",
+        op: :set,
+        source: :server,
+        seq: i
+      })
     end
 
     entries = Dust.ActivityBuffer.recent(buf, "test/store", 3)

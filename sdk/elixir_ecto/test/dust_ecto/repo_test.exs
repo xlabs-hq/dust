@@ -40,9 +40,19 @@ defmodule DustEcto.RepoTest do
         Req.Test.json(conn, %{
           "items" => [
             %{"path" => "links/foo/title", "value" => "Foo", "type" => "string", "revision" => 1},
-            %{"path" => "links/foo/url", "value" => "https://foo", "type" => "string", "revision" => 2},
+            %{
+              "path" => "links/foo/url",
+              "value" => "https://foo",
+              "type" => "string",
+              "revision" => 2
+            },
             %{"path" => "links/bar/title", "value" => "Bar", "type" => "string", "revision" => 3},
-            %{"path" => "links/bar/url", "value" => "https://bar", "type" => "string", "revision" => 4}
+            %{
+              "path" => "links/bar/url",
+              "value" => "https://bar",
+              "type" => "string",
+              "revision" => 4
+            }
           ],
           "next_cursor" => nil
         })
@@ -61,7 +71,12 @@ defmodule DustEcto.RepoTest do
         Req.Test.json(conn, %{
           "items" => [
             %{"path" => "links/foo/title", "value" => "Foo", "type" => "string", "revision" => 1},
-            %{"path" => "links/foo/url", "value" => "https://foo", "type" => "string", "revision" => 2},
+            %{
+              "path" => "links/foo/url",
+              "value" => "https://foo",
+              "type" => "string",
+              "revision" => 2
+            },
             %{"path" => "links/bar/title", "value" => "Bar", "type" => "string", "revision" => 3}
           ],
           "next_cursor" => nil
@@ -90,7 +105,12 @@ defmodule DustEcto.RepoTest do
             1 ->
               %{
                 "items" => [
-                  %{"path" => "links/a/title", "value" => "A", "type" => "string", "revision" => 1},
+                  %{
+                    "path" => "links/a/title",
+                    "value" => "A",
+                    "type" => "string",
+                    "revision" => 1
+                  },
                   %{"path" => "links/a/url", "value" => "u", "type" => "string", "revision" => 1}
                 ],
                 "next_cursor" => "links/a/url"
@@ -99,7 +119,12 @@ defmodule DustEcto.RepoTest do
             _ ->
               %{
                 "items" => [
-                  %{"path" => "links/b/title", "value" => "B", "type" => "string", "revision" => 2},
+                  %{
+                    "path" => "links/b/title",
+                    "value" => "B",
+                    "type" => "string",
+                    "revision" => 2
+                  },
                   %{"path" => "links/b/url", "value" => "u", "type" => "string", "revision" => 2}
                 ],
                 "next_cursor" => nil
@@ -257,7 +282,12 @@ defmodule DustEcto.RepoTest do
       stub(fn conn ->
         Req.Test.json(conn, %{
           "items" => [
-            %{"path" => "reading/links/foo/title", "value" => "Foo", "type" => "string", "revision" => 1}
+            %{
+              "path" => "reading/links/foo/title",
+              "value" => "Foo",
+              "type" => "string",
+              "revision" => 1
+            }
           ],
           "next_cursor" => nil
         })
@@ -452,7 +482,10 @@ defmodule DustEcto.RepoTest do
         # Two ops in the batch, in the order submitted. Paths in the
         # batch_write body are dotted (canonical) — only URL segments use
         # slashes.
-        assert [%{"op" => "set", "path" => "map_links/foo"}, %{"op" => "delete", "path" => "map_links/bar"}] =
+        assert [
+                 %{"op" => "set", "path" => "map_links/foo"},
+                 %{"op" => "delete", "path" => "map_links/bar"}
+               ] =
                  Enum.map(decoded["ops"], &Map.take(&1, ["op", "path"]))
 
         Req.Test.json(conn, %{

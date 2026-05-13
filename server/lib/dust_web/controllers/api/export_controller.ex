@@ -7,7 +7,7 @@ defmodule DustWeb.Api.ExportController do
 
   action_fallback DustWeb.Api.FallbackController
 
-  operation :show,
+  operation(:show,
     operation_id: "sync.export",
     summary: "Export a store as JSONL or SQLite",
     description:
@@ -43,6 +43,7 @@ defmodule DustWeb.Api.ExportController do
       not_found: Refs.not_found(),
       too_many_requests: Refs.rate_limited()
     ]
+  )
 
   def show(conn, %{"org" => org_slug, "store" => store_name} = params) do
     organization = conn.assigns.organization

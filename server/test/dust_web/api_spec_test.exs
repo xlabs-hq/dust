@@ -33,7 +33,9 @@ defmodule DustWeb.ApiSpecTest do
         missing = MapSet.difference(MapSet.new(path_params), documented)
 
         if MapSet.size(missing) > 0 do
-          ["#{verb |> to_string() |> String.upcase()} #{path}: missing #{inspect(MapSet.to_list(missing))}"]
+          [
+            "#{verb |> to_string() |> String.upcase()} #{path}: missing #{inspect(MapSet.to_list(missing))}"
+          ]
         else
           []
         end

@@ -110,6 +110,7 @@ defmodule DustEcto.RepoSubscribeTest do
 
     test "delivers {:upserted, struct} for events under a dotted prefix" do
       test_pid = self()
+
       {:ok, _ref} =
         Repo.subscribe(DottedPrefixLink, fn evt -> send(test_pid, {:rec, evt}) end)
 

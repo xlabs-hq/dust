@@ -14,7 +14,7 @@ defmodule DustWeb.Api.TokenApiController do
   @bad_request Refs.bad_request()
   @rate_limited Refs.rate_limited()
 
-  operation :index,
+  operation(:index,
     operation_id: "tokens.list",
     summary: "List API tokens for the calling token's store",
     description:
@@ -31,6 +31,7 @@ defmodule DustWeb.Api.TokenApiController do
       forbidden: @forbidden,
       too_many_requests: @rate_limited
     ]
+  )
 
   def index(conn, _params) do
     store_token = conn.assigns.store_token
@@ -41,7 +42,7 @@ defmodule DustWeb.Api.TokenApiController do
     end
   end
 
-  operation :create,
+  operation(:create,
     operation_id: "tokens.create",
     summary: "Create a new API token",
     description: """
@@ -92,10 +93,10 @@ defmodule DustWeb.Api.TokenApiController do
       unauthorized: @unauthorized,
       forbidden: @forbidden,
       not_found: @not_found,
-      unprocessable_entity:
-        {Refs.schema("ValidationError"), description: "Validation error"},
+      unprocessable_entity: {Refs.schema("ValidationError"), description: "Validation error"},
       too_many_requests: @rate_limited
     ]
+  )
 
   def create(conn, %{"store_name" => store_name, "name" => name} = params) do
     org = conn.assigns.organization
@@ -151,7 +152,7 @@ defmodule DustWeb.Api.TokenApiController do
     end
   end
 
-  operation :delete,
+  operation(:delete,
     operation_id: "tokens.revoke",
     summary: "Revoke an API token",
     description:
@@ -172,6 +173,7 @@ defmodule DustWeb.Api.TokenApiController do
       not_found: @not_found,
       too_many_requests: @rate_limited
     ]
+  )
 
   def delete(conn, %{"id" => id}) do
     store_token = conn.assigns.store_token

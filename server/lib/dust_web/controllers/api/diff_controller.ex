@@ -7,7 +7,7 @@ defmodule DustWeb.Api.DiffController do
 
   action_fallback DustWeb.Api.FallbackController
 
-  operation :show,
+  operation(:show,
     operation_id: "sync.diff",
     summary: "Diff a store between two sequence numbers",
     description:
@@ -67,6 +67,7 @@ defmodule DustWeb.Api.DiffController do
          }, description: "from_seq has been compacted away"},
       too_many_requests: Refs.rate_limited()
     ]
+  )
 
   def show(conn, %{"org" => org_slug, "store" => store_name} = params) do
     organization = conn.assigns.organization

@@ -18,6 +18,7 @@ defmodule Dust.Page do
     def count(page), do: {:ok, length(page.items)}
     def member?(page, value), do: {:ok, Enum.member?(page.items, value)}
     def reduce(page, acc, fun), do: Enumerable.List.reduce(page.items, acc, fun)
+
     def slice(page) do
       size = length(page.items)
 

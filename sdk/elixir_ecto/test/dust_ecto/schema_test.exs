@@ -35,8 +35,9 @@ defmodule DustEcto.SchemaTest do
       assert_raise KeyError, fn ->
         defmodule NoPrefix do
           use DustEcto.Schema, required: []
+
           embedded_schema do
-            field :x, :string
+            field(:x, :string)
           end
         end
       end
@@ -46,8 +47,9 @@ defmodule DustEcto.SchemaTest do
       assert_raise ArgumentError, ~r/must not be empty/, fn ->
         defmodule EmptyPrefix do
           use DustEcto.Schema, prefix: []
+
           embedded_schema do
-            field :x, :string
+            field(:x, :string)
           end
         end
       end
@@ -57,8 +59,9 @@ defmodule DustEcto.SchemaTest do
       assert_raise ArgumentError, ~r/segment list, not a string/, fn ->
         defmodule LegacyDottedPrefix do
           use DustEcto.Schema, prefix: "reading.links"
+
           embedded_schema do
-            field :x, :string
+            field(:x, :string)
           end
         end
       end
@@ -68,8 +71,9 @@ defmodule DustEcto.SchemaTest do
       assert_raise ArgumentError, ~r/non-empty strings/, fn ->
         defmodule BadPrefixSegment do
           use DustEcto.Schema, prefix: ["a", ""]
+
           embedded_schema do
-            field :x, :string
+            field(:x, :string)
           end
         end
       end
@@ -79,8 +83,9 @@ defmodule DustEcto.SchemaTest do
       assert_raise ArgumentError, ~r/:mode must be :map or :flat/, fn ->
         defmodule BadMode do
           use DustEcto.Schema, prefix: ["x"], mode: :weird
+
           embedded_schema do
-            field :x, :string
+            field(:x, :string)
           end
         end
       end
@@ -90,8 +95,9 @@ defmodule DustEcto.SchemaTest do
       assert_raise ArgumentError, ~r/:required must be a list of field atoms/, fn ->
         defmodule BadRequired do
           use DustEcto.Schema, prefix: ["x"], required: ["slug"]
+
           embedded_schema do
-            field :x, :string
+            field(:x, :string)
           end
         end
       end

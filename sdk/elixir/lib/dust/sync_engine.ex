@@ -354,14 +354,23 @@ defmodule Dust.SyncEngine do
 
     # Fire local callback
     dispatch_callbacks(state, path, %{
-      store: state.store, path: path, op: :put_file, value: ref,
-      committed: false, source: :local, client_op_id: client_op_id
+      store: state.store,
+      path: path,
+      op: :put_file,
+      value: ref,
+      committed: false,
+      source: :local,
+      client_op_id: client_op_id
     })
 
     # Queue for server (connection sends put_file message with base64 content)
     op_msg = %{
-      op: :put_file, path: path, client_op_id: client_op_id,
-      content: base64_content, filename: filename, content_type: content_type
+      op: :put_file,
+      path: path,
+      client_op_id: client_op_id,
+      content: base64_content,
+      filename: filename,
+      content_type: content_type
     }
 
     pending = Map.put(state.pending_ops, client_op_id, op_msg)
@@ -461,6 +470,7 @@ defmodule Dust.SyncEngine do
       entry_count: entry_count,
       store: state.store
     }
+
     {:reply, status, state}
   end
 
@@ -652,7 +662,7 @@ defmodule Dust.SyncEngine do
       Dust.ActivityBuffer.append(state.activity_buffer, state.store, %{
         path: path,
         op: op,
-        source: (if was_pending, do: :local, else: :server),
+        source: if(was_pending, do: :local, else: :server),
         seq: store_seq
       })
     end
@@ -663,9 +673,15 @@ defmodule Dust.SyncEngine do
     # historical single-fire semantics); `:committed` keeps it; `:optimistic`
     # ignores committed events entirely.
     dispatch_callbacks(state, path, %{
-      store: state.store, path: path, op: op, value: value,
-      store_seq: store_seq, committed: true, was_own: was_pending,
-      source: :server, device_id: event["device_id"],
+      store: state.store,
+      path: path,
+      op: op,
+      value: value,
+      store_seq: store_seq,
+      committed: true,
+      was_own: was_pending,
+      source: :server,
+      device_id: event["device_id"],
       client_op_id: client_op_id
     })
 
@@ -775,8 +791,13 @@ defmodule Dust.SyncEngine do
 
     # Fire local callbacks
     dispatch_callbacks(state, path, %{
-      store: state.store, path: path, op: :set, value: value,
-      committed: false, source: :local, client_op_id: client_op_id
+      store: state.store,
+      path: path,
+      op: :set,
+      value: value,
+      committed: false,
+      source: :local,
+      client_op_id: client_op_id
     })
 
     op_msg =
@@ -806,8 +827,13 @@ defmodule Dust.SyncEngine do
     _ = state.cache.delete_subtree(state.cache_target, state.store, path)
 
     dispatch_callbacks(state, path, %{
-      store: state.store, path: path, op: :delete, value: nil,
-      committed: false, source: :local, client_op_id: client_op_id
+      store: state.store,
+      path: path,
+      op: :delete,
+      value: nil,
+      committed: false,
+      source: :local,
+      client_op_id: client_op_id
     })
 
     op_msg =
@@ -830,8 +856,13 @@ defmodule Dust.SyncEngine do
     end)
 
     dispatch_callbacks(state, path, %{
-      store: state.store, path: path, op: :merge, value: map,
-      committed: false, source: :local, client_op_id: client_op_id
+      store: state.store,
+      path: path,
+      op: :merge,
+      value: map,
+      committed: false,
+      source: :local,
+      client_op_id: client_op_id
     })
 
     op_msg =
@@ -856,8 +887,13 @@ defmodule Dust.SyncEngine do
     :ok = state.cache.write(state.cache_target, state.store, path, new_value, "counter", 0)
 
     dispatch_callbacks(state, path, %{
-      store: state.store, path: path, op: :increment, value: delta,
-      committed: false, source: :local, client_op_id: client_op_id
+      store: state.store,
+      path: path,
+      op: :increment,
+      value: delta,
+      committed: false,
+      source: :local,
+      client_op_id: client_op_id
     })
 
     op_msg =
@@ -887,8 +923,13 @@ defmodule Dust.SyncEngine do
     :ok = state.cache.write(state.cache_target, state.store, path, new_set, "set", 0)
 
     dispatch_callbacks(state, path, %{
-      store: state.store, path: path, op: op, value: member,
-      committed: false, source: :local, client_op_id: client_op_id
+      store: state.store,
+      path: path,
+      op: op,
+      value: member,
+      committed: false,
+      source: :local,
+      client_op_id: client_op_id
     })
 
     op_msg =
@@ -1074,7 +1115,9 @@ defmodule Dust.SyncEngine do
         flatten_into_cache(state, child_path, value, seq)
       else
         leaf_type = detect_type(value)
-        :ok = state.cache.write(state.cache_target, state.store, child_path, value, leaf_type, seq)
+
+        :ok =
+          state.cache.write(state.cache_target, state.store, child_path, value, leaf_type, seq)
       end
     end)
   end

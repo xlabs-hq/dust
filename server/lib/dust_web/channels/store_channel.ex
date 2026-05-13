@@ -200,7 +200,13 @@ defmodule DustWeb.StoreChannel do
              {:ok, path} <- resolve_incoming_path(params),
              :ok <- validate_merge_value(op, params["value"]),
              :ok <- validate_if_match(op, params, socket),
-             :ok <- check_billing_limits(op, Map.put(params, "path", path), socket.assigns.store_id, org) do
+             :ok <-
+               check_billing_limits(
+                 op,
+                 Map.put(params, "path", path),
+                 socket.assigns.store_id,
+                 org
+               ) do
           op_attrs =
             %{
               op: op,

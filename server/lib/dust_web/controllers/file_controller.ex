@@ -5,7 +5,7 @@ defmodule DustWeb.FileController do
   alias Dust.{Files, Stores, Sync}
   alias DustWeb.Api.Refs
 
-  operation :show,
+  operation(:show,
     operation_id: "files.download",
     summary: "Download a blob by content hash",
     description:
@@ -34,6 +34,7 @@ defmodule DustWeb.FileController do
       not_found: Refs.not_found(),
       too_many_requests: Refs.rate_limited()
     ]
+  )
 
   def show(conn, %{"hash" => hash}) do
     store_token = conn.assigns.store_token

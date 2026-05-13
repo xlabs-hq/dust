@@ -7,7 +7,7 @@ defmodule DustWeb.Api.CloneController do
 
   action_fallback DustWeb.Api.FallbackController
 
-  operation :create,
+  operation(:create,
     operation_id: "stores.clone",
     summary: "Clone a store into a new store",
     description:
@@ -61,6 +61,7 @@ defmodule DustWeb.Api.CloneController do
          }, description: "Target name already exists"},
       too_many_requests: Refs.rate_limited()
     ]
+  )
 
   def create(conn, %{"org" => org_slug, "store" => store_name, "name" => target_name}) do
     organization = conn.assigns.organization

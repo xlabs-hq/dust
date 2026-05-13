@@ -34,7 +34,8 @@ defmodule Dust.CallbackRegistry do
     mode = Keyword.get(opts, :mode, :all)
 
     unless mode in [:all, :committed, :optimistic] do
-      raise ArgumentError, "invalid :mode #{inspect(mode)} (allowed: :all, :committed, :optimistic)"
+      raise ArgumentError,
+            "invalid :mode #{inspect(mode)} (allowed: :all, :committed, :optimistic)"
     end
 
     {:ok, worker_pid} =

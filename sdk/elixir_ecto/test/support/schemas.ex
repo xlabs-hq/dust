@@ -9,10 +9,10 @@ defmodule DustEcto.Test.Link do
     required: [:slug, :title, :url]
 
   embedded_schema do
-    field :title, :string
-    field :url, :string
-    field :note, :string
-    field :added_at, :utc_datetime
+    field(:title, :string)
+    field(:url, :string)
+    field(:note, :string)
+    field(:added_at, :utc_datetime)
   end
 
   def changeset(link, attrs) do
@@ -35,9 +35,9 @@ defmodule DustEcto.Test.MapLink do
     mode: :map
 
   embedded_schema do
-    field :title, :string
-    field :url, :string
-    field :note, :string
+    field(:title, :string)
+    field(:url, :string)
+    field(:note, :string)
   end
 
   def changeset(link, attrs) do
@@ -56,7 +56,7 @@ defmodule DustEcto.Test.FlatNote do
     mode: :flat
 
   embedded_schema do
-    field :body, :string
+    field(:body, :string)
   end
 
   def changeset(note, attrs) do
@@ -79,7 +79,7 @@ defmodule DustEcto.Test.DottedPrefixLink do
     required: [:slug, :title]
 
   embedded_schema do
-    field :title, :string
+    field(:title, :string)
   end
 
   def changeset(link, attrs) do
@@ -101,7 +101,7 @@ defmodule DustEcto.Test.NestedThing do
     required: [:slug]
 
   embedded_schema do
-    field :meta, :map
+    field(:meta, :map)
   end
 
   def changeset(thing, attrs) do

@@ -7,7 +7,7 @@ defmodule DustWeb.Api.ImportController do
 
   action_fallback DustWeb.Api.FallbackController
 
-  operation :create,
+  operation(:create,
     operation_id: "sync.import",
     summary: "Import JSONL into a store",
     description:
@@ -76,6 +76,7 @@ defmodule DustWeb.Api.ImportController do
       not_found: Refs.not_found(),
       too_many_requests: Refs.rate_limited()
     ]
+  )
 
   def create(conn, %{"org" => org_slug, "store" => store_name}) do
     organization = conn.assigns.organization

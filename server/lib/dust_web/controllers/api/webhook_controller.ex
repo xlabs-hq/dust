@@ -28,7 +28,7 @@ defmodule DustWeb.Api.WebhookController do
 
   @request_id_param [_: Refs.parameter("RequestId")]
 
-  operation :index,
+  operation(:index,
     operation_id: "webhooks.list",
     summary: "List webhooks for a store",
     tags: ["Webhooks"],
@@ -45,6 +45,7 @@ defmodule DustWeb.Api.WebhookController do
       not_found: Refs.not_found(),
       too_many_requests: Refs.rate_limited()
     ]
+  )
 
   def index(conn, %{"org" => org_slug, "store" => store_name}) do
     with :ok <- verify_org(conn, org_slug),
@@ -59,7 +60,7 @@ defmodule DustWeb.Api.WebhookController do
     end
   end
 
-  operation :create,
+  operation(:create,
     operation_id: "webhooks.create",
     summary: "Register a new webhook",
     description:
@@ -102,6 +103,7 @@ defmodule DustWeb.Api.WebhookController do
          }, description: "Invalid params"},
       too_many_requests: Refs.rate_limited()
     ]
+  )
 
   def create(conn, %{"org" => org_slug, "store" => store_name} = params) do
     with :ok <- verify_org(conn, org_slug),
@@ -124,7 +126,7 @@ defmodule DustWeb.Api.WebhookController do
     end
   end
 
-  operation :delete,
+  operation(:delete,
     operation_id: "webhooks.delete",
     summary: "Delete a webhook",
     tags: ["Webhooks"],
@@ -138,6 +140,7 @@ defmodule DustWeb.Api.WebhookController do
       not_found: Refs.not_found(),
       too_many_requests: Refs.rate_limited()
     ]
+  )
 
   def delete(conn, %{"org" => org_slug, "store" => store_name, "id" => webhook_id}) do
     with :ok <- verify_org(conn, org_slug),
@@ -149,7 +152,7 @@ defmodule DustWeb.Api.WebhookController do
     end
   end
 
-  operation :ping,
+  operation(:ping,
     operation_id: "webhooks.ping",
     summary: "Send a test ping to a webhook",
     description:
@@ -178,6 +181,7 @@ defmodule DustWeb.Api.WebhookController do
          }, description: "Webhook endpoint unreachable"},
       too_many_requests: Refs.rate_limited()
     ]
+  )
 
   def ping(conn, %{"org" => org_slug, "store" => store_name, "id" => webhook_id}) do
     with :ok <- verify_org(conn, org_slug),
@@ -225,7 +229,7 @@ defmodule DustWeb.Api.WebhookController do
     end
   end
 
-  operation :deliveries,
+  operation(:deliveries,
     operation_id: "webhooks.list_deliveries",
     summary: "List recent webhook delivery attempts",
     tags: ["Webhooks"],
@@ -253,6 +257,7 @@ defmodule DustWeb.Api.WebhookController do
       not_found: Refs.not_found(),
       too_many_requests: Refs.rate_limited()
     ]
+  )
 
   def deliveries(conn, %{"org" => org_slug, "store" => store_name, "id" => webhook_id} = params) do
     with :ok <- verify_org(conn, org_slug),

@@ -200,7 +200,10 @@ defmodule DustWeb.StoreChannelTest do
       }
     end
 
-    test "accepts capver 3 `path_segments` array as authoritative", %{socket: socket, store: store} do
+    test "accepts capver 3 `path_segments` array as authoritative", %{
+      socket: socket,
+      store: store
+    } do
       {:ok, _, socket} =
         subscribe_and_join(socket, DustWeb.StoreChannel, "store:#{store.id}", %{
           "last_store_seq" => 0

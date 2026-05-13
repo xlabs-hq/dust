@@ -12,7 +12,7 @@ defmodule DustWeb.Api.StoreApiController do
   @forbidden Refs.forbidden()
   @rate_limited Refs.rate_limited()
 
-  operation :index,
+  operation(:index,
     operation_id: "stores.list",
     summary: "List stores in the current organization",
     tags: ["Stores"],
@@ -43,6 +43,7 @@ defmodule DustWeb.Api.StoreApiController do
       forbidden: @forbidden,
       too_many_requests: @rate_limited
     ]
+  )
 
   def index(conn, _params) do
     org = conn.assigns.organization
@@ -54,7 +55,7 @@ defmodule DustWeb.Api.StoreApiController do
     })
   end
 
-  operation :create,
+  operation(:create,
     operation_id: "stores.create",
     summary: "Disabled — create stores via the dashboard",
     description: """
@@ -79,6 +80,7 @@ defmodule DustWeb.Api.StoreApiController do
          }, description: "Always returned in v0.1"},
       too_many_requests: @rate_limited
     ]
+  )
 
   def create(_conn, _params) do
     # Store-scoped tokens have no authority to create new stores. Until

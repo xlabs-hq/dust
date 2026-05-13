@@ -108,7 +108,9 @@ defmodule DustEcto.Repo do
 
         state ->
           opts = [select: :entries, limit: 100]
-          opts = if state.cursor == :start, do: opts, else: Keyword.put(opts, :after, state.cursor)
+
+          opts =
+            if state.cursor == :start, do: opts, else: Keyword.put(opts, :after, state.cursor)
 
           case transport.list(store, pattern, opts) do
             {:ok, %{items: items, next_cursor: next}} ->
@@ -199,7 +201,9 @@ defmodule DustEcto.Repo do
         # fields — load with empty body and let the required-fields
         # guard speak.
         case load_record(schema, slug, %{}) do
-          {:ok, struct} -> {:ok, struct}
+          {:ok, struct} ->
+            {:ok, struct}
+
           :missing_required ->
             log_skip(schema, slug, %{}, scalar: scalar)
             {:error, :not_found}
@@ -410,7 +414,8 @@ defmodule DustEcto.Repo do
     end
   end
 
-  defp batch_op_to_wire({:insert, %Ecto.Changeset{} = cs}), do: batch_op_to_wire({:insert, cs, []})
+  defp batch_op_to_wire({:insert, %Ecto.Changeset{} = cs}),
+    do: batch_op_to_wire({:insert, cs, []})
 
   defp batch_op_to_wire({:insert, %Ecto.Changeset{} = cs, opts}) do
     case Ecto.Changeset.apply_action(cs, :insert) do
@@ -419,7 +424,8 @@ defmodule DustEcto.Repo do
     end
   end
 
-  defp batch_op_to_wire({:update, %Ecto.Changeset{} = cs}), do: batch_op_to_wire({:update, cs, []})
+  defp batch_op_to_wire({:update, %Ecto.Changeset{} = cs}),
+    do: batch_op_to_wire({:update, cs, []})
 
   defp batch_op_to_wire({:update, %Ecto.Changeset{} = cs, opts}) do
     case Ecto.Changeset.apply_action(cs, :update) do
@@ -488,8 +494,11 @@ defmodule DustEcto.Repo do
           |> Enum.reject(&(&1 == :slug))
           |> Enum.flat_map(fn field ->
             case Map.fetch(body, field) do
-              {:ok, value} -> [%{op: set_atom, path: field_path!(prefix, slug, field), value: value}]
-              :error -> []
+              {:ok, value} ->
+                [%{op: set_atom, path: field_path!(prefix, slug, field), value: value}]
+
+              :error ->
+                []
             end
           end)
 
