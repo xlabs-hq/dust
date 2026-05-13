@@ -163,7 +163,20 @@ components:
             enum: [set, delete, merge]
           path:
             type: string
-            description: Dot-separated path (e.g. posts.hello.title)
+            description: |
+              Slash-separated canonical path (e.g. `posts/hello/title`).
+              Literal `/` and `~` in a segment are encoded as `~1` and
+              `~0` (RFC 6901). For capver >= 3 clients should also send
+              `path_segments` (authoritative segment list); the server
+              prefers it when present.
+          path_segments:
+            type: array
+            items:
+              type: string
+            description: |
+              Authoritative segment list (capver 3+). When present, the
+              server uses these segments as-is and treats `path` as a
+              display/back-compat echo.
           value: {}
           client_op_id:
             type: string

@@ -22,10 +22,15 @@ One write at a time per store. The server processes writes sequentially.
 
 ### Path Syntax
 
-Paths are dot-separated segments: `posts.hello.title`.
+Paths are slash-separated segments rendered in JSON Pointer form:
+`posts/hello/title`.
 
-- Segments are non-empty strings.
-- Path `a` is ancestor of `a.b` and `a.b.c`.
+- Segments are non-empty strings; literal `/` and `~` inside a segment
+  are encoded as `~1` and `~0` respectively (RFC 6901).
+- For capver >= 3 the authoritative shape is the segment list. The
+  rendered string is a one-to-one display form; both client and server
+  may exchange a `path_segments` array alongside the string.
+- Path `a` is ancestor of `a/b` and `a/b/c`.
 - Path `a` is not ancestor of `ab` or `a` itself.
 
 ## Optimistic Write Lifecycle
@@ -109,7 +114,7 @@ in the first place.
 
 ## Capability Versioning
 
-Single integer, sent in hello. Current version is `capver = 2`.
+Single integer, sent in hello. Current version is `capver = 3`.
 Server responds with `capver_min` and `capver_max`.
 If client capver is outside the range, connection is rejected.
 
@@ -120,6 +125,9 @@ Capver history:
   `conflict` / `capver_mismatch` / `if_match_unsupported_op` /
   `if_match_multi_leaf` reply reasons. The server still accepts capver=1
   joins for reads, but capver=1 clients cannot use CAS.
+- **3** — segment-first paths. The authoritative shape is a segment list
+  (`path_segments`); the slash-rendered string (`path`) is a display/
+  back-compat echo. Dotted paths are no longer accepted on the wire.
 
 ## Wire Encoding
 

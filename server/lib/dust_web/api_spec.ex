@@ -79,11 +79,14 @@ defmodule DustWeb.ApiSpec do
 
         ### Paths
 
-        Entries are addressed by dot-separated paths (`projects.alpha.title`).
-        The HTTP API also accepts slashes between segments
-        (`projects/alpha/title`) — they are normalised to dots
-        server-side. URL path *segments* themselves cannot contain `.`;
-        keys with literal dots in their names are not supported.
+        Entries are addressed by slash-separated paths
+        (`projects/alpha/title`). Each segment is plain text — dots,
+        spaces, and other characters are allowed inside a segment. To
+        carry a literal `/` or `~` inside a segment, encode it as `~1`
+        or `~0` respectively (RFC 6901 JSON Pointer escaping). The URL
+        wildcard route accepts those escapes directly:
+        `GET /entries/files/image~1logo` resolves to segments
+        `["files", "image/logo"]`.
 
         ### Errors
 
@@ -374,7 +377,8 @@ defmodule DustWeb.ApiSpec do
           },
           device_id: %{
             type: :string,
-            description: "Identifier of the client that originated the write (omitted for `ping`)."
+            description:
+              "Identifier of the client that originated the write (omitted for `ping`)."
           },
           timestamp: %{type: :string, format: "date-time"}
         },
