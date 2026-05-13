@@ -518,6 +518,36 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
 
       assert resp.status == 401
     end
+
+    test "preserves ~1 and ~0 escapes in captured URL segments", %{
+      conn: conn,
+      token: token,
+      store: store
+    } do
+      # Logical segment "image/logo" contains a literal slash, encoded
+      # on the wire as ~1. The captured wildcard piece is "image~1logo".
+      # A literal ~ in a segment is encoded as ~0.
+      seed_entry(store, "files/image~1logo", "blob-slash")
+      seed_entry(store, "files/image~0logo", "blob-tilde")
+
+      resp_slash =
+        conn
+        |> api_conn(token)
+        |> get("/api/stores/entriesorg/mystore/entries/files/image~1logo")
+
+      body_slash = json_response(resp_slash, 200)
+      assert body_slash["path"] == "files/image~1logo"
+      assert body_slash["value"] == "blob-slash"
+
+      resp_tilde =
+        conn
+        |> api_conn(token)
+        |> get("/api/stores/entriesorg/mystore/entries/files/image~0logo")
+
+      body_tilde = json_response(resp_tilde, 200)
+      assert body_tilde["path"] == "files/image~0logo"
+      assert body_tilde["value"] == "blob-tilde"
+    end
   end
 
   describe "PUT /api/stores/:org/:store/entries/*path" do
@@ -897,7 +927,11 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       assert resp.status == 403
     end
 
-    test "accepts '.' inside a URL segment as a literal character", %{conn: conn, token: token, store: store} do
+    test "accepts '.' inside a URL segment as a literal character", %{
+      conn: conn,
+      token: token,
+      store: store
+    } do
       # Capver 3 segment-first: dots inside URL segments are literal.
       # `/entries/foo.bar/baz` is two segments: `["foo.bar", "baz"]`.
       # Seed the leaf with the segment-first contract, then HEAD it.
@@ -1270,5 +1304,4 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       assert resp.status == 400
     end
   end
-
 end

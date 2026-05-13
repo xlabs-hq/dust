@@ -50,7 +50,7 @@ defmodule DustWeb.Api.EntriesApiController do
   @if_match_param [_: Refs.parameter("IfMatch")]
   @request_id_param [_: Refs.parameter("RequestId")]
 
-  operation :show,
+  operation(:show,
     operation_id: "entries.get",
     summary: "Read a single entry by path (or probe existence with HEAD)",
     description: """
@@ -73,6 +73,7 @@ defmodule DustWeb.Api.EntriesApiController do
       not_found: @not_found,
       too_many_requests: @rate_limited
     ]
+  )
 
   def show(conn, %{"org" => org_slug, "store" => store_name, "path" => path_segments}) do
     principal = conn.assigns.api_principal
@@ -90,19 +91,20 @@ defmodule DustWeb.Api.EntriesApiController do
     end
   end
 
-  # Each captured URL segment is one path segment in the new (capver
-  # 3) model. URL `/entries/posts/hello.world/title` captures three
-  # segments `["posts", "hello.world", "title"]` — dots inside a URL
-  # segment are *literal*. A literal `/` inside a segment is encoded
-  # at the URL layer as `~1` (RFC 6901 + URL-decoding), then arrives
-  # here as a regular segment string.
+  # Each captured URL piece is a JSON-Pointer-rendered segment: a `/`
+  # inside a logical segment is sent on the wire as `~1` and a literal
+  # `~` as `~0` (RFC 6901). Joining the captured pieces with `/`
+  # yields the canonical rendered path string — the same shape every
+  # other endpoint accepts. `parse_rendered` validates it.
+  #
+  # URL `/entries/files/image~1file` → captured `["files", "image~1file"]`
+  # → joined `"files/image~1file"` → segments `["files", "image/file"]`.
   defp url_path(segments) do
-    case DustProtocol.Path.from_segments(List.wrap(segments)) do
-      {:ok, segs} ->
-        case DustProtocol.Path.render(segs) do
-          {:ok, rendered} -> {:ok, rendered}
-          {:error, reason} -> {:error, {:invalid_params, to_string(reason)}}
-        end
+    rendered = segments |> List.wrap() |> Enum.join("/")
+
+    case DustProtocol.Path.parse_rendered(rendered) do
+      {:ok, _segs} ->
+        {:ok, rendered}
 
       {:error, :empty_path} ->
         {:error, {:invalid_params, "path is required"}}
@@ -126,7 +128,7 @@ defmodule DustWeb.Api.EntriesApiController do
     %{path: p, value: v, type: t, revision: s}
   end
 
-  operation :index,
+  operation(:index,
     operation_id: "entries.list",
     summary: "List entries by glob pattern or key range",
     description: """
@@ -134,13 +136,12 @@ defmodule DustWeb.Api.EntriesApiController do
     a lexicographic key range. The two modes are mutually exclusive.
 
     `*` matches a single path segment. `**` matches one or more
-    segments. Slashes between segments are accepted as aliases for
-    dots — so `pattern=projects/alpha/*` is equivalent to
-    `pattern=projects.alpha.*`.
+    segments. Paths and patterns are slash-separated
+    (`pattern=projects/alpha/*`).
 
     Use `select=keys` to return path strings only, or `select=prefixes`
     (pattern mode only) to return distinct next-segment prefixes
-    matching `<base>.**`.
+    matching `<base>/**`.
     """,
     tags: ["Entries"],
     parameters:
@@ -208,6 +209,7 @@ defmodule DustWeb.Api.EntriesApiController do
       forbidden: @forbidden,
       too_many_requests: @rate_limited
     ]
+  )
 
   def index(conn, %{"org" => org_slug, "store" => store_name} = params) do
     principal = conn.assigns.api_principal
@@ -225,7 +227,7 @@ defmodule DustWeb.Api.EntriesApiController do
     end
   end
 
-  operation :put,
+  operation(:put,
     operation_id: "entries.put",
     summary: "Write an entry at the given path",
     description: """
@@ -243,8 +245,7 @@ defmodule DustWeb.Api.EntriesApiController do
     server-side deduplication.
     """,
     tags: ["Entries"],
-    parameters:
-      @org_store_params ++ @entry_path_param ++ @if_match_param ++ @request_id_param,
+    parameters: @org_store_params ++ @entry_path_param ++ @if_match_param ++ @request_id_param,
     request_body:
       {%{description: "Any JSON value (object, scalar, array, string, number, boolean, null)"},
        description: "Entry value"},
@@ -276,6 +277,7 @@ defmodule DustWeb.Api.EntriesApiController do
          }, description: "If-Match revision mismatch"},
       too_many_requests: @rate_limited
     ]
+  )
 
   def put(conn, %{"org" => org_slug, "store" => store_name, "path" => path_segments}) do
     principal = conn.assigns.api_principal
@@ -292,7 +294,7 @@ defmodule DustWeb.Api.EntriesApiController do
     end
   end
 
-  operation :delete,
+  operation(:delete,
     operation_id: "entries.delete",
     summary: "Delete an entry (or subtree) at the given path",
     description: """
@@ -306,8 +308,7 @@ defmodule DustWeb.Api.EntriesApiController do
     against a subtree path will never match and returns 412.
     """,
     tags: ["Entries"],
-    parameters:
-      @org_store_params ++ @entry_path_param ++ @if_match_param ++ @request_id_param,
+    parameters: @org_store_params ++ @entry_path_param ++ @if_match_param ++ @request_id_param,
     responses: [
       ok:
         {%{
@@ -339,6 +340,7 @@ defmodule DustWeb.Api.EntriesApiController do
          }, description: "If-Match revision mismatch"},
       too_many_requests: @rate_limited
     ]
+  )
 
   def delete(conn, %{"org" => org_slug, "store" => store_name, "path" => path_segments}) do
     principal = conn.assigns.api_principal
@@ -356,16 +358,17 @@ defmodule DustWeb.Api.EntriesApiController do
 
   # --- Body-path variants (UI-friendly: path in body, not URL) -------
 
-  operation :create,
+  operation(:create,
     operation_id: "entries.create",
     summary: "Upsert an entry with the path in the request body",
     description: """
     Same semantics as `PUT /entries/{path}`, but the path travels in
-    the request body. Designed for the web UI: avoids slash-encoding
-    dotted paths and lets the writer carry `if_match` in the body
-    rather than a header.
+    the request body. Designed for the web UI: avoids the per-segment
+    `~0`/`~1` encoding the URL wildcard requires for special chars,
+    and lets the writer carry `if_match` in the body rather than a
+    header.
 
-    Body: `{"path": "links.foo.title", "value": <any JSON>, "if_match"?: <int>}`.
+    Body: `{"path": "links/foo/title", "value": <any JSON>, "if_match"?: <int>}`.
     """,
     tags: ["Entries"],
     parameters: @org_store_params ++ @request_id_param,
@@ -373,7 +376,7 @@ defmodule DustWeb.Api.EntriesApiController do
       {%{
          type: :object,
          properties: %{
-           path: %{type: :string, example: "links.foo.title"},
+           path: %{type: :string, example: "links/foo/title"},
            value: %{description: "Any JSON value."},
            if_match: %{type: :integer, minimum: 1}
          },
@@ -387,6 +390,7 @@ defmodule DustWeb.Api.EntriesApiController do
       precondition_failed: {@conflict_schema, description: "If-Match revision mismatch"},
       too_many_requests: @rate_limited
     ]
+  )
 
   def create(conn, %{"org" => org_slug, "store" => store_name} = params) do
     principal = conn.assigns.api_principal
@@ -403,12 +407,12 @@ defmodule DustWeb.Api.EntriesApiController do
     end
   end
 
-  operation :destroy,
+  operation(:destroy,
     operation_id: "entries.destroy",
     summary: "Delete an entry with the path in the request body",
     description: """
     Same semantics as `DELETE /entries/{path}`, but the path travels
-    in the request body. Body: `{"path": "links.foo", "if_match"?: <int>}`.
+    in the request body. Body: `{"path": "links/foo", "if_match"?: <int>}`.
     """,
     tags: ["Entries"],
     parameters: @org_store_params ++ @request_id_param,
@@ -416,7 +420,7 @@ defmodule DustWeb.Api.EntriesApiController do
       {%{
          type: :object,
          properties: %{
-           path: %{type: :string, example: "links.foo"},
+           path: %{type: :string, example: "links/foo"},
            if_match: %{type: :integer, minimum: 1}
          },
          required: [:path]
@@ -429,6 +433,7 @@ defmodule DustWeb.Api.EntriesApiController do
       precondition_failed: {@conflict_schema, description: "If-Match revision mismatch"},
       too_many_requests: @rate_limited
     ]
+  )
 
   def destroy(conn, %{"org" => org_slug, "store" => store_name} = params) do
     principal = conn.assigns.api_principal
@@ -496,9 +501,7 @@ defmodule DustWeb.Api.EntriesApiController do
   defp body_if_match(%{"if_match" => n}) when is_integer(n) and n > 0, do: {:ok, n}
 
   defp body_if_match(%{"if_match" => other}),
-    do:
-      {:error,
-       {:invalid_params, "if_match must be a positive integer (got #{inspect(other)})"}}
+    do: {:error, {:invalid_params, "if_match must be a positive integer (got #{inspect(other)})"}}
 
   defp body_if_match(_), do: {:ok, :none}
 
@@ -615,11 +618,11 @@ defmodule DustWeb.Api.EntriesApiController do
     if ApiPrincipal.can_write?(principal), do: :ok, else: {:error, :forbidden}
   end
 
-  operation :batch,
+  operation(:batch,
     operation_id: "entries.batch_get",
     summary: "Read multiple entries in one request",
     description:
-      "Returns found entries keyed by canonical (dotted) path, plus a `missing` list of paths that did not match an entry. Up to 1000 paths per call.",
+      "Returns found entries keyed by canonical slash-rendered path, plus a `missing` list of paths that did not match an entry. Up to 1000 paths per call.",
     tags: ["Entries"],
     parameters: @org_store_params ++ @request_id_param,
     request_body:
@@ -631,7 +634,7 @@ defmodule DustWeb.Api.EntriesApiController do
              items: %{type: :string},
              maxItems: 1000,
              description:
-               "Up to 1000 entry paths. Slashes are accepted as aliases for dots; canonical (dotted) keys are returned."
+               "Up to 1000 entry paths in canonical slash-rendered form. Returned keys are canonical."
            }
          },
          required: [:paths],
@@ -645,7 +648,7 @@ defmodule DustWeb.Api.EntriesApiController do
              entries: %{
                type: :object,
                additionalProperties: @entry_ref,
-               description: "Map keyed by canonical (dotted) path."
+               description: "Map keyed by canonical slash-rendered path."
              },
              missing: %{
                type: :array,
@@ -660,6 +663,7 @@ defmodule DustWeb.Api.EntriesApiController do
       forbidden: @forbidden,
       too_many_requests: @rate_limited
     ]
+  )
 
   def batch(conn, %{"org" => org_slug, "store" => store_name} = params) do
     principal = conn.assigns.api_principal
@@ -716,7 +720,7 @@ defmodule DustWeb.Api.EntriesApiController do
     end)
   end
 
-  operation :batch_write,
+  operation(:batch_write,
     operation_id: "entries.batch_write",
     summary: "Atomic multi-key write — all-or-nothing",
     description: """
@@ -745,7 +749,7 @@ defmodule DustWeb.Api.EntriesApiController do
                type: :object,
                properties: %{
                  op: %{type: :string, enum: ["set", "delete"]},
-                 path: %{type: :string, description: "Slashes accepted; canonical is dotted."},
+                 path: %{type: :string, description: "Canonical slash-rendered path."},
                  value: %{description: "Required for set; ignored for delete."},
                  if_match: %{type: :integer, description: "Optional leaf-only CAS precondition."}
                },
@@ -802,6 +806,7 @@ defmodule DustWeb.Api.EntriesApiController do
          }, description: "An op's If-Match precondition failed; no ops applied."},
       too_many_requests: @rate_limited
     ]
+  )
 
   def batch_write(conn, %{"org" => org_slug, "store" => store_name} = params) do
     principal = conn.assigns.api_principal
@@ -814,10 +819,13 @@ defmodule DustWeb.Api.EntriesApiController do
          :ok <- verify_can_write(principal) do
       case Sync.batch_write(store.id, ops) do
         {:ok, results} ->
-          last_seq = results |> List.last() |> case do
-            %{store_seq: s} -> s
-            _ -> 0
-          end
+          last_seq =
+            results
+            |> List.last()
+            |> case do
+              %{store_seq: s} -> s
+              _ -> 0
+            end
 
           json(conn, %{
             ops:
