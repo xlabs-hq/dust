@@ -214,6 +214,40 @@ defmodule DustEcto.Transport.HTTPTest do
 
       assert {:ok, _} = HTTP.get(@store, "a+b")
     end
+
+    test "~1 (literal '/' in a segment) is sent intact, not as %2F" do
+      # Canonical path "files/image~1logo" encodes a single logical
+      # segment "image/logo" — the `~1` must survive into the URL or
+      # the server splits it back into two segments.
+      stub(fn conn ->
+        assert conn.request_path == "/api/stores/myorg/mystore/entries/files/image~1logo"
+        refute conn.request_path =~ "%2F"
+
+        Req.Test.json(conn, %{
+          "path" => "files/image~1logo",
+          "value" => "blob",
+          "type" => "string",
+          "revision" => 1
+        })
+      end)
+
+      assert {:ok, _} = HTTP.get(@store, "files/image~1logo")
+    end
+
+    test "~0 (literal '~' in a segment) is sent intact" do
+      stub(fn conn ->
+        assert conn.request_path == "/api/stores/myorg/mystore/entries/files/image~0logo"
+
+        Req.Test.json(conn, %{
+          "path" => "files/image~0logo",
+          "value" => "blob",
+          "type" => "string",
+          "revision" => 1
+        })
+      end)
+
+      assert {:ok, _} = HTTP.get(@store, "files/image~0logo")
+    end
   end
 
   describe "error translation" do

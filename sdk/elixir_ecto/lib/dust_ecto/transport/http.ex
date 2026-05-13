@@ -79,9 +79,9 @@ defmodule DustEcto.Transport.HTTP do
   # HEAD wasn't always supported on the Dust server — pre-0c55375
   # deploys 405 it. Fall back to the cheapest existence query the
   # server has always supported: a one-key listing under
-  # `<path>.**`. Bounded (1 key, no values), no body decode.
+  # `<path>/**`. Bounded (1 key, no values), no body decode.
   defp exists_via_keys(store, path) do
-    case list(store, "#{path}.**", select: :keys, limit: 1) do
+    case list(store, "#{path}/**", select: :keys, limit: 1) do
       {:ok, %{items: [_ | _]}} -> {:ok, true}
       {:ok, %{items: []}} -> {:ok, false}
       err -> err
@@ -205,11 +205,16 @@ defmodule DustEcto.Transport.HTTP do
   end
 
   defp path_to_url_segments(path) when is_binary(path) do
-    # Path is canonical slash-rendered (`links/foo/title`). Decode it
-    # into segments via the segment-first protocol module so any
-    # `~0`/`~1` escapes round-trip correctly into the URL — a segment
-    # that contains a literal `/` becomes `%2F` in the URL, not a
-    # path separator.
+    # Path is canonical slash-rendered (`links/foo/title`). We split on
+    # `/` and keep each *rendered* piece — `~0` and `~1` are already
+    # URL-safe (RFC 3986 unreserved + digit) — then percent-encode any
+    # remaining unsafe bytes. The server's wildcard route receives the
+    # rendered pieces back and rejoins them with `/`, so `~1` survives
+    # as the JSON-Pointer escape for a literal slash inside a segment.
+    #
+    # Re-parsing into raw segments and URL-encoding `/` to `%2F` is
+    # wrong here: Phoenix decodes `%2F` to `/` before splitting, so a
+    # segment containing a literal slash ends up split in two.
     #
     # URI.encode_www_form/1 turns space into `+`, which is correct for
     # `application/x-www-form-urlencoded` query strings but wrong in
@@ -217,13 +222,18 @@ defmodule DustEcto.Transport.HTTP do
     # URI.encode/2 with a path-safe character predicate produces the
     # right %20 encoding.
     case DustPath.parse_rendered(path) do
-      {:ok, segments} -> Enum.map_join(segments, "/", &encode_segment/1)
-      _ -> raise ArgumentError, "invalid path #{inspect(path)}"
+      {:ok, _segments} ->
+        path
+        |> String.split("/")
+        |> Enum.map_join("/", &encode_rendered_piece/1)
+
+      _ ->
+        raise ArgumentError, "invalid path #{inspect(path)}"
     end
   end
 
-  defp encode_segment(segment) do
-    URI.encode(segment, &path_segment_safe?/1)
+  defp encode_rendered_piece(piece) do
+    URI.encode(piece, &path_segment_safe?/1)
   end
 
   # Characters allowed unencoded in a URL path segment. Per RFC 3986
@@ -307,13 +317,14 @@ defmodule DustEcto.Transport.HTTP do
     end
   end
 
-  defp maybe_put_body(opts, method, body) when method in [:put, :post, :delete] and not is_nil(body),
-    do:
-      opts
-      |> Keyword.put(:body, body)
-      |> Keyword.update(:headers, [{"content-type", "application/json"}], fn h ->
-        [{"content-type", "application/json"} | h]
-      end)
+  defp maybe_put_body(opts, method, body)
+       when method in [:put, :post, :delete] and not is_nil(body),
+       do:
+         opts
+         |> Keyword.put(:body, body)
+         |> Keyword.update(:headers, [{"content-type", "application/json"}], fn h ->
+           [{"content-type", "application/json"} | h]
+         end)
 
   defp maybe_put_body(opts, _, _), do: opts
 
@@ -324,6 +335,7 @@ defmodule DustEcto.Transport.HTTP do
   defp maybe_put_test_plug(opts, _), do: opts
 
   defp safe_decode_json(""), do: nil
+
   defp safe_decode_json(bin) do
     case JSON.decode(bin) do
       {:ok, term} -> term
@@ -372,7 +384,11 @@ defmodule DustEcto.Transport.HTTP do
       {:error,
        Error.new(
          :not_implemented,
-         %{status: 404, body: body, hint: "server doesn't expose this route — likely a deploy lag"},
+         %{
+           status: 404,
+           body: body,
+           hint: "server doesn't expose this route — likely a deploy lag"
+         },
          retryable?: false
        )}
 
