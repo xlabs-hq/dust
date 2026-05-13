@@ -2,97 +2,157 @@ defmodule Dust.Sync.Audit do
   @moduledoc "Rich filtering and pagination for store operations (audit log)."
 
   alias Dust.Sync.StoreDB
+  alias DustProtocol.Glob
+  alias DustProtocol.Path, as: DPath
 
   @doc """
   Query ops for a store with optional filters.
 
   Options:
-    - `:path`      — exact path or wildcard pattern (e.g. "users.*")
+    - `:path`      — exact path or segment-aware wildcard pattern
+                     (e.g. `"users/*"`, `"users/**"`)
     - `:device_id` — filter by device
     - `:op`        — filter by op type (string or atom, e.g. "set" or :set)
-    - `:since`     — DateTime or ISO8601 string; only ops inserted at or after this time
+    - `:since`     — DateTime or ISO8601 string; only ops inserted at or
+                     after this time
     - `:limit`     — max results (default 50)
     - `:offset`    — pagination offset (default 0)
   """
   def query_ops(store_id, opts \\ []) do
     with_read_conn(store_id, fn conn ->
-      {where_clauses, params} = build_filters(opts)
+      {where_clauses, params, glob} = build_filters(opts)
       limit = opts[:limit] || 50
       offset = opts[:offset] || 0
 
       where_sql =
         if where_clauses == [], do: "", else: " AND " <> Enum.join(where_clauses, " AND ")
 
-      sql = """
-        SELECT store_seq, op, path, value, type, device_id, client_op_id, inserted_at
-        FROM store_ops
-        WHERE 1=1#{where_sql}
-        ORDER BY store_seq DESC
-        LIMIT ? OFFSET ?
-      """
+      if glob do
+        # Wildcard filter: SQL LIKE is only a coarse candidate filter
+        # (it doesn't respect segment boundaries). Pull the candidate
+        # set in store_seq DESC order, then apply the segment-aware
+        # glob match in Elixir before paginating.
+        sql = """
+          SELECT store_seq, op, path, value, type, device_id, client_op_id, inserted_at
+          FROM store_ops
+          WHERE 1=1#{where_sql}
+          ORDER BY store_seq DESC
+        """
 
-      query_all(conn, sql, params ++ [limit, offset])
-      |> Enum.map(&row_to_op/1)
+        query_all(conn, sql, params)
+        |> Enum.map(&row_to_op/1)
+        |> Enum.filter(&glob_match_op?(&1, glob))
+        |> Enum.drop(offset)
+        |> Enum.take(limit)
+      else
+        sql = """
+          SELECT store_seq, op, path, value, type, device_id, client_op_id, inserted_at
+          FROM store_ops
+          WHERE 1=1#{where_sql}
+          ORDER BY store_seq DESC
+          LIMIT ? OFFSET ?
+        """
+
+        query_all(conn, sql, params ++ [limit, offset])
+        |> Enum.map(&row_to_op/1)
+      end
     end) || []
   end
 
   @doc "Count ops matching the given filters (ignores limit/offset)."
   def count_ops(store_id, opts \\ []) do
     with_read_conn(store_id, fn conn ->
-      {where_clauses, params} = build_filters(opts)
+      {where_clauses, params, glob} = build_filters(opts)
 
       where_sql =
         if where_clauses == [], do: "", else: " AND " <> Enum.join(where_clauses, " AND ")
 
-      sql = "SELECT count(*) FROM store_ops WHERE 1=1#{where_sql}"
-      query_one_val(conn, sql, params) || 0
+      if glob do
+        # See query_ops/2 for why the precise count walks the candidate
+        # rows in Elixir rather than `SELECT count(*)`.
+        sql = "SELECT path FROM store_ops WHERE 1=1#{where_sql}"
+
+        query_all(conn, sql, params)
+        |> Enum.count(fn [path] -> glob_match_path?(path, glob) end)
+      else
+        sql = "SELECT count(*) FROM store_ops WHERE 1=1#{where_sql}"
+        query_one_val(conn, sql, params) || 0
+      end
     end) || 0
   end
 
   defp build_filters(opts) do
-    {clauses, params} = {[], []}
+    {clauses, params, glob} = {[], [], nil}
 
-    {clauses, params} = maybe_add_path(clauses, params, opts[:path])
+    {clauses, params, glob} = maybe_add_path(clauses, params, glob, opts[:path])
     {clauses, params} = maybe_add_device(clauses, params, opts[:device_id])
     {clauses, params} = maybe_add_op(clauses, params, opts[:op])
     {clauses, params} = maybe_add_since(clauses, params, opts[:since])
 
-    {clauses, params}
+    {clauses, params, glob}
   end
 
-  defp maybe_add_path(clauses, params, nil), do: {clauses, params}
-  defp maybe_add_path(clauses, params, ""), do: {clauses, params}
+  defp maybe_add_path(clauses, params, glob, nil), do: {clauses, params, glob}
+  defp maybe_add_path(clauses, params, glob, ""), do: {clauses, params, glob}
 
-  defp maybe_add_path(clauses, params, path) do
-    # Normalise caller input (which may be legacy dotted form) before
-    # binding into SQL. After normalisation paths/patterns are
-    # slash-rendered, matching what the writer stores.
-    normalized =
-      if String.contains?(path, "*") do
-        case Dust.Sync.normalize_pattern(path) do
-          {:ok, p} -> p
-          _ -> path
-        end
-      else
+  defp maybe_add_path(clauses, params, _glob, path) do
+    if String.contains?(path, "*") do
+      case Glob.compile(path) do
+        {:ok, compiled} ->
+          prefix = literal_prefix_of_pattern(path)
+
+          if prefix == "" do
+            {clauses, params, compiled}
+          else
+            like = escape_like(prefix) <> "%"
+            {clauses ++ ["path LIKE ? ESCAPE '\\'"], params ++ [like], compiled}
+          end
+
+        _ ->
+          {clauses ++ ["path = ?"], params ++ [path], nil}
+      end
+    else
+      normalized =
         case Dust.Sync.normalize_path(path) do
           {:ok, p} -> p
           _ -> path
         end
-      end
 
-    if String.contains?(normalized, "*") do
-      like_pattern =
-        normalized
-        |> String.replace("%", "\\%")
-        |> String.replace("_", "\\_")
-        |> String.replace("**", "%%DOUBLE%%")
-        |> String.replace("*", "%")
-        |> String.replace("%%DOUBLE%%", "%")
-
-      {clauses ++ ["path LIKE ?"], params ++ [like_pattern]}
-    else
-      {clauses ++ ["path = ?"], params ++ [normalized]}
+      {clauses ++ ["path = ?"], params ++ [normalized], nil}
     end
+  end
+
+  defp glob_match_op?(%{path: path}, glob), do: glob_match_path?(path, glob)
+
+  defp glob_match_path?(path, glob) do
+    case DPath.parse_rendered(path) do
+      {:ok, segs} -> Glob.match?(glob, segs)
+      _ -> false
+    end
+  end
+
+  # Literal slash-rendered prefix of a glob pattern (everything before
+  # the first segment that contains a wildcard). Includes the trailing
+  # `/` when non-empty so the LIKE prefix stops at a segment boundary.
+  defp literal_prefix_of_pattern(pattern) do
+    segments = String.split(pattern, "/")
+
+    literal =
+      Enum.take_while(segments, fn seg ->
+        seg != "*" and seg != "**" and not String.contains?(seg, "*")
+      end)
+
+    case literal do
+      [] -> ""
+      segs -> Enum.join(segs, "/") <> "/"
+    end
+  end
+
+  defp escape_like(literal) do
+    literal
+    |> String.replace("\\", "\\\\")
+    |> String.replace("%", "\\%")
+    |> String.replace("_", "\\_")
   end
 
   defp maybe_add_device(clauses, params, nil), do: {clauses, params}

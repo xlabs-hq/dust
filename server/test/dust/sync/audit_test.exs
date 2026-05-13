@@ -69,6 +69,44 @@ defmodule Dust.Sync.AuditTest do
       assert hd(ops).path == "settings/theme"
     end
 
+    test "single-star glob respects segment boundaries", %{store: store} do
+      # Add a deep entry that the old SQL-LIKE filter would incorrectly
+      # match against `users/*` because `%` doesn't stop at `/`.
+      {:ok, _} =
+        Sync.write(store.id, %{
+          op: :set,
+          path: "users/alice/profile/avatar",
+          value: "img",
+          device_id: "dev_1",
+          client_op_id: "op_deep"
+        })
+
+      ops = Audit.query_ops(store.id, path: "users/*")
+      paths = Enum.map(ops, & &1.path)
+
+      assert "users/alice" in paths
+      assert "users/bob" in paths
+      refute "users/alice/profile/avatar" in paths
+    end
+
+    test "double-star glob matches at any depth", %{store: store} do
+      {:ok, _} =
+        Sync.write(store.id, %{
+          op: :set,
+          path: "users/alice/profile/avatar",
+          value: "img",
+          device_id: "dev_1",
+          client_op_id: "op_deep2"
+        })
+
+      ops = Audit.query_ops(store.id, path: "users/**")
+      paths = Enum.map(ops, & &1.path) |> Enum.uniq()
+
+      assert "users/alice" in paths
+      assert "users/bob" in paths
+      assert "users/alice/profile/avatar" in paths
+    end
+
     test "filters by device_id", %{store: store} do
       ops = Audit.query_ops(store.id, device_id: "dev_2")
       assert length(ops) == 2
