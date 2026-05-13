@@ -70,11 +70,11 @@ module Dust
 
     private def self.classify_segment(seg : String) : Token
       case seg
-      when "*"   then Token.one
-      when "**"  then Token.many
-      when "\\*" then Token.literal("*")
+      when "*"    then Token.one
+      when "**"   then Token.many
+      when "\\*"  then Token.literal("*")
       when "\\**" then Token.literal("**")
-      else            Token.literal(seg)
+      else             Token.literal(seg)
       end
     end
 

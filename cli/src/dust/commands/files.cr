@@ -31,12 +31,12 @@ module Dust
           segments = Dust::Path.parse_rendered(path)
 
           payload = {
-            "path"           => JSON::Any.new(path),
-            "path_segments"  => JSON::Any.new(segments.map { |s| JSON::Any.new(s) }),
-            "content"        => JSON::Any.new(encoded),
-            "filename"       => JSON::Any.new(filename),
-            "content_type"   => JSON::Any.new(content_type),
-            "client_op_id"   => JSON::Any.new(Random::Secure.hex(8)),
+            "path"          => JSON::Any.new(path),
+            "path_segments" => JSON::Any.new(segments.map { |s| JSON::Any.new(s) }),
+            "content"       => JSON::Any.new(encoded),
+            "filename"      => JSON::Any.new(filename),
+            "content_type"  => JSON::Any.new(content_type),
+            "client_op_id"  => JSON::Any.new(Random::Secure.hex(8)),
           } of String => JSON::Any
 
           result = channel.push("put_file", payload)
