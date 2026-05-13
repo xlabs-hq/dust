@@ -4,14 +4,14 @@ defmodule Dust.MCP.Tools.DustEnum do
   use GenMCP.Suite.Tool,
     name: "dust_enum",
     description:
-      "List store entries matching a glob pattern. Use '*' to match a single segment, '**' to match any depth.",
+      "List store entries matching a slash-separated glob pattern. Use '*' to match a single segment, '**' to match any depth.",
     input_schema: %{
       type: :object,
       properties: %{
         store: %{type: :string, description: "Full store name (org/store)"},
         pattern: %{
           type: :string,
-          description: "Glob pattern to match paths (e.g. \"users.*\", \"**\")"
+          description: "Glob pattern to match paths (e.g. \"users/*\", \"**\")"
         }
       },
       required: [:store, :pattern]
@@ -28,9 +28,9 @@ defmodule Dust.MCP.Tools.DustEnum do
     %{"store" => store_name, "pattern" => pattern} = req.params.arguments
     principal = channel.assigns.mcp_principal
 
-    with {:ok, store} <- Authz.authorize_store(principal, store_name, :read) do
+    with {:ok, store} <- Authz.authorize_store(principal, store_name, :read),
+         {:ok, compiled} <- Glob.compile(pattern) do
       entries = Dust.Sync.get_all_entries(store.id)
-      compiled = Glob.compile!(normalize_pattern_for_match(pattern))
 
       matched =
         entries
@@ -46,19 +46,6 @@ defmodule Dust.MCP.Tools.DustEnum do
     else
       {:error, reason} ->
         {:error, reason, channel}
-    end
-  end
-
-  # Mirror Sync's pattern-normalization heuristic: dotted strings come
-  # from legacy MCP callers; rewrite them to slash form so the
-  # segment-aware glob compiles cleanly.
-  defp normalize_pattern_for_match("**"), do: "**"
-
-  defp normalize_pattern_for_match(pattern) when is_binary(pattern) do
-    if String.contains?(pattern, "/") do
-      pattern
-    else
-      pattern |> String.split(".") |> Enum.join("/")
     end
   end
 end
