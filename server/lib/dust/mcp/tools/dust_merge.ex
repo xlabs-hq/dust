@@ -8,7 +8,7 @@ defmodule Dust.MCP.Tools.DustMerge do
       type: :object,
       properties: %{
         store: %{type: :string, description: "Full store name (org/store)"},
-        path: %{type: :string, description: "Dot-separated path to merge into"},
+        path: %{type: :string, description: "Slash-rendered path to merge into"},
         value: %{type: :object, description: "Map of keys to merge"}
       },
       required: [:store, :path, :value]

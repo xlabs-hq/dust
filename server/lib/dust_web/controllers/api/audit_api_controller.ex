@@ -20,7 +20,8 @@ defmodule DustWeb.Api.AuditApiController do
         in: :query,
         schema: %{type: :string},
         required: false,
-        description: "Glob pattern; slashes are normalised to dots."
+        description:
+          "Exact slash-rendered path or segment-aware glob (e.g. `users/*`, `users/**`)."
       ],
       device_id: [in: :query, schema: %{type: :string}, required: false],
       op: [

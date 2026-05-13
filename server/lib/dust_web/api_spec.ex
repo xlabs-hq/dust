@@ -247,7 +247,7 @@ defmodule DustWeb.ApiSpec do
         type: :object,
         description: "A single key/value entry in a store.",
         properties: %{
-          path: %{type: :string, description: "Dot-separated path."},
+          path: %{type: :string, description: "Canonical slash-rendered path."},
           value: %{description: "Entry value (any JSON type, may be null for tombstones)."},
           type: %{
             type: :string,
@@ -270,7 +270,7 @@ defmodule DustWeb.ApiSpec do
         },
         required: [:path, :value, :type, :revision],
         example: %{
-          path: "projects.alpha.title",
+          path: "projects/alpha/title",
           value: "Project Alpha",
           type: "string",
           revision: 7
@@ -476,14 +476,20 @@ defmodule DustWeb.ApiSpec do
         in: :path,
         required: true,
         description: """
-        Dot- or slash-separated entry path. Slashes are normalised to
-        dots server-side; segments themselves cannot contain `.`.
+        Slash-separated entry path. Each `/` separates a logical
+        segment; segments are plain text and may contain dots, spaces,
+        or any other character. To carry a literal `/` or `~` inside a
+        segment, encode it as `~1` or `~0` respectively (RFC 6901
+        JSON Pointer escaping).
 
-        **Important for SDK clients:** the path travels as literal
-        slashes — do *not* URL-encode `/` to `%2F`. Phoenix splits
-        the trailing path segments and our server rejoins them. Some
-        OpenAPI client generators URL-encode path parameters by
-        default; you may need to configure them not to.
+        **Important for SDK clients:** the segment separator `/`
+        travels as a literal slash — do *not* URL-encode it to `%2F`.
+        Phoenix splits the trailing path segments and our server
+        rejoins them. Only the per-segment characters that are
+        URL-unsafe (space, `+`, `?`, `#`, etc.) need percent-encoding;
+        `~0` and `~1` are RFC 3986 unreserved and pass through
+        unchanged. Some OpenAPI client generators URL-encode path
+        parameters by default; you may need to configure them not to.
         """,
         schema: %{type: :string, example: "projects/alpha/title"}
       },

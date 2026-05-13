@@ -9,7 +9,7 @@ defmodule Dust.MCP.Tools.DustIncrement do
       type: :object,
       properties: %{
         store: %{type: :string, description: "Full store name (org/store)"},
-        path: %{type: :string, description: "Dot-separated path to the counter"},
+        path: %{type: :string, description: "Slash-rendered path to the counter"},
         delta: %{type: :number, description: "Amount to increment by (default: 1)"}
       },
       required: [:store, :path]

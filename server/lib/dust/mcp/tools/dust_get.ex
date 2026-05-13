@@ -9,7 +9,7 @@ defmodule Dust.MCP.Tools.DustGet do
       type: :object,
       properties: %{
         store: %{type: :string, description: "Full store name (org/store)"},
-        path: %{type: :string, description: "Dot-separated path to read (e.g. \"users.alice\")"}
+        path: %{type: :string, description: "Slash-rendered path to read (e.g. \"users/alice\")"}
       },
       required: [:store, :path]
     },

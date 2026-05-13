@@ -30,9 +30,9 @@ export interface EntryEditorProps {
 
 // Body-path UI writes go to the new POST /entries route. The server
 // accepts `{path, value}` and rejects empty paths / missing value with
-// 400. The slashed `PUT /entries/<path>` route still exists — we just
-// prefer the body variant from the browser because it's friendlier
-// with dotted paths.
+// 400. The wildcard `PUT /entries/<path>` route still exists — we just
+// prefer the body variant from the browser so the UI never has to
+// worry about per-segment `~0`/`~1` encoding.
 export function EntryEditor({
   mode,
   open,
@@ -132,7 +132,7 @@ export function EntryEditor({
             <DialogDescription>
               {mode === "edit"
                 ? "Path is fixed — writes upsert the value at this path."
-                : "Enter a dotted path and any JSON value. Submit upserts."}
+                : "Enter a slash-separated path (e.g. users/alice) and any JSON value. Submit upserts."}
             </DialogDescription>
           </DialogHeader>
 
@@ -143,7 +143,7 @@ export function EntryEditor({
               value={pathInput}
               onChange={(e) => setPathInput(e.target.value)}
               readOnly={mode === "edit"}
-              placeholder="users.alice.email"
+              placeholder="users/alice/email"
               className="font-mono"
               autoComplete="off"
             />

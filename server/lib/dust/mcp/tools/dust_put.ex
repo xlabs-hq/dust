@@ -8,7 +8,7 @@ defmodule Dust.MCP.Tools.DustPut do
       type: :object,
       properties: %{
         store: %{type: :string, description: "Full store name (org/store)"},
-        path: %{type: :string, description: "Dot-separated path to write (e.g. \"users.alice\")"},
+        path: %{type: :string, description: "Slash-rendered path to write (e.g. \"users/alice\")"},
         value: %{description: "The value to write (any JSON type)"}
       },
       required: [:store, :path, :value]

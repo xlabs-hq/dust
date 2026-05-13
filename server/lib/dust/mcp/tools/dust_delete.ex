@@ -8,7 +8,7 @@ defmodule Dust.MCP.Tools.DustDelete do
       type: :object,
       properties: %{
         store: %{type: :string, description: "Full store name (org/store)"},
-        path: %{type: :string, description: "Dot-separated path to delete"}
+        path: %{type: :string, description: "Slash-rendered path to delete"}
       },
       required: [:store, :path]
     },

@@ -83,7 +83,7 @@ function Landing() {
               <div className="text-3xl mb-3">1</div>
               <h3 className="font-semibold text-lg">Create a store</h3>
               <p className="mt-2 text-sm text-muted-foreground leading-relaxed">
-                Named stores keyed by dot-separated paths. Explicit creation,
+                Named stores keyed by slash-separated paths. Explicit creation,
                 scoped tokens, fine-grained access.
               </p>
             </div>

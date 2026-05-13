@@ -9,7 +9,7 @@ defmodule Dust.MCP.Tools.DustRemove do
       type: :object,
       properties: %{
         store: %{type: :string, description: "Full store name (org/store)"},
-        path: %{type: :string, description: "Dot-separated path to the set"},
+        path: %{type: :string, description: "Slash-rendered path to the set"},
         member: %{description: "The value to remove from the set"}
       },
       required: [:store, :path, :member]

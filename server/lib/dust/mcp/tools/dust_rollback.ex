@@ -13,7 +13,7 @@ defmodule Dust.MCP.Tools.DustRollback do
         path: %{
           type: :string,
           description:
-            "Dot-separated path to rollback (e.g. \"posts.hello\"). Omit for store-level rollback."
+            "Slash-rendered path to rollback (e.g. \"posts/hello\"). Omit for store-level rollback."
         },
         to_seq: %{
           type: :integer,

@@ -9,7 +9,7 @@ defmodule Dust.MCP.Tools.DustPutFile do
       type: :object,
       properties: %{
         store: %{type: :string, description: "Full store name (org/store)"},
-        path: %{type: :string, description: "Dot-separated path to store the file reference"},
+        path: %{type: :string, description: "Slash-rendered path to store the file reference"},
         content: %{type: :string, description: "Base64-encoded file content"},
         filename: %{type: :string, description: "Original filename (optional)"},
         content_type: %{

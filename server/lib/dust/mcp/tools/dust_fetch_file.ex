@@ -12,7 +12,7 @@ defmodule Dust.MCP.Tools.DustFetchFile do
         store: %{type: :string, description: "Full store name (org/store)"},
         path: %{
           type: :string,
-          description: "Dot-separated path where the file reference is stored"
+          description: "Slash-rendered path where the file reference is stored"
         },
         include_content: %{
           type: :boolean,

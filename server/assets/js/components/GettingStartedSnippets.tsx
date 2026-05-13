@@ -50,10 +50,15 @@ export default function GettingStartedSnippets({
   -d '"world"'`}
             />
             <p className="text-xs text-muted-foreground mt-3">
-              Paths in the URL use slashes;{" "}
+              Paths are slash-separated:{" "}
               <code className="font-mono">/entries/projects/alpha/title</code>{" "}
-              writes the canonical key{" "}
-              <code className="font-mono">projects.alpha.title</code>.
+              writes the entry at{" "}
+              <code className="font-mono">projects/alpha/title</code>. Each
+              segment is plain text — escape literal{" "}
+              <code className="font-mono">/</code> as{" "}
+              <code className="font-mono">~1</code> and literal{" "}
+              <code className="font-mono">~</code> as{" "}
+              <code className="font-mono">~0</code>.
             </p>
           </TabsContent>
 
