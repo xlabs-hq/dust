@@ -31,7 +31,7 @@ defmodule DustWeb.MCPAuthControllerTest do
   end
 
   describe "POST /register" do
-    test "returns the configured WorkOS MCP client_id", %{conn: conn} do
+    test "mints a fresh client_id per registration", %{conn: conn} do
       payload = %{
         "client_name" => "Claude Desktop",
         "redirect_uris" => ["http://localhost:33418/oauth/callback"],
@@ -39,13 +39,19 @@ defmodule DustWeb.MCPAuthControllerTest do
         "response_types" => ["code"]
       }
 
-      conn = post(conn, ~p"/register", payload)
-      body = json_response(conn, 200)
+      conn1 = post(conn, ~p"/register", payload)
+      body1 = json_response(conn1, 200)
 
-      assert is_binary(body["client_id"])
-      assert body["client_id"] == Application.fetch_env!(:workos, :mcp_client_id)
-      assert body["redirect_uris"] == payload["redirect_uris"]
-      assert "authorization_code" in body["grant_types"]
+      assert is_binary(body1["client_id"])
+      assert String.starts_with?(body1["client_id"], "client_")
+      assert body1["redirect_uris"] == payload["redirect_uris"]
+      assert "authorization_code" in body1["grant_types"]
+
+      conn2 = post(build_conn(), ~p"/register", payload)
+      body2 = json_response(conn2, 200)
+
+      # Each registration gets a unique client_id (proper DCR behavior).
+      refute body1["client_id"] == body2["client_id"]
     end
   end
 

@@ -35,7 +35,11 @@ defmodule DustWeb.MCPAuthController do
   end
 
   def register(conn, params) do
-    client_id = Application.fetch_env!(:workos, :mcp_client_id)
+    # Dynamic Client Registration: mint a fresh client_id per registration.
+    # The MCP client uses this identifier in subsequent /oauth/authorize and
+    # /oauth/token calls. We do not yet persist DCR clients server-side; the
+    # client_id is opaque to us and only used for display/logging.
+    client_id = "client_" <> Ecto.UUID.generate()
 
     response = %{
       client_id: client_id,

@@ -26,11 +26,8 @@ if System.get_env("PHX_SERVER") do
   config :dust, AdminWeb.Endpoint, server: true
 end
 
-# Configure WorkOS. In test, the application substitutes
-# Dust.WorkOSStub for the real client (see config/test.exs), so the
-# env vars are never read — we provide harmless placeholder values so
-# unset env in CI doesn't crash boot. Dev/prod still require real
-# values.
+# Configure WorkOS. In test we provide harmless placeholder values so unset
+# env in CI doesn't crash boot. Dev/prod still require real values.
 case config_env() do
   :test ->
     config :workos, WorkOS.Client,
@@ -65,10 +62,6 @@ if config_env() == :prod do
   config :dust,
          :mcp_base_url,
          System.get_env("MCP_BASE_URL") || "https://#{System.get_env("PHX_HOST")}"
-
-  config :dust, :authkit_base_url, System.fetch_env!("AUTHKIT_BASE_URL")
-
-  config :workos, :mcp_client_id, System.fetch_env!("WORKOS_MCP_CLIENT_ID")
 
   config :dust,
          :mcp_redirect_uri_allowlist,
