@@ -595,9 +595,10 @@ Discovery endpoints:
 To wire Claude Desktop: add an MCP server with URL `https://<host>/mcp`. The
 client will discover the OAuth endpoints automatically.
 
-**Operator setup:** create a second WorkOS OAuth client dedicated to MCP
-(redirect URI `<MCP_BASE_URL>/oauth/callback`), set
-`WORKOS_MCP_CLIENT_ID` and `AUTHKIT_BASE_URL` env vars.
+**Operator setup:** no separate WorkOS OAuth client needed. The MCP endpoint
+reuses the human-login WorkOS credentials (`WORKOS_API_KEY`, `WORKOS_CLIENT_ID`)
+and handles consent in-app. Just ensure your MCP base URL is reachable at
+`<MCP_BASE_URL>/mcp` and that `MCP_BASE_URL` is set.
 
 ## FINAL NOTE
 
