@@ -5,6 +5,7 @@ defmodule DustWeb.MCPAuthControllerTest do
 
   alias Dust.MCP.Sessions
   alias Dust.WorkOSStub
+  alias DustWeb.MCPAuth.FlowToken
 
   describe "GET /.well-known/oauth-protected-resource" do
     test "returns RFC 9728 metadata", %{conn: conn} do
@@ -132,6 +133,61 @@ defmodule DustWeb.MCPAuthControllerTest do
       params = Map.put(params, "redirect_uri", "http://example.com/cb")
 
       conn = get(conn, ~p"/oauth/authorize", params)
+      assert json_response(conn, 400)["error"] == "invalid_request"
+    end
+  end
+
+  describe "GET /oauth/authorize/continue" do
+    setup do
+      user = user_fixture()
+
+      oauth_params = %{
+        client_id: "client_123",
+        redirect_uri: "https://app.example/cb",
+        state: "client-state",
+        code_challenge: "abc",
+        code_challenge_method: "S256",
+        scope: ""
+      }
+
+      %{user: user, oauth_params: oauth_params}
+    end
+
+    test "renders consent inertia page when signed in with valid flow token", ctx do
+      %{conn: conn, user: user, oauth_params: oauth_params} = ctx
+      token = FlowToken.encode(oauth_params)
+
+      conn =
+        conn
+        |> put_req_header("accept", "text/html")
+        |> log_in_user(user)
+        |> get(~p"/oauth/authorize/continue?flow=#{token}")
+
+      assert html_response(conn, 200) =~ "OAuth/Authorize"
+      assert response(conn, 200) =~ oauth_params.client_id
+      assert response(conn, 200) =~ user.email
+    end
+
+    test "redirects to /auth/login when not signed in", ctx do
+      %{conn: conn, oauth_params: oauth_params} = ctx
+      token = FlowToken.encode(oauth_params)
+
+      conn =
+        conn
+        |> put_req_header("accept", "text/html")
+        |> get(~p"/oauth/authorize/continue?flow=#{token}")
+
+      assert redirected_to(conn) =~ "/auth/login"
+    end
+
+    test "rejects invalid flow token with 400", %{conn: conn} do
+      user = user_fixture()
+
+      conn =
+        conn
+        |> log_in_user(user)
+        |> get(~p"/oauth/authorize/continue?flow=bogus")
+
       assert json_response(conn, 400)["error"] == "invalid_request"
     end
   end

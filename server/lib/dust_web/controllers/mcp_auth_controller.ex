@@ -124,6 +124,47 @@ defmodule DustWeb.MCPAuthController do
     end
   end
 
+  def authorize_continue(conn, %{"flow" => flow_token}) do
+    cond do
+      not signed_in?(conn) ->
+        conn
+        |> put_session(:user_return_to, current_path(conn))
+        |> redirect(to: "/auth/login")
+
+      true ->
+        case FlowToken.verify(flow_token) do
+          {:ok, oauth_params} ->
+            user = conn.assigns.current_scope.user
+
+            # Inertia expects `conn.assigns.flash`. The `:mcp_oauth` pipeline
+            # doesn't install `:fetch_live_flash` (it's mostly JSON), so we
+            # fetch_flash inline. Task 6 of the embedded MCP OAuth plan moves
+            # this route to the `[:browser, :inertia]` pipeline and will make
+            # this line unnecessary.
+            conn
+            |> Phoenix.Controller.fetch_flash()
+            |> render_inertia("OAuth/Authorize", %{
+              client_id: oauth_params.client_id,
+              client_name: client_display_name(oauth_params.client_id),
+              redirect_uri: oauth_params.redirect_uri,
+              user_email: user.email,
+              flow: flow_token
+            })
+
+          {:error, _} ->
+            json_error(conn, :bad_request, "invalid_request", "Flow token is invalid or expired")
+        end
+    end
+  end
+
+  def authorize_continue(conn, _params) do
+    json_error(conn, :bad_request, "invalid_request", "Missing flow token")
+  end
+
+  # DCR clients don't yet store a display name in the DB; fall back to client_id.
+  # When DCR persistence lands, look up the registered client name here.
+  defp client_display_name(client_id), do: client_id
+
   def oauth_callback(conn, %{"code" => code} = params) do
     oauth_params = get_session(conn, :oauth_params) || %{}
     code_verifier = get_session(conn, :code_verifier)

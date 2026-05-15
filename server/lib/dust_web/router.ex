@@ -162,6 +162,7 @@ defmodule DustWeb.Router do
     get "/.well-known/oauth-authorization-server", MCPAuthController, :oauth_authorization_server
     post "/register", MCPAuthController, :register
     get "/oauth/authorize", MCPAuthController, :oauth_authorize
+    get "/oauth/authorize/continue", MCPAuthController, :authorize_continue
     get "/oauth/callback", MCPAuthController, :oauth_callback
     post "/oauth/token", MCPAuthController, :oauth_token
   end
