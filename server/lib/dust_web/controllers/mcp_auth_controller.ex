@@ -263,4 +263,36 @@ defmodule DustWeb.MCPAuthController do
   defp base_url do
     Application.fetch_env!(:dust, :mcp_base_url)
   end
+
+  @flow_token_salt "mcp_oauth_flow_v1"
+  # 10 minutes is enough for a login + SSO bounce.
+  @flow_token_max_age 600
+
+  defp encode_flow_token(conn, oauth_params) do
+    Phoenix.Token.sign(token_context(conn), @flow_token_salt, oauth_params)
+  end
+
+  defp verify_flow_token(conn, token) do
+    Phoenix.Token.verify(token_context(conn), @flow_token_salt, token,
+      max_age: @flow_token_max_age
+    )
+  end
+
+  # Phoenix.Token needs an endpoint to derive the signing key. When called via
+  # the normal request pipeline, conn.private.phoenix_endpoint is set. In unit
+  # tests that bypass dispatch (e.g. raw `build_conn()`), fall back to the
+  # endpoint module directly.
+  defp token_context(conn) do
+    case conn.private do
+      %{phoenix_endpoint: endpoint} -> endpoint
+      _ -> DustWeb.Endpoint
+    end
+  end
+
+  # Test-only entry points. Public so the unit test can call them without
+  # routing the full HTTP flow.
+  @doc false
+  def __test_encode_flow_token__(conn, params), do: encode_flow_token(conn, params)
+  @doc false
+  def __test_verify_flow_token__(conn, token), do: verify_flow_token(conn, token)
 end
