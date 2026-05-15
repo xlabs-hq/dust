@@ -4,7 +4,6 @@ defmodule DustWeb.MCPAuthControllerTest do
   import Dust.AccountsFixtures
 
   alias Dust.MCP.Sessions
-  alias Dust.WorkOSStub
   alias DustWeb.MCPAuth.FlowToken
 
   describe "GET /.well-known/oauth-protected-resource" do
@@ -190,118 +189,62 @@ defmodule DustWeb.MCPAuthControllerTest do
     end
   end
 
-  describe "GET /oauth/callback" do
+  describe "POST /oauth/authorize/approve" do
     setup do
-      workos_user =
-        struct!(WorkOS.UserManagement.User, %{
-          id: "user_workos_#{System.unique_integer([:positive])}",
-          email: "callback-#{System.unique_integer([:positive])}@example.com",
-          first_name: "Call",
-          last_name: "Back",
-          email_verified: true,
-          updated_at: "2026-01-01T00:00:00.000Z",
-          created_at: "2026-01-01T00:00:00.000Z"
-        })
+      user = user_fixture()
 
-      WorkOSStub.set_response(%{user: workos_user})
-      %{workos_user: workos_user}
+      oauth_params = %{
+        client_id: "client_123",
+        redirect_uri: "https://app.example/cb",
+        state: "client-state",
+        code_challenge: "abc",
+        code_challenge_method: "S256",
+        scope: ""
+      }
+
+      %{user: user, oauth_params: oauth_params}
     end
 
-    test "creates session, redirects to client redirect_uri with code=session_id",
-         %{conn: conn, workos_user: workos_user} do
+    test "allow mints code and redirects to client_redirect_uri", ctx do
+      %{conn: conn, user: user, oauth_params: oauth_params} = ctx
+      token = FlowToken.encode(oauth_params)
+
       conn =
         conn
-        |> init_test_session(%{
-          oauth_params: %{
-            client_id: "client_dev",
-            redirect_uri: "http://localhost:33418/oauth/callback",
-            state: "oauth_flow_state123",
-            code_challenge: "client_challenge",
-            code_challenge_method: "S256",
-            scope: ""
-          },
-          code_verifier: "upstream_verifier"
-        })
-        |> get(~p"/oauth/callback?code=workos_code&state=oauth_flow_state123")
+        |> log_in_user(user)
+        |> post(~p"/oauth/authorize/approve", %{"flow" => token, "action" => "allow"})
 
-      location = redirected_to(conn, 302)
-      assert location =~ "http://localhost:33418/oauth/callback"
-      assert location =~ "code=mcp_"
-      assert location =~ "state=state123"
+      location = redirected_to(conn)
+      assert location =~ "https://app.example/cb?"
+      assert location =~ "code="
+      assert location =~ "state=client-state"
 
-      code =
-        location
-        |> URI.parse()
-        |> Map.get(:query)
-        |> URI.decode_query()
-        |> Map.get("code")
-
+      code = URI.parse(location).query |> URI.decode_query() |> Map.fetch!("code")
       session = Sessions.find_by_session_id(code)
-      assert session
-      assert session.user.workos_id == workos_user.id
-      assert is_nil(session.access_token_hash)
-      assert session.code_challenge == "client_challenge"
-      assert session.code_challenge_method == "S256"
-      assert session.client_id == "client_dev"
-      assert session.client_redirect_uri == "http://localhost:33418/oauth/callback"
+      assert %Dust.MCP.Session{user_id: user_id} = session
+      assert user_id == user.id
     end
 
-    test "echoes client state verbatim even when it starts with oauth_flow_",
-         %{conn: conn, workos_user: _workos_user} do
-      # Client legitimately sent state="oauth_flow_foo". We stored
-      # "oauth_flow_oauth_flow_foo"; the callback must strip exactly one prefix
-      # and return "oauth_flow_foo" back to the client, not "foo".
+    test "deny redirects with error=access_denied", ctx do
+      %{conn: conn, user: user, oauth_params: oauth_params} = ctx
+      token = FlowToken.encode(oauth_params)
+
       conn =
         conn
-        |> init_test_session(%{
-          oauth_params: %{
-            client_id: "client_dev",
-            redirect_uri: "http://localhost:33418/oauth/callback",
-            state: "oauth_flow_oauth_flow_foo",
-            code_challenge: "client_challenge",
-            code_challenge_method: "S256",
-            scope: ""
-          },
-          code_verifier: "upstream_verifier"
-        })
-        |> get(~p"/oauth/callback?code=workos_code&state=oauth_flow_oauth_flow_foo")
+        |> log_in_user(user)
+        |> post(~p"/oauth/authorize/approve", %{"flow" => token, "action" => "deny"})
 
-      location = redirected_to(conn, 302)
-
-      echoed_state =
-        location
-        |> URI.parse()
-        |> Map.get(:query)
-        |> URI.decode_query()
-        |> Map.get("state")
-
-      assert echoed_state == "oauth_flow_foo"
+      location = redirected_to(conn)
+      assert location =~ "error=access_denied"
+      assert location =~ "state=client-state"
     end
 
-    test "invokes WorkOS client with MCP client_id, upstream code_verifier, and authorization code",
-         %{conn: conn} do
-      _ =
-        conn
-        |> init_test_session(%{
-          oauth_params: %{
-            client_id: "client_dev",
-            redirect_uri: "http://localhost:33418/oauth/callback",
-            state: "oauth_flow_state456",
-            code_challenge: "client_challenge",
-            code_challenge_method: "S256",
-            scope: ""
-          },
-          code_verifier: "upstream_verifier_abc"
-        })
-        |> get(~p"/oauth/callback?code=workos_code_xyz&state=oauth_flow_state456")
+    test "requires signed-in user", ctx do
+      %{conn: conn, oauth_params: oauth_params} = ctx
+      token = FlowToken.encode(oauth_params)
 
-      call = WorkOSStub.get_last_call()
-      assert call.code == "workos_code_xyz"
-      assert call.code_verifier == "upstream_verifier_abc"
-      assert call.client_id == Application.fetch_env!(:workos, :mcp_client_id)
-
-      assert call.redirect_uri ==
-               "#{Application.fetch_env!(:dust, :mcp_base_url)}/oauth/callback"
+      conn = post(conn, ~p"/oauth/authorize/approve", %{"flow" => token, "action" => "allow"})
+      assert redirected_to(conn) =~ "/auth/login"
     end
   end
 

@@ -163,7 +163,7 @@ defmodule DustWeb.Router do
     post "/register", MCPAuthController, :register
     get "/oauth/authorize", MCPAuthController, :oauth_authorize
     get "/oauth/authorize/continue", MCPAuthController, :authorize_continue
-    get "/oauth/callback", MCPAuthController, :oauth_callback
+    post "/oauth/authorize/approve", MCPAuthController, :authorize_approve
     post "/oauth/token", MCPAuthController, :oauth_token
   end
 

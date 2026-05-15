@@ -3,9 +3,7 @@ defmodule DustWeb.MCPAuthController do
 
   require Logger
 
-  alias Dust.Accounts
   alias Dust.MCP.Sessions
-  alias Dust.WorkOSClient
   alias DustWeb.MCPAuth.FlowToken
   alias DustWeb.OAuth.RedirectUriValidator
 
@@ -163,54 +161,61 @@ defmodule DustWeb.MCPAuthController do
   # When DCR persistence lands, look up the registered client name here.
   defp client_display_name(client_id), do: client_id
 
-  def oauth_callback(conn, %{"code" => code} = params) do
-    oauth_params = get_session(conn, :oauth_params) || %{}
-    code_verifier = get_session(conn, :code_verifier)
-    client_redirect = oauth_params[:redirect_uri]
-    stored_state = oauth_params[:state] || ""
-    callback_state = Map.get(params, "state", "")
-
+  def authorize_approve(conn, %{"flow" => flow_token, "action" => action})
+      when action in ["allow", "deny"] do
     cond do
-      is_nil(code_verifier) ->
-        json_error(conn, :bad_request, "missing_session", "Missing PKCE verifier")
-
-      is_nil(client_redirect) ->
-        json_error(conn, :bad_request, "missing_redirect_uri", "Missing client redirect_uri")
-
-      stored_state != callback_state ->
-        json_error(conn, :bad_request, "state_mismatch", "State does not match")
+      not signed_in?(conn) ->
+        redirect(conn, to: "/auth/login")
 
       true ->
-        do_callback(conn, code, code_verifier, oauth_params, client_redirect, stored_state)
+        case FlowToken.verify(flow_token) do
+          {:ok, oauth_params} ->
+            do_approve(conn, oauth_params, action)
+
+          {:error, _} ->
+            json_error(conn, :bad_request, "invalid_request", "Flow token is invalid or expired")
+        end
     end
   end
 
-  defp do_callback(conn, code, code_verifier, oauth_params, client_redirect, stored_state) do
-    with {:ok, %{user: workos_user}} <-
-           WorkOSClient.exchange_and_get_user(%{
-             code: code,
-             code_verifier: code_verifier,
-             client_id: Application.fetch_env!(:workos, :mcp_client_id),
-             redirect_uri: "#{base_url()}/oauth/callback"
-           }),
-         {:ok, user} <- Accounts.find_or_create_user_from_workos(workos_user),
-         {:ok, session} <-
-           Sessions.create_authorization_code(user, %{
-             client_id: oauth_params[:client_id],
-             client_redirect_uri: oauth_params[:redirect_uri],
-             code_challenge: oauth_params[:code_challenge],
-             code_challenge_method: oauth_params[:code_challenge_method],
-             remote_ip: peer_ip(conn),
-             user_agent: user_agent(conn)
-           }) do
-      original_state = String.replace_prefix(stored_state, "oauth_flow_", "")
-      callback_url = build_callback_url(client_redirect, session.session_id, original_state)
-      redirect(conn, external: callback_url)
-    else
+  def authorize_approve(conn, _params) do
+    json_error(conn, :bad_request, "invalid_request", "Missing flow or action")
+  end
+
+  defp do_approve(conn, oauth_params, "deny") do
+    url = error_redirect(oauth_params.redirect_uri, "access_denied", oauth_params.state)
+    redirect(conn, external: url)
+  end
+
+  defp do_approve(conn, oauth_params, "allow") do
+    user = conn.assigns.current_scope.user
+
+    case Sessions.create_authorization_code(user, %{
+           client_id: oauth_params.client_id,
+           client_redirect_uri: oauth_params.redirect_uri,
+           code_challenge: oauth_params.code_challenge,
+           code_challenge_method: oauth_params.code_challenge_method,
+           remote_ip: peer_ip(conn),
+           user_agent: user_agent(conn)
+         }) do
+      {:ok, session} ->
+        url =
+          build_callback_url(oauth_params.redirect_uri, session.session_id, oauth_params.state)
+
+        redirect(conn, external: url)
+
       {:error, reason} ->
-        Logger.error("MCP oauth_callback failed: #{inspect(reason)}")
-        json_error(conn, :unauthorized, "authentication_failed", "Could not authenticate")
+        Logger.error("create_authorization_code failed: #{inspect(reason)}")
+        url = error_redirect(oauth_params.redirect_uri, "server_error", oauth_params.state)
+        redirect(conn, external: url)
     end
+  end
+
+  defp error_redirect(redirect_uri, error, state) do
+    uri = URI.parse(redirect_uri)
+    existing = if uri.query, do: URI.decode_query(uri.query), else: %{}
+    query = existing |> Map.put("error", error) |> Map.put("state", state) |> URI.encode_query()
+    URI.to_string(%{uri | query: query})
   end
 
   def oauth_token(conn, %{
