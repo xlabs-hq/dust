@@ -117,7 +117,10 @@ defmodule DustWeb.MCPAuthController do
   end
 
   defp signed_in?(conn) do
-    not is_nil(get_session(conn, :user_token))
+    case conn.assigns[:current_scope] do
+      %{user: %_{}} -> true
+      _ -> false
+    end
   end
 
   def oauth_callback(conn, %{"code" => code} = params) do

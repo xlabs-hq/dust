@@ -38,6 +38,7 @@ defmodule DustWeb.Router do
   pipeline :mcp_oauth do
     plug :accepts, ["json", "html"]
     plug :fetch_session
+    plug :fetch_current_scope_for_user
   end
 
   # Public landing page

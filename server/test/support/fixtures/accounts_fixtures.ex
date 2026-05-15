@@ -12,7 +12,7 @@ defmodule Dust.AccountsFixtures do
     {:ok, user} =
       attrs
       |> Enum.into(%{email: unique_user_email()})
-      |> Accounts.create_user()
+      |> Accounts.create_user_with_org()
 
     user
   end

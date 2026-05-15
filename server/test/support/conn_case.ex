@@ -49,8 +49,11 @@ defmodule DustWeb.ConnCase do
   end
 
   @doc """
-  Allowlists the given `uri` for the MCP OAuth redirect_uri validator and
-  ensures the env var is cleaned up after the test.
+  Adds `uri` to the MCP redirect allowlist for the duration of the test.
+
+  **Must be used only from `async: false` test files.** This helper mutates
+  `Application` env (a global), so a concurrent test reading the allowlist
+  would see the mutated value.
   """
   def put_allowlisted_redirect(conn, uri) do
     previous = Application.get_env(:dust, :mcp_redirect_uri_allowlist, [])
