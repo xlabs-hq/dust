@@ -6,6 +6,7 @@ defmodule DustWeb.MCPAuthController do
   alias Dust.Accounts
   alias Dust.MCP.Sessions
   alias Dust.WorkOSClient
+  alias DustWeb.MCPAuth.FlowToken
   alias DustWeb.OAuth.RedirectUriValidator
 
   def oauth_protected_resource(conn, _params) do
@@ -104,7 +105,7 @@ defmodule DustWeb.MCPAuthController do
       scope: Map.get(params, "scope", "")
     }
 
-    flow_token = encode_flow_token(oauth_params)
+    flow_token = FlowToken.encode(oauth_params)
     continue_path = "/oauth/authorize/continue?" <> URI.encode_query(%{flow: flow_token})
 
     if signed_in?(conn) do
@@ -252,23 +253,4 @@ defmodule DustWeb.MCPAuthController do
   defp base_url do
     Application.fetch_env!(:dust, :mcp_base_url)
   end
-
-  @flow_token_salt "mcp_oauth_flow_v1"
-  # 10 minutes is enough for a login + SSO bounce.
-  @flow_token_max_age 600
-
-  defp encode_flow_token(oauth_params) do
-    Phoenix.Token.sign(DustWeb.Endpoint, @flow_token_salt, oauth_params)
-  end
-
-  defp verify_flow_token(token) do
-    Phoenix.Token.verify(DustWeb.Endpoint, @flow_token_salt, token, max_age: @flow_token_max_age)
-  end
-
-  # Test-only entry points. Public so the unit test can call them without
-  # routing the full HTTP flow.
-  @doc false
-  def __test_encode_flow_token__(params), do: encode_flow_token(params)
-  @doc false
-  def __test_verify_flow_token__(token), do: verify_flow_token(token)
 end
