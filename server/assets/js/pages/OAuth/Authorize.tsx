@@ -20,10 +20,27 @@ function Authorize({
   const [pendingAction, setPendingAction] = useState<"allow" | "deny" | null>(
     null
   );
+  const [error, setError] = useState<string | null>(null);
 
   function submit(action: "allow" | "deny") {
     setPendingAction(action);
-    router.post("/oauth/authorize/approve", { flow, action });
+    setError(null);
+    router.post(
+      "/oauth/authorize/approve",
+      { flow, action },
+      {
+        onError: (errors) => {
+          const values = Object.values(errors ?? {});
+          const firstMessage = values.find(
+            (value): value is string => typeof value === "string" && value.length > 0
+          );
+          setError(firstMessage ?? "Something went wrong. Please try again.");
+        },
+        onFinish: () => {
+          setPendingAction(null);
+        },
+      }
+    );
   }
 
   const loading = pendingAction !== null;
@@ -34,12 +51,12 @@ function Authorize({
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="w-full max-w-sm space-y-8">
           <div className="text-center">
-            <h1 className="text-4xl font-bold tracking-tight text-foreground">
+            <p className="text-4xl font-bold tracking-tight text-foreground">
               Dust
-            </h1>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Authorize MCP client
             </p>
+            <h1 className="mt-2 text-sm text-muted-foreground">
+              Authorize MCP client
+            </h1>
           </div>
 
           <div className="space-y-6">
@@ -72,6 +89,10 @@ function Authorize({
               </div>
             </div>
 
+            {error && (
+              <p className="text-sm text-destructive">{error}</p>
+            )}
+
             <div className="flex gap-3">
               <Button
                 type="button"
@@ -80,6 +101,7 @@ function Authorize({
                 disabled={loading}
                 onClick={() => submit("deny")}
                 data-testid="oauth-deny"
+                aria-label={`Deny ${client_name}`}
               >
                 {pendingAction === "deny" && (
                   <Loader2 className="animate-spin" />
@@ -92,6 +114,7 @@ function Authorize({
                 disabled={loading}
                 onClick={() => submit("allow")}
                 data-testid="oauth-allow"
+                aria-label={`Allow ${client_name} to access your Dust stores`}
               >
                 {pendingAction === "allow" && (
                   <Loader2 className="animate-spin" />
