@@ -211,6 +211,7 @@ defmodule DustWeb.MCPAuthControllerTest do
 
       conn =
         conn
+        |> put_allowlisted_redirect(oauth_params.redirect_uri)
         |> log_in_user(user)
         |> post(~p"/oauth/authorize/approve", %{"flow" => token, "action" => "allow"})
 
@@ -231,6 +232,7 @@ defmodule DustWeb.MCPAuthControllerTest do
 
       conn =
         conn
+        |> put_allowlisted_redirect(oauth_params.redirect_uri)
         |> log_in_user(user)
         |> post(~p"/oauth/authorize/approve", %{"flow" => token, "action" => "deny"})
 
@@ -245,6 +247,25 @@ defmodule DustWeb.MCPAuthControllerTest do
 
       conn = post(conn, ~p"/oauth/authorize/approve", %{"flow" => token, "action" => "allow"})
       assert redirected_to(conn) =~ "/auth/login"
+    end
+
+    test "anonymous user redirected to /auth/login even when flow token is invalid", %{conn: conn} do
+      conn = post(conn, ~p"/oauth/authorize/approve", %{"flow" => "bogus", "action" => "allow"})
+      assert redirected_to(conn) =~ "/auth/login"
+    end
+
+    test "rejects approve with redirect_uri no longer on allowlist", ctx do
+      %{conn: conn, user: user, oauth_params: oauth_params} = ctx
+      token = FlowToken.encode(oauth_params)
+
+      # Do NOT call put_allowlisted_redirect — leave the allowlist empty
+      # so the revalidation step rejects the (formerly-trusted) redirect.
+      conn =
+        conn
+        |> log_in_user(user)
+        |> post(~p"/oauth/authorize/approve", %{"flow" => token, "action" => "allow"})
+
+      assert json_response(conn, 400)["error"] == "invalid_request"
     end
   end
 

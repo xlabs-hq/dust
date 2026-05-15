@@ -153,8 +153,9 @@ defmodule DustWeb.Router do
     get "/stores/:org/:store/webhooks/:id/deliveries", WebhookController, :deliveries
   end
 
-  # MCP OAuth discovery + DCR endpoints (unauthenticated)
-  # Must be above /:org to prevent that catch-all from matching well-known URLs
+  # MCP OAuth discovery + DCR + token endpoints (unauthenticated JSON,
+  # called by MCP clients programmatically).
+  # Must be above /:org to prevent that catch-all from matching well-known URLs.
   scope "/", DustWeb do
     pipe_through :mcp_oauth
 
@@ -162,9 +163,18 @@ defmodule DustWeb.Router do
     get "/.well-known/oauth-authorization-server", MCPAuthController, :oauth_authorization_server
     post "/register", MCPAuthController, :register
     get "/oauth/authorize", MCPAuthController, :oauth_authorize
+    post "/oauth/token", MCPAuthController, :oauth_token
+  end
+
+  # MCP OAuth consent UI — runs through the browser pipeline so CSRF
+  # protection and the Inertia plug are active. The user's browser
+  # navigates here after the unauthenticated /oauth/authorize hop has
+  # validated and bottled up the OAuth parameters in a signed flow token.
+  scope "/", DustWeb do
+    pipe_through [:browser, :inertia]
+
     get "/oauth/authorize/continue", MCPAuthController, :authorize_continue
     post "/oauth/authorize/approve", MCPAuthController, :authorize_approve
-    post "/oauth/token", MCPAuthController, :oauth_token
   end
 
   # Protected routes scoped to an organization

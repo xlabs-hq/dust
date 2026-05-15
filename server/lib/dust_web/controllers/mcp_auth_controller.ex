@@ -134,12 +134,7 @@ defmodule DustWeb.MCPAuthController do
           {:ok, oauth_params} ->
             user = conn.assigns.current_scope.user
 
-            # TODO(task-6): remove put_format/fetch_flash workarounds once this
-            # route moves into the [:browser, :inertia] pipeline.
-            conn
-            |> Phoenix.Controller.put_format("html")
-            |> Phoenix.Controller.fetch_flash()
-            |> render_inertia("OAuth/Authorize", %{
+            render_inertia(conn, "OAuth/Authorize", %{
               client_id: oauth_params.client_id,
               client_name: client_display_name(oauth_params.client_id),
               redirect_uri: oauth_params.redirect_uri,
@@ -182,12 +177,25 @@ defmodule DustWeb.MCPAuthController do
     json_error(conn, :bad_request, "invalid_request", "Missing flow or action")
   end
 
-  defp do_approve(conn, oauth_params, "deny") do
+  defp do_approve(conn, oauth_params, action) when action in ["allow", "deny"] do
+    # Re-validate the redirect_uri against the current allowlist before
+    # honoring it. The flow token preserved the redirect_uri from the
+    # initial /oauth/authorize hop, but allowlist config could have
+    # changed (or the URI could have been signed under an older policy).
+    # We must never redirect to an unvalidated external URL.
+    if RedirectUriValidator.valid?(oauth_params.redirect_uri) do
+      do_approve_validated(conn, oauth_params, action)
+    else
+      json_error(conn, :bad_request, "invalid_request", "redirect_uri is no longer trusted")
+    end
+  end
+
+  defp do_approve_validated(conn, oauth_params, "deny") do
     url = error_redirect(oauth_params.redirect_uri, "access_denied", oauth_params.state)
     redirect(conn, external: url)
   end
 
-  defp do_approve(conn, oauth_params, "allow") do
+  defp do_approve_validated(conn, oauth_params, "allow") do
     user = conn.assigns.current_scope.user
 
     case Sessions.create_authorization_code(user, %{
