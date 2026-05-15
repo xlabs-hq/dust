@@ -10,6 +10,7 @@ servers:
       - 5.223.79.63
     options:
       network-alias: dust
+      hostname: dust-staging
 
 registry:
   username: jtippett
