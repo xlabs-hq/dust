@@ -35,7 +35,7 @@ defmodule DustWeb.MCPOAuthIntegrationTest do
     redirect_uri = "http://localhost/cb"
 
     # 3. Skip the WorkOS round-trip — directly create an authorization code
-    #    as if /oauth/callback had run after AuthKit redirected back.
+    #    as if `authorize_approve` had run after consent.
     verifier = :crypto.strong_rand_bytes(32) |> Base.url_encode64(padding: false)
     challenge = :crypto.hash(:sha256, verifier) |> Base.url_encode64(padding: false)
 

@@ -5,9 +5,10 @@ defmodule Dust.MCP.Sessions do
   A session row plays two roles in its lifetime:
 
     1. **Authorization code phase** (`access_token_hash IS NULL`) — created by
-       `create_authorization_code/2` at `/oauth/callback` time. The PKCE
-       challenge, client_id, and client redirect_uri are persisted for later
-       back-channel validation.
+       `create_authorization_code/2` from `authorize_approve` (in the MCP auth
+       controller) when the user clicks "Allow" on the consent screen. The
+       PKCE challenge, client_id, and client redirect_uri are persisted for
+       later back-channel validation.
 
     2. **Bearer token phase** (`access_token_hash` set) — entered by
        `exchange_code/2` at `/oauth/token` time, which validates PKCE,

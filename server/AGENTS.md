@@ -589,7 +589,8 @@ Discovery endpoints:
 - `GET /.well-known/oauth-authorization-server`
 - `POST /register` (DCR)
 - `GET /oauth/authorize`
-- `GET /oauth/callback`
+- `GET /oauth/authorize/continue`
+- `POST /oauth/authorize/approve`
 - `POST /oauth/token`
 
 To wire Claude Desktop: add an MCP server with URL `https://<host>/mcp`. The
