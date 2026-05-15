@@ -423,7 +423,13 @@ defmodule DustWeb.WorkOSAuthController do
   defp log_in_user(conn, user) do
     token = Accounts.generate_user_session_token(user)
     user_return_to = get_session(conn, :user_return_to)
-    redirect_to = user_return_to || signed_in_path(user)
+
+    redirect_to =
+      if user_return_to && safe_return_to?(user_return_to) do
+        user_return_to
+      else
+        signed_in_path(user)
+      end
 
     conn =
       conn
@@ -456,6 +462,18 @@ defmodule DustWeb.WorkOSAuthController do
       [] -> ~p"/auth/login"
     end
   end
+
+  # Allowlist for the post-login redirect target stashed in :user_return_to.
+  # The only legitimate caller today is the MCP OAuth authorize endpoint,
+  # which sets :user_return_to to /oauth/authorize/continue?flow=<token>
+  # before bouncing the user through /auth/login. Anything else (admin
+  # routes, attacker-supplied open redirects, etc.) falls back to the
+  # user's default landing page.
+  defp safe_return_to?(path) when is_binary(path) do
+    String.starts_with?(path, "/oauth/authorize/continue?flow=")
+  end
+
+  defp safe_return_to?(_), do: false
 
   defp redirect_to_org(conn, user) do
     redirect(conn, to: signed_in_path(user))

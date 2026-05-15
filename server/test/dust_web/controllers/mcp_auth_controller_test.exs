@@ -329,6 +329,42 @@ defmodule DustWeb.MCPAuthControllerTest do
       assert json_response(conn, 400)["error"] == "invalid_grant"
     end
 
+    test "rejects mismatched redirect_uri with invalid_grant", %{
+      conn: conn,
+      session: session,
+      verifier: verifier
+    } do
+      conn =
+        post(conn, ~p"/oauth/token", %{
+          "grant_type" => "authorization_code",
+          "code" => session.session_id,
+          "code_verifier" => verifier,
+          "client_id" => "client_test",
+          # Authorization code was bound to http://localhost:33418/cb in setup.
+          "redirect_uri" => "https://other.example/cb"
+        })
+
+      assert json_response(conn, 400)["error"] == "invalid_grant"
+    end
+
+    test "rejects mismatched client_id with invalid_grant", %{
+      conn: conn,
+      session: session,
+      verifier: verifier
+    } do
+      conn =
+        post(conn, ~p"/oauth/token", %{
+          "grant_type" => "authorization_code",
+          "code" => session.session_id,
+          "code_verifier" => verifier,
+          # Authorization code was bound to client_test in setup.
+          "client_id" => "client_other",
+          "redirect_uri" => "http://localhost:33418/cb"
+        })
+
+      assert json_response(conn, 400)["error"] == "invalid_grant"
+    end
+
     test "rejects already-consumed session_id", %{
       conn: conn,
       session: session,
@@ -351,6 +387,15 @@ defmodule DustWeb.MCPAuthControllerTest do
     test "rejects unsupported grant_type" do
       conn = post(build_conn(), ~p"/oauth/token", %{"grant_type" => "client_credentials"})
       assert json_response(conn, 400)["error"] == "unsupported_grant_type"
+    end
+  end
+
+  describe "GET /oauth/callback" do
+    test "is no longer registered (replaced by embedded consent flow)", %{conn: conn} do
+      # The broker callback endpoint was removed when authorize_continue /
+      # authorize_approve landed. Pin the contract so it doesn't reappear.
+      conn = get(conn, "/oauth/callback")
+      assert conn.status == 404
     end
   end
 end

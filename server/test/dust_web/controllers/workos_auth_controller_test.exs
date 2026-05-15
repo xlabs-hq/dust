@@ -46,6 +46,28 @@ defmodule DustWeb.WorkOSAuthControllerTest do
       user2 = Accounts.get_user_by_email("dev@dust.local")
       assert user1.id == user2.id
     end
+
+    test "honors :user_return_to pointing at /oauth/authorize/continue", %{conn: conn} do
+      return_to = "/oauth/authorize/continue?flow=abc123"
+
+      conn =
+        conn
+        |> init_test_session(%{user_return_to: return_to})
+        |> get(~p"/auth/authorize")
+
+      assert redirected_to(conn) == return_to
+    end
+
+    test "ignores :user_return_to that is not on the allowlist", %{conn: conn} do
+      conn =
+        conn
+        |> init_test_session(%{user_return_to: "/admin"})
+        |> get(~p"/auth/authorize")
+
+      # Falls back to signed_in_path/1 (the dev user's org), not "/admin".
+      refute redirected_to(conn) == "/admin"
+      assert redirected_to(conn) =~ "/"
+    end
   end
 
   describe "DELETE /auth/logout" do
