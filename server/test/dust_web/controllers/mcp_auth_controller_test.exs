@@ -5,7 +5,7 @@ defmodule DustWeb.MCPAuthControllerTest do
   alias Dust.WorkOSStub
 
   describe "flow token roundtrip" do
-    test "encode then verify returns the original oauth_params", %{conn: conn} do
+    test "encode then verify returns the original oauth_params" do
       params = %{
         client_id: "client_123",
         redirect_uri: "https://app.example/cb",
@@ -15,13 +15,13 @@ defmodule DustWeb.MCPAuthControllerTest do
         scope: ""
       }
 
-      token = DustWeb.MCPAuthController.__test_encode_flow_token__(conn, params)
-      assert {:ok, ^params} = DustWeb.MCPAuthController.__test_verify_flow_token__(conn, token)
+      token = DustWeb.MCPAuthController.__test_encode_flow_token__(params)
+      assert {:ok, ^params} = DustWeb.MCPAuthController.__test_verify_flow_token__(token)
     end
 
-    test "verify rejects tampered token", %{conn: conn} do
+    test "verify rejects tampered token" do
       assert {:error, _} =
-               DustWeb.MCPAuthController.__test_verify_flow_token__(conn, "not-a-real-token")
+               DustWeb.MCPAuthController.__test_verify_flow_token__("not-a-real-token")
     end
   end
 
