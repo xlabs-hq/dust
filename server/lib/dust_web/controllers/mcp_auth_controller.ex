@@ -95,43 +95,29 @@ defmodule DustWeb.MCPAuthController do
   end
 
   defp do_authorize(conn, client_id, redirect_uri, state, challenge, method, params) do
-    # Always prefix unconditionally. Idempotency ("only prefix if not already
-    # prefixed") is wrong because a client may legitimately send a state that
-    # starts with "oauth_flow_", and the callback strip would then return the
-    # wrong value to the client.
-    oauth_state = "oauth_flow_" <> state
+    oauth_params = %{
+      client_id: client_id,
+      redirect_uri: redirect_uri,
+      state: state,
+      code_challenge: challenge,
+      code_challenge_method: method,
+      scope: Map.get(params, "scope", "")
+    }
 
-    conn =
-      put_session(conn, :oauth_params, %{
-        client_id: client_id,
-        redirect_uri: redirect_uri,
-        state: oauth_state,
-        code_challenge: challenge,
-        code_challenge_method: method,
-        scope: Map.get(params, "scope", "")
-      })
+    flow_token = encode_flow_token(oauth_params)
+    continue_path = "/oauth/authorize/continue?" <> URI.encode_query(%{flow: flow_token})
 
-    # Mint our own PKCE for the upstream WorkOS exchange
-    upstream_verifier = :crypto.strong_rand_bytes(32) |> Base.url_encode64(padding: false)
+    if signed_in?(conn) do
+      redirect(conn, to: continue_path)
+    else
+      conn
+      |> put_session(:user_return_to, continue_path)
+      |> redirect(to: "/auth/login")
+    end
+  end
 
-    upstream_challenge =
-      :crypto.hash(:sha256, upstream_verifier) |> Base.url_encode64(padding: false)
-
-    conn = put_session(conn, :code_verifier, upstream_verifier)
-
-    query =
-      URI.encode_query(%{
-        client_id: Application.fetch_env!(:workos, :mcp_client_id),
-        response_type: "code",
-        redirect_uri: "#{base_url()}/oauth/callback",
-        scope: "profile email",
-        state: oauth_state,
-        code_challenge: upstream_challenge,
-        code_challenge_method: "S256"
-      })
-
-    authkit = Application.fetch_env!(:dust, :authkit_base_url)
-    redirect(conn, external: "#{authkit}/oauth2/authorize?#{query}")
+  defp signed_in?(conn) do
+    not is_nil(get_session(conn, :user_token))
   end
 
   def oauth_callback(conn, %{"code" => code} = params) do

@@ -35,4 +35,31 @@ defmodule DustWeb.ConnCase do
     Dust.DataCase.setup_sandbox(tags)
     {:ok, conn: Phoenix.ConnTest.build_conn()}
   end
+
+  @doc """
+  Logs the given `user` into the `conn` by setting `:user_token` in the
+  session, mirroring `DustWeb.WorkOSAuthController.log_in_user/2`.
+  """
+  def log_in_user(conn, user) do
+    token = Dust.Accounts.generate_user_session_token(user)
+
+    conn
+    |> Phoenix.ConnTest.init_test_session(%{})
+    |> Plug.Conn.put_session(:user_token, token)
+  end
+
+  @doc """
+  Allowlists the given `uri` for the MCP OAuth redirect_uri validator and
+  ensures the env var is cleaned up after the test.
+  """
+  def put_allowlisted_redirect(conn, uri) do
+    previous = Application.get_env(:dust, :mcp_redirect_uri_allowlist, [])
+    Application.put_env(:dust, :mcp_redirect_uri_allowlist, [uri | previous])
+
+    ExUnit.Callbacks.on_exit(fn ->
+      Application.put_env(:dust, :mcp_redirect_uri_allowlist, previous)
+    end)
+
+    conn
+  end
 end

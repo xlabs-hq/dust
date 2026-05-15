@@ -1,6 +1,8 @@
 defmodule DustWeb.MCPAuthControllerTest do
   use DustWeb.ConnCase, async: false
 
+  import Dust.AccountsFixtures
+
   alias Dust.MCP.Sessions
   alias Dust.WorkOSStub
 
@@ -68,39 +70,53 @@ defmodule DustWeb.MCPAuthControllerTest do
     end
   end
 
-  describe "GET /oauth/authorize" do
-    test "stores client params in session and redirects to AuthKit", %{conn: conn} do
-      Application.put_env(:dust, :authkit_base_url, "https://test.authkit.app")
-
-      params = %{
-        "response_type" => "code",
-        "client_id" => Application.fetch_env!(:workos, :mcp_client_id),
-        "redirect_uri" => "http://localhost:33418/oauth/callback",
-        "state" => "client_state_123",
-        "code_challenge" => "abc123def456",
-        "code_challenge_method" => "S256",
-        "scope" => "profile email"
+  describe "GET /oauth/authorize (embedded flow)" do
+    setup do
+      %{
+        params: %{
+          "response_type" => "code",
+          "client_id" => "client_123",
+          "redirect_uri" => "https://app.example/cb",
+          "state" => "client-state",
+          "code_challenge" => "abc",
+          "code_challenge_method" => "S256"
+        }
       }
+    end
 
-      conn = get(conn, ~p"/oauth/authorize", params)
-      assert redirected_to(conn, 302) =~ "https://test.authkit.app/oauth2/authorize"
+    test "redirects unauthenticated user to /auth/login with return_to", %{
+      conn: conn,
+      params: params
+    } do
+      conn = put_allowlisted_redirect(conn, params["redirect_uri"])
 
-      location = redirected_to(conn, 302)
-      assert location =~ "code_challenge="
+      conn = get(conn, ~p"/oauth/authorize?#{params}")
 
-      assert location =~
-               "redirect_uri=" <>
-                 URI.encode_www_form(
-                   "#{Application.fetch_env!(:dust, :mcp_base_url)}/oauth/callback"
-                 )
+      assert redirected_to(conn) =~ "/auth/login"
+      assert get_session(conn, :user_return_to) =~ "/oauth/authorize/continue?flow="
+    end
 
-      assert location =~ "state=oauth_flow_client_state_123"
+    test "redirects signed-in user straight to /oauth/authorize/continue", %{
+      conn: conn,
+      params: params
+    } do
+      user = user_fixture()
 
-      # Session must capture client params for the callback
-      stored = get_session(conn, :oauth_params)
-      assert stored.redirect_uri == "http://localhost:33418/oauth/callback"
-      assert stored.code_challenge == "abc123def456"
-      assert get_session(conn, :code_verifier)
+      conn =
+        conn
+        |> put_allowlisted_redirect(params["redirect_uri"])
+        |> log_in_user(user)
+        |> get(~p"/oauth/authorize?#{params}")
+
+      assert redirected_to(conn) =~ "/oauth/authorize/continue?flow="
+      refute get_session(conn, :user_return_to)
+    end
+
+    test "rejects code_challenge_method=plain", %{conn: conn, params: params} do
+      conn = put_allowlisted_redirect(conn, params["redirect_uri"])
+      params = Map.put(params, "code_challenge_method", "plain")
+      conn = get(conn, ~p"/oauth/authorize?#{params}")
+      assert json_response(conn, 400)["error"] == "invalid_request"
     end
 
     test "400 on missing params", %{conn: conn} do
@@ -108,17 +124,10 @@ defmodule DustWeb.MCPAuthControllerTest do
       assert json_response(conn, 400)["error"] == "invalid_request"
     end
 
-    test "rejects arbitrary https redirect_uri (attacker case)", %{conn: conn} do
+    test "rejects arbitrary https redirect_uri (attacker case)", %{conn: conn, params: params} do
       Application.put_env(:dust, :mcp_redirect_uri_allowlist, [])
 
-      params = %{
-        "response_type" => "code",
-        "client_id" => Application.fetch_env!(:workos, :mcp_client_id),
-        "redirect_uri" => "https://attacker.example/cb",
-        "state" => "client_state_123",
-        "code_challenge" => "abc123def456",
-        "code_challenge_method" => "S256"
-      }
+      params = Map.put(params, "redirect_uri", "https://attacker.example/cb")
 
       conn = get(conn, ~p"/oauth/authorize", params)
       body = json_response(conn, 400)
@@ -126,85 +135,25 @@ defmodule DustWeb.MCPAuthControllerTest do
       assert body["error_description"] =~ "redirect_uri"
     end
 
-    test "accepts http://127.0.0.1:PORT/cb loopback", %{conn: conn} do
-      Application.put_env(:dust, :authkit_base_url, "https://test.authkit.app")
-
-      params = %{
-        "response_type" => "code",
-        "client_id" => Application.fetch_env!(:workos, :mcp_client_id),
-        "redirect_uri" => "http://127.0.0.1:33418/cb",
-        "state" => "s",
-        "code_challenge" => "abc",
-        "code_challenge_method" => "S256"
-      }
+    test "accepts http://127.0.0.1:PORT/cb loopback", %{conn: conn, params: params} do
+      params = Map.put(params, "redirect_uri", "http://127.0.0.1:33418/cb")
 
       conn = get(conn, ~p"/oauth/authorize", params)
-      assert redirected_to(conn, 302) =~ "/oauth2/authorize"
+      assert redirected_to(conn) =~ "/auth/login"
     end
 
-    test "accepts http://localhost:PORT/cb loopback", %{conn: conn} do
-      Application.put_env(:dust, :authkit_base_url, "https://test.authkit.app")
-
-      params = %{
-        "response_type" => "code",
-        "client_id" => Application.fetch_env!(:workos, :mcp_client_id),
-        "redirect_uri" => "http://localhost:33418/cb",
-        "state" => "s",
-        "code_challenge" => "abc",
-        "code_challenge_method" => "S256"
-      }
+    test "accepts http://localhost:PORT/cb loopback", %{conn: conn, params: params} do
+      params = Map.put(params, "redirect_uri", "http://localhost:33418/cb")
 
       conn = get(conn, ~p"/oauth/authorize", params)
-      assert redirected_to(conn, 302) =~ "/oauth2/authorize"
+      assert redirected_to(conn) =~ "/auth/login"
     end
 
-    test "accepts allowlisted https URI when config is set", %{conn: conn} do
-      Application.put_env(:dust, :authkit_base_url, "https://test.authkit.app")
-      previous = Application.get_env(:dust, :mcp_redirect_uri_allowlist, [])
-      Application.put_env(:dust, :mcp_redirect_uri_allowlist, ["https://claude.ai/api/mcp/"])
-      on_exit(fn -> Application.put_env(:dust, :mcp_redirect_uri_allowlist, previous) end)
-
-      params = %{
-        "response_type" => "code",
-        "client_id" => Application.fetch_env!(:workos, :mcp_client_id),
-        "redirect_uri" => "https://claude.ai/api/mcp/auth_callback",
-        "state" => "s",
-        "code_challenge" => "abc",
-        "code_challenge_method" => "S256"
-      }
-
-      conn = get(conn, ~p"/oauth/authorize", params)
-      assert redirected_to(conn, 302) =~ "/oauth2/authorize"
-    end
-
-    test "rejects non-loopback http redirect_uri", %{conn: conn} do
-      params = %{
-        "response_type" => "code",
-        "client_id" => Application.fetch_env!(:workos, :mcp_client_id),
-        "redirect_uri" => "http://example.com/cb",
-        "state" => "s",
-        "code_challenge" => "abc",
-        "code_challenge_method" => "S256"
-      }
+    test "rejects non-loopback http redirect_uri", %{conn: conn, params: params} do
+      params = Map.put(params, "redirect_uri", "http://example.com/cb")
 
       conn = get(conn, ~p"/oauth/authorize", params)
       assert json_response(conn, 400)["error"] == "invalid_request"
-    end
-
-    test "rejects non-S256 code_challenge_method", %{conn: conn} do
-      params = %{
-        "response_type" => "code",
-        "client_id" => Application.fetch_env!(:workos, :mcp_client_id),
-        "redirect_uri" => "http://localhost:33418/cb",
-        "state" => "s",
-        "code_challenge" => "abc",
-        "code_challenge_method" => "plain"
-      }
-
-      conn = get(conn, ~p"/oauth/authorize", params)
-      body = json_response(conn, 400)
-      assert body["error"] == "invalid_request"
-      assert body["error_description"] =~ "S256"
     end
   end
 
