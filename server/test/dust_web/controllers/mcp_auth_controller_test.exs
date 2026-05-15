@@ -159,7 +159,6 @@ defmodule DustWeb.MCPAuthControllerTest do
 
       conn =
         conn
-        |> put_req_header("accept", "text/html")
         |> log_in_user(user)
         |> get(~p"/oauth/authorize/continue?flow=#{token}")
 
@@ -174,7 +173,6 @@ defmodule DustWeb.MCPAuthControllerTest do
 
       conn =
         conn
-        |> put_req_header("accept", "text/html")
         |> get(~p"/oauth/authorize/continue?flow=#{token}")
 
       assert redirected_to(conn) =~ "/auth/login"

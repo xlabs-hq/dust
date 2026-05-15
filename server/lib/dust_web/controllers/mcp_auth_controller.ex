@@ -136,12 +136,10 @@ defmodule DustWeb.MCPAuthController do
           {:ok, oauth_params} ->
             user = conn.assigns.current_scope.user
 
-            # Inertia expects `conn.assigns.flash`. The `:mcp_oauth` pipeline
-            # doesn't install `:fetch_live_flash` (it's mostly JSON), so we
-            # fetch_flash inline. Task 6 of the embedded MCP OAuth plan moves
-            # this route to the `[:browser, :inertia]` pipeline and will make
-            # this line unnecessary.
+            # TODO(task-6): remove put_format/fetch_flash workarounds once this
+            # route moves into the [:browser, :inertia] pipeline.
             conn
+            |> Phoenix.Controller.put_format("html")
             |> Phoenix.Controller.fetch_flash()
             |> render_inertia("OAuth/Authorize", %{
               client_id: oauth_params.client_id,
