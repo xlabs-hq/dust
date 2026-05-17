@@ -1,6 +1,17 @@
 defmodule Dust do
   @moduledoc "Dust SDK — reactive global map client."
 
+  @cloud_url "wss://dustlayer.io/ws/sync"
+
+  @doc """
+  Returns the WebSocket URL for Dust's hosted cloud service at dustlayer.io.
+
+  Use as the `:url` option when starting the supervisor against cloud:
+
+      {Dust, stores: ["acme/site"], url: Dust.cloud_url(), token: token, cache: ...}
+  """
+  def cloud_url, do: @cloud_url
+
   defmacro __using__(opts) do
     quote do
       use Dust.Instance, unquote(opts)

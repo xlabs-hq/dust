@@ -13,8 +13,11 @@ defmodule Dust.Instance do
       config :my_app, MyApp.Dust,
         stores: ["james/blog"],
         cache: {Dust.Cache.Memory, []},
-        url: "ws://localhost:7755/ws/sync",
+        url: Dust.cloud_url(),
         token: "sk_..."
+
+  The default `:url` is `ws://localhost:7755/ws/sync` (the local dev server).
+  Use `Dust.cloud_url/0` to target the hosted service at dustlayer.io.
 
   And in your supervision tree:
 
