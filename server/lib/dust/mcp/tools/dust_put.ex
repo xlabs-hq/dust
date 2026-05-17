@@ -3,7 +3,8 @@ defmodule Dust.MCP.Tools.DustPut do
 
   use GenMCP.Suite.Tool,
     name: "dust_put",
-    description: "Write a value at a path in a Dust store. Overwrites any existing value.",
+    description:
+      "Write a value at a path in a Dust store. Overwrites any existing value. Use dust_delete to clear an entry; null values are stored as null, not as deletes.",
     input_schema: %{
       type: :object,
       properties: %{
