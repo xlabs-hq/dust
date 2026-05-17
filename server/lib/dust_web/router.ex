@@ -31,6 +31,7 @@ defmodule DustWeb.Router do
   end
 
   pipeline :mcp do
+    plug DustWeb.Plugs.McpWelcome
     plug :accepts, ["json"]
     plug DustWeb.Plugs.MCPAuth
   end
