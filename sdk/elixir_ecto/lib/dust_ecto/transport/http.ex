@@ -288,6 +288,9 @@ defmodule DustEcto.Transport.HTTP do
     # (429, 5xx) to the caller via the %Error{retryable?:} flag so the
     # *application* decides whether to retry. Auto-retry inside Req
     # would silently double-write non-idempotent ops on a flaky network.
+    #
+    # Timeouts are app-configurable so callers serving web requests can
+    # bound how long a Dust outage stalls them. Defaults match Req's.
     req_opts =
       [
         method: method,
@@ -295,7 +298,9 @@ defmodule DustEcto.Transport.HTTP do
         headers: headers,
         params: params,
         decode_body: false,
-        retry: false
+        retry: false,
+        receive_timeout: Application.get_env(:dust_ecto, :receive_timeout, 15_000),
+        connect_options: [timeout: Application.get_env(:dust_ecto, :connect_timeout, 30_000)]
       ]
       |> maybe_put_body(method, body)
       |> maybe_put_test_plug(config)

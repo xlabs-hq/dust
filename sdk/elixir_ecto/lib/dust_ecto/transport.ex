@@ -10,6 +10,8 @@ defmodule DustEcto.Transport do
   config based on `dust_facade` config and the SyncEngineRegistry.
   """
 
+  require Logger
+
   @default_base_url "https://dustlayer.io"
 
   @type store :: String.t()
@@ -62,6 +64,8 @@ defmodule DustEcto.Transport do
         {DustEcto.Transport.SDK, %{facade: Dust}}
 
       true ->
+        warn_if_sdk_degraded()
+
         {DustEcto.Transport.HTTP,
          %{
            # base_url defaults to the canonical host — apps only need
@@ -71,6 +75,36 @@ defmodule DustEcto.Transport do
            base_url: Application.get_env(:dust_ecto, :base_url, @default_base_url),
            token: Application.fetch_env!(:dust_ecto, :token)
          }}
+    end
+  end
+
+  # A running SyncEngineRegistry with no engine for the configured store
+  # means the SDK transport was set up but its sync engine is down — the
+  # HTTP fallback is a degradation, not a choice. Warn, throttled to once
+  # a minute, so the silent ~100x slowdown shows up in logs. Plain HTTP
+  # usage (no registry process at all) stays silent.
+  @degraded_warn_interval_ms 60_000
+
+  defp warn_if_sdk_degraded do
+    store = Application.get_env(:dust_ecto, :store)
+
+    if store && Process.whereis(Dust.SyncEngineRegistry) && warn_due?() do
+      Logger.warning(
+        "dust_ecto: sync engine for store #{inspect(store)} is not registered; " <>
+          "falling back to the HTTP transport (slow, no realtime)"
+      )
+    end
+  end
+
+  defp warn_due? do
+    now = System.monotonic_time(:millisecond)
+    last = :persistent_term.get({__MODULE__, :degraded_warned_at}, nil)
+
+    if is_nil(last) or now - last >= @degraded_warn_interval_ms do
+      :persistent_term.put({__MODULE__, :degraded_warned_at}, now)
+      true
+    else
+      false
     end
   end
 
