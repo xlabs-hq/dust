@@ -40,13 +40,13 @@ defmodule Dust.MixProject do
   defp deps do
     [
       # Core Phoenix
-      {:phoenix, "~> 1.8.5"},
+      {:phoenix, "~> 1.8"},
       {:phoenix_ecto, "~> 4.5"},
       {:ecto_sql, "~> 3.13"},
       {:postgrex, ">= 0.0.0"},
       {:phoenix_html, "~> 4.1"},
-      {:phoenix_live_view, "~> 1.1.0"},
-      {:phoenix_live_dashboard, "~> 0.8.3"},
+      {:phoenix_live_view, "~> 1.1"},
+      {:phoenix_live_dashboard, "~> 0.8"},
       {:bandit, "~> 1.5"},
 
       # Vite + Inertia
@@ -78,7 +78,7 @@ defmodule Dust.MixProject do
       {:cloak, "~> 1.1"},
 
       # MCP
-      {:gen_mcp, "~> 0.8.0"},
+      {:gen_mcp, "~> 0.10"},
 
       # Protocol (shared with SDK)
       {:dust_protocol, path: "../protocol/elixir"},
@@ -103,7 +103,7 @@ defmodule Dust.MixProject do
       {:gettext, "~> 1.0"},
       {:jason, "~> 1.2"},
       {:dns_cluster, "~> 0.2.0"},
-      {:oaskit, "~> 0.12.0"}
+      {:oaskit, "~> 0.12"}
     ]
   end
 
