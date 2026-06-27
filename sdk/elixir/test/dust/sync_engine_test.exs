@@ -1222,6 +1222,61 @@ defmodule Dust.SyncEngineTest do
     end
   end
 
+  describe "subscription monitoring (monitor: true)" do
+    defp fire_set(path) do
+      SyncEngine.handle_server_event("test/store", %{
+        "path" => path,
+        "op" => "set",
+        "value" => "v",
+        "store_seq" => 1,
+        "device_id" => "remote",
+        "client_op_id" => "op-#{path}"
+      })
+    end
+
+    test "a monitored subscriber's subscription is dropped when it dies" do
+      test_pid = self()
+
+      {pid, mon} =
+        spawn_monitor(fn ->
+          SyncEngine.on("test/store", "mk", fn ev -> send(test_pid, {:cb, ev.path}) end,
+            monitor: true
+          )
+
+          send(test_pid, :registered)
+          receive do: (:stop -> :ok)
+        end)
+
+      assert_receive :registered, 500
+      send(pid, :stop)
+      assert_receive {:DOWN, ^mon, :process, ^pid, _}, 500
+      # Flush the SyncEngine so it has processed the subscriber's :DOWN.
+      _ = SyncEngine.status("test/store")
+
+      fire_set("mk")
+      refute_receive {:cb, "mk"}, 200
+    end
+
+    test "without monitor:, a subscription survives the registrant's death" do
+      test_pid = self()
+
+      {pid, mon} =
+        spawn_monitor(fn ->
+          SyncEngine.on("test/store", "uk", fn ev -> send(test_pid, {:cb, ev.path}) end)
+          send(test_pid, :registered)
+          receive do: (:stop -> :ok)
+        end)
+
+      assert_receive :registered, 500
+      send(pid, :stop)
+      assert_receive {:DOWN, ^mon, :process, ^pid, _}, 500
+      _ = SyncEngine.status("test/store")
+
+      fire_set("uk")
+      assert_receive {:cb, "uk"}, 500
+    end
+  end
+
   defp drain_events(timeout_ms) do
     receive do
       {:event, event} -> [event | drain_events(timeout_ms)]

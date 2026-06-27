@@ -15,7 +15,12 @@ defmodule Dust.SyncEngine do
     # here so FileRefs unwrapped from the cache carry the auth context
     # they need to fetch blob content via /api/files/:hash.
     :http_url,
-    :token
+    :token,
+    # monitor_ref => subscription ref. We Process.monitor the process that
+    # registers each subscription and auto-unregister it on :DOWN, so a
+    # crashed subscriber (e.g. a single_flight awaiter) never leaks an ETS
+    # row + CallbackWorker. The only rescue-free cleanup path.
+    :callback_monitors
   ]
 
   def start_link(opts) do
@@ -234,7 +239,8 @@ defmodule Dust.SyncEngine do
       last_store_seq: last_seq,
       activity_buffer: activity_buffer,
       http_url: derive_http_url(Keyword.get(opts, :url)),
-      token: Keyword.get(opts, :token)
+      token: Keyword.get(opts, :token),
+      callback_monitors: %{}
     }
 
     {:ok, state}
@@ -543,12 +549,28 @@ defmodule Dust.SyncEngine do
   @impl true
   def handle_call({:off, ref}, _from, state) do
     Dust.CallbackRegistry.unregister(state.callbacks, ref)
-    {:reply, :ok, state}
+
+    {:reply, :ok,
+     %{state | callback_monitors: demonitor_subscription(state.callback_monitors, ref)}}
   end
 
   @impl true
-  def handle_call({:on, pattern, callback, opts}, _from, state) do
+  def handle_call({:on, pattern, callback, opts}, from, state) do
     ref = Dust.CallbackRegistry.register(state.callbacks, state.store, pattern, callback, opts)
+
+    # Opt-in: with `monitor: true` we Process.monitor the registering process
+    # and GC its subscription on :DOWN (the rescue-free cleanup single_flight's
+    # awaiter needs). Default OFF — long-lived subscriptions (LiveViews, the
+    # one-shot SubscriberRegistrar which exits after init) manage their own
+    # lifecycle and must NOT be torn down when the registrar dies.
+    state =
+      if Keyword.get(opts, :monitor, false) do
+        {subscriber_pid, _tag} = from
+        mon_ref = Process.monitor(subscriber_pid)
+        %{state | callback_monitors: Map.put(state.callback_monitors, mon_ref, ref)}
+      else
+        state
+      end
 
     # Bootstrap current matching entries if requested. Runs INSIDE handle_call
     # so no live events can fire between snapshot and return — the single-threaded
@@ -566,6 +588,23 @@ defmodule Dust.SyncEngine do
     :ok = state.cache.write(state.cache_target, state.store, path, value, type, 0)
     {:reply, :ok, state}
   end
+
+  # A monitored subscriber process died without calling off/2 — drop its
+  # subscription (and the stale monitor entry).
+  @impl true
+  def handle_info({:DOWN, mon_ref, :process, _pid, _reason}, state) do
+    case Map.pop(state.callback_monitors, mon_ref) do
+      {nil, _} ->
+        {:noreply, state}
+
+      {sub_ref, monitors} ->
+        Dust.CallbackRegistry.unregister(state.callbacks, sub_ref)
+        {:noreply, %{state | callback_monitors: monitors}}
+    end
+  end
+
+  @impl true
+  def handle_info(_msg, state), do: {:noreply, state}
 
   @impl true
   def handle_cast({:set_store_seq, seq}, state) do
@@ -906,6 +945,18 @@ defmodule Dust.SyncEngine do
 
   defp maybe_put_from(op_msg, nil), do: op_msg
   defp maybe_put_from(op_msg, from), do: Map.put(op_msg, :from, from)
+
+  # Drop and demonitor the monitor tracking subscription `sub_ref` (if any).
+  defp demonitor_subscription(monitors, sub_ref) do
+    case Enum.find(monitors, fn {_mon, ref} -> ref == sub_ref end) do
+      {mon_ref, ^sub_ref} ->
+        Process.demonitor(mon_ref, [:flush])
+        Map.delete(monitors, mon_ref)
+
+      nil ->
+        monitors
+    end
+  end
 
   defp maybe_put_fence_opt(op_msg, opts) do
     case Keyword.get(opts, :fence) do
