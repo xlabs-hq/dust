@@ -263,6 +263,13 @@ end)
               external
             />
             <ResourceCard
+              href="https://github.com/xlabs-hq/dust/tree/master/docs/recipes"
+              title="Recipes"
+              description="Task-oriented patterns: single-flight, distributed leases, compare-and-swap, claim-once, freshness, pagination."
+              cta="Read the recipes ↗"
+              external
+            />
+            <ResourceCard
               href="https://github.com/xlabs-hq/dust/tree/master/sdk/typescript"
               title="TypeScript SDK"
               description="Browser & Node client with reactive subscriptions and offline-first writes."
