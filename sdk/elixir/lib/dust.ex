@@ -65,11 +65,17 @@ defmodule Dust do
   `:run_local` path) and MUST return:
 
     * `{:publish, value}` — store `value` at `key` and return it. `value` must
-      be a small pointer (put the bytes in S3/your DB); a definitive negative
-      result (a real 404) is fine to publish.
+      be a small pointer (put the bytes in S3/your DB). Publish a *definitive*
+      negative (e.g. a genuinely empty result) so the freshness window holds
+      and you don't recompute — classification is domain-specific (an empty
+      page may be definitive; a 404 that will appear later is transient).
     * `{:abort, reason}` — release the lease, publish nothing, return
-      `{:error, reason}`. Use this for *transient* failures so they don't get
-      cached.
+      `{:error, reason}`. Use this for *transient* failures so they aren't
+      cached. **Prefer `{:abort, _}` over raising** for expected/transient
+      errors: it releases the lease *immediately* (waiters re-elect at once),
+      whereas a raised `fun` only frees the lease when `lease_ttl` expires
+      (the heartbeat dies with the caller). Inside an Oban worker especially,
+      abort cleanly rather than raise.
 
   Options:
 
