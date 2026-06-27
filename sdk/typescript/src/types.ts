@@ -129,6 +129,32 @@ export class LeaseError extends Error {
 }
 
 /**
+ * What a `singleFlight` `fn` returns: `{ publish }` stores the value and
+ * shares it; `{ abort }` releases the lease without publishing (use for
+ * transient failures so they aren't cached) and rejects with
+ * {@link SingleFlightAbort}.
+ */
+export type SfResult<T> = { publish: T } | { abort: unknown }
+
+/** Thrown by `singleFlight` when `fn` returns `{ abort }`. */
+export class SingleFlightAbort extends Error {
+  readonly reason: unknown
+  constructor(reason: unknown) {
+    super('single_flight aborted')
+    this.name = 'SingleFlightAbort'
+    this.reason = reason
+  }
+}
+
+/** Thrown by `singleFlight` when a presence-mode wait times out. */
+export class SingleFlightTimeout extends Error {
+  constructor() {
+    super('single_flight wait timed out')
+    this.name = 'SingleFlightTimeout'
+  }
+}
+
+/**
  * The result of `Dust.singleFlight`. `source`: `cached` (fresh local hit),
  * `computed` (this caller ran the fn), `awaited` (rode another filler's
  * result). `stale` is true only when a freshness-mode wait timed out and the

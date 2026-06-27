@@ -2,7 +2,7 @@ import { Connection } from './connection'
 import { MemoryCache } from './cache'
 import { match } from './glob'
 import { normalizePath, normalizePattern, parseRendered, type PathInput } from './path'
-import { ConflictError, ExistsError, LeaseError } from './types'
+import { ConflictError, ExistsError, LeaseError, SingleFlightAbort, SingleFlightTimeout } from './types'
 import type {
   DustOptions,
   EnumOptions,
@@ -13,8 +13,11 @@ import type {
   Lease,
   Page,
   PresentEvent,
+  SfResult,
   Status,
 } from './types'
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
 type WatchCallback = (event: Event | PresentEvent) => void
 
@@ -117,6 +120,185 @@ export class Dust {
   /** Release a held lease. Idempotent — a lost/stale token is a no-op. */
   async release(store: string, lease: Lease): Promise<void> {
     await this.leaseWrite(store, 'release', lease.key, { token: lease.token })
+  }
+
+  /**
+   * Coordinated distributed cache-fill — compute `fn` once across the fleet and
+   * share the result. At-least-once / single-flight while reachable, NOT
+   * exactly-once; `fn` must be idempotent and publish a small pointer.
+   *
+   * `fn` receives the held lease (or `null` on the degraded `runLocal` path)
+   * and returns `{ publish: value }` or `{ abort: reason }`. Resolves with a
+   * {@link Flight}; rejects with {@link SingleFlightAbort} (fn aborted),
+   * {@link SingleFlightTimeout}, or {@link LeaseError}.
+   */
+  async singleFlight<T = unknown>(
+    store: string,
+    key: string,
+    fn: (lease: Lease | null) => SfResult<T> | Promise<SfResult<T>>,
+    opts: {
+      fresh?: (value: any) => boolean
+      leaseTtl?: number
+      waitTimeout?: number
+      onUnavailable?: 'runLocal' | 'error'
+      lockKey?: string
+    } = {},
+  ): Promise<Flight<T>> {
+    const cfg = {
+      fresh: opts.fresh,
+      leaseTtl: opts.leaseTtl ?? 30_000,
+      waitTimeout: opts.waitTimeout ?? (opts.leaseTtl ?? 30_000) + 5_000,
+      onUnavailable: opts.onUnavailable ?? 'runLocal',
+      lockKey: opts.lockKey ?? `_dust:sf/${key}`,
+    }
+
+    const cached = await this.lastValue(store, key)
+    if (cached.hit && (!cfg.fresh || cfg.fresh(cached.value))) {
+      return { value: cached.value as T, source: 'cached', stale: false, coordinated: true }
+    }
+
+    return this.sfCoordinate(store, key, fn, cfg, Date.now() + cfg.waitTimeout)
+  }
+
+  private async sfCoordinate<T>(store: string, key: string, fn: any, cfg: any, deadline: number): Promise<Flight<T>> {
+    let lease: Lease | null
+    try {
+      lease = await this.lease(store, cfg.lockKey, { ttlMs: cfg.leaseTtl })
+    } catch (err) {
+      if (err instanceof LeaseError && err.reason === 'unavailable') {
+        return this.sfDegraded(store, key, fn, cfg)
+      }
+      throw err
+    }
+
+    if (lease) return this.sfWon(store, key, fn, lease, cfg)
+
+    const r = await this.sfAwait(store, key, cfg, deadline)
+    if (r !== 'retry') return r as Flight<T>
+
+    if (Date.now() < deadline) {
+      await sleep(Math.floor(Math.random() * 250) + 1)
+      return this.sfCoordinate(store, key, fn, cfg, deadline)
+    }
+    return this.sfOnTimeout(store, key, cfg)
+  }
+
+  private async sfWon<T>(store: string, key: string, fn: any, lease: Lease, cfg: any): Promise<Flight<T>> {
+    const hb = this.startHeartbeat(store, lease, cfg.leaseTtl)
+    let result: SfResult<T>
+    try {
+      result = await fn(lease)
+    } finally {
+      // Stop renewing. If fn threw, we do NOT release: the lease lingers to
+      // lease_ttl and others re-elect (mirrors the Elixir recovery bound).
+      clearInterval(hb)
+    }
+
+    if (result && 'publish' in result) {
+      try {
+        await this.put(store, key, JSON.stringify((result as { publish: T }).publish), { fence: lease })
+      } catch (err) {
+        if (err instanceof LeaseError && err.reason === 'fenced') throw err
+        await this.release(store, lease).catch(() => {})
+        throw err
+      }
+      await this.release(store, lease)
+      const value = JSON.parse(JSON.stringify((result as { publish: T }).publish)) as T
+      return { value, source: 'computed', stale: false, coordinated: true }
+    }
+
+    await this.release(store, lease)
+    throw new SingleFlightAbort((result as { abort: unknown }).abort)
+  }
+
+  private async sfAwait<T>(store: string, key: string, cfg: any, deadline: number): Promise<Flight<T> | 'retry'> {
+    let resolveFn!: (v: Flight<T> | 'retry') => void
+    const promise = new Promise<Flight<T> | 'retry'>((res) => (resolveFn = res))
+
+    let settled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const unsubs: Array<() => void> = []
+    const finish = (v: Flight<T> | 'retry') => {
+      if (settled) return
+      settled = true
+      unsubs.forEach((u) => u())
+      if (timer) clearTimeout(timer)
+      resolveFn(v)
+    }
+
+    const tryKey = async () => {
+      const c = await this.lastValue(store, key)
+      if (c.hit && (!cfg.fresh || cfg.fresh(c.value))) {
+        finish({ value: c.value as T, source: 'awaited', stale: false, coordinated: true })
+      }
+    }
+
+    // Subscribe BEFORE re-reading (lost-wakeup), to both the result key and the
+    // lock key (a committed release → re-elect).
+    unsubs.push(this.subscribeRaw(store, key, () => void tryKey()))
+    unsubs.push(
+      this.subscribeRaw(store, cfg.lockKey, (ev) => {
+        if (ev.op === 'release') finish('retry')
+      }),
+    )
+
+    await tryKey()
+    if (!settled) {
+      const wait = Math.min(cfg.leaseTtl, deadline - Date.now())
+      if (wait <= 0) finish('retry')
+      else timer = setTimeout(() => finish('retry'), wait)
+    }
+
+    return promise
+  }
+
+  private async sfDegraded<T>(store: string, key: string, fn: any, cfg: any): Promise<Flight<T>> {
+    if (cfg.onUnavailable === 'error') throw new LeaseError('unavailable')
+
+    const result: SfResult<T> = await fn(null)
+    if (result && 'publish' in result) {
+      // Fire-and-forget; never block/fail the local computation on Dust.
+      void this.put(store, key, JSON.stringify((result as { publish: T }).publish)).catch(() => {})
+      const value = JSON.parse(JSON.stringify((result as { publish: T }).publish)) as T
+      return { value, source: 'computed', stale: false, coordinated: false }
+    }
+    throw new SingleFlightAbort((result as { abort: unknown }).abort)
+  }
+
+  private async sfOnTimeout<T>(store: string, key: string, cfg: any): Promise<Flight<T>> {
+    const c = await this.lastValue(store, key)
+    if (c.hit && cfg.fresh) {
+      return { value: c.value as T, source: 'cached', stale: true, coordinated: true }
+    }
+    throw new SingleFlightTimeout()
+  }
+
+  private async lastValue(store: string, key: string): Promise<{ hit: boolean; value?: unknown }> {
+    const entry = await this.entry(store, key)
+    if (entry && entry.type !== 'lease' && typeof entry.value === 'string') {
+      return { hit: true, value: JSON.parse(entry.value) }
+    }
+    return { hit: false }
+  }
+
+  private startHeartbeat(store: string, lease: Lease, ttl: number): ReturnType<typeof setInterval> {
+    const interval = Math.max(Math.floor(ttl / 3), 1)
+    return setInterval(() => {
+      void this.renew(store, lease, { ttlMs: ttl }).catch(() => {})
+    }, interval)
+  }
+
+  // Lightweight ongoing subscription (no bootstrap) used by singleFlight's
+  // await. Returns an unsubscribe fn.
+  private subscribeRaw(store: string, pattern: string, callback: WatchCallback): () => void {
+    let subs = this.subscriptions.get(store)
+    if (!subs) {
+      subs = new Set()
+      this.subscriptions.set(store, subs)
+    }
+    const sub: Subscription = { pattern: normalizePattern(pattern), callback, bootstrapPending: false }
+    subs.add(sub)
+    return () => subs!.delete(sub)
   }
 
   async merge(store: string, path: PathInput, value: Record<string, unknown>): Promise<{ storeSeq: number }> {

@@ -562,8 +562,22 @@ var LeaseError = class extends Error {
     this.reason = reason;
   }
 };
+var SingleFlightAbort = class extends Error {
+  constructor(reason) {
+    super("single_flight aborted");
+    this.name = "SingleFlightAbort";
+    this.reason = reason;
+  }
+};
+var SingleFlightTimeout = class extends Error {
+  constructor() {
+    super("single_flight wait timed out");
+    this.name = "SingleFlightTimeout";
+  }
+};
 
 // src/dust.ts
+var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 var Dust = class {
   constructor(opts) {
     this.subscriptions = /* @__PURE__ */ new Map();
@@ -634,6 +648,150 @@ var Dust = class {
   /** Release a held lease. Idempotent — a lost/stale token is a no-op. */
   async release(store, lease) {
     await this.leaseWrite(store, "release", lease.key, { token: lease.token });
+  }
+  /**
+   * Coordinated distributed cache-fill — compute `fn` once across the fleet and
+   * share the result. At-least-once / single-flight while reachable, NOT
+   * exactly-once; `fn` must be idempotent and publish a small pointer.
+   *
+   * `fn` receives the held lease (or `null` on the degraded `runLocal` path)
+   * and returns `{ publish: value }` or `{ abort: reason }`. Resolves with a
+   * {@link Flight}; rejects with {@link SingleFlightAbort} (fn aborted),
+   * {@link SingleFlightTimeout}, or {@link LeaseError}.
+   */
+  async singleFlight(store, key, fn, opts = {}) {
+    const cfg = {
+      fresh: opts.fresh,
+      leaseTtl: opts.leaseTtl ?? 3e4,
+      waitTimeout: opts.waitTimeout ?? (opts.leaseTtl ?? 3e4) + 5e3,
+      onUnavailable: opts.onUnavailable ?? "runLocal",
+      lockKey: opts.lockKey ?? `_dust:sf/${key}`
+    };
+    const cached = await this.lastValue(store, key);
+    if (cached.hit && (!cfg.fresh || cfg.fresh(cached.value))) {
+      return { value: cached.value, source: "cached", stale: false, coordinated: true };
+    }
+    return this.sfCoordinate(store, key, fn, cfg, Date.now() + cfg.waitTimeout);
+  }
+  async sfCoordinate(store, key, fn, cfg, deadline) {
+    let lease;
+    try {
+      lease = await this.lease(store, cfg.lockKey, { ttlMs: cfg.leaseTtl });
+    } catch (err) {
+      if (err instanceof LeaseError && err.reason === "unavailable") {
+        return this.sfDegraded(store, key, fn, cfg);
+      }
+      throw err;
+    }
+    if (lease) return this.sfWon(store, key, fn, lease, cfg);
+    const r = await this.sfAwait(store, key, cfg, deadline);
+    if (r !== "retry") return r;
+    if (Date.now() < deadline) {
+      await sleep(Math.floor(Math.random() * 250) + 1);
+      return this.sfCoordinate(store, key, fn, cfg, deadline);
+    }
+    return this.sfOnTimeout(store, key, cfg);
+  }
+  async sfWon(store, key, fn, lease, cfg) {
+    const hb = this.startHeartbeat(store, lease, cfg.leaseTtl);
+    let result;
+    try {
+      result = await fn(lease);
+    } finally {
+      clearInterval(hb);
+    }
+    if (result && "publish" in result) {
+      try {
+        await this.put(store, key, JSON.stringify(result.publish), { fence: lease });
+      } catch (err) {
+        if (err instanceof LeaseError && err.reason === "fenced") throw err;
+        await this.release(store, lease).catch(() => {
+        });
+        throw err;
+      }
+      await this.release(store, lease);
+      const value = JSON.parse(JSON.stringify(result.publish));
+      return { value, source: "computed", stale: false, coordinated: true };
+    }
+    await this.release(store, lease);
+    throw new SingleFlightAbort(result.abort);
+  }
+  async sfAwait(store, key, cfg, deadline) {
+    let resolveFn;
+    const promise = new Promise((res) => resolveFn = res);
+    let settled = false;
+    let timer;
+    const unsubs = [];
+    const finish = (v) => {
+      if (settled) return;
+      settled = true;
+      unsubs.forEach((u) => u());
+      if (timer) clearTimeout(timer);
+      resolveFn(v);
+    };
+    const tryKey = async () => {
+      const c = await this.lastValue(store, key);
+      if (c.hit && (!cfg.fresh || cfg.fresh(c.value))) {
+        finish({ value: c.value, source: "awaited", stale: false, coordinated: true });
+      }
+    };
+    unsubs.push(this.subscribeRaw(store, key, () => void tryKey()));
+    unsubs.push(
+      this.subscribeRaw(store, cfg.lockKey, (ev) => {
+        if (ev.op === "release") finish("retry");
+      })
+    );
+    await tryKey();
+    if (!settled) {
+      const wait = Math.min(cfg.leaseTtl, deadline - Date.now());
+      if (wait <= 0) finish("retry");
+      else timer = setTimeout(() => finish("retry"), wait);
+    }
+    return promise;
+  }
+  async sfDegraded(store, key, fn, cfg) {
+    if (cfg.onUnavailable === "error") throw new LeaseError("unavailable");
+    const result = await fn(null);
+    if (result && "publish" in result) {
+      void this.put(store, key, JSON.stringify(result.publish)).catch(() => {
+      });
+      const value = JSON.parse(JSON.stringify(result.publish));
+      return { value, source: "computed", stale: false, coordinated: false };
+    }
+    throw new SingleFlightAbort(result.abort);
+  }
+  async sfOnTimeout(store, key, cfg) {
+    const c = await this.lastValue(store, key);
+    if (c.hit && cfg.fresh) {
+      return { value: c.value, source: "cached", stale: true, coordinated: true };
+    }
+    throw new SingleFlightTimeout();
+  }
+  async lastValue(store, key) {
+    const entry = await this.entry(store, key);
+    if (entry && entry.type !== "lease" && typeof entry.value === "string") {
+      return { hit: true, value: JSON.parse(entry.value) };
+    }
+    return { hit: false };
+  }
+  startHeartbeat(store, lease, ttl) {
+    const interval = Math.max(Math.floor(ttl / 3), 1);
+    return setInterval(() => {
+      void this.renew(store, lease, { ttlMs: ttl }).catch(() => {
+      });
+    }, interval);
+  }
+  // Lightweight ongoing subscription (no bootstrap) used by singleFlight's
+  // await. Returns an unsubscribe fn.
+  subscribeRaw(store, pattern, callback) {
+    let subs = this.subscriptions.get(store);
+    if (!subs) {
+      subs = /* @__PURE__ */ new Set();
+      this.subscriptions.set(store, subs);
+    }
+    const sub = { pattern: normalizePattern(pattern), callback, bootstrapPending: false };
+    subs.add(sub);
+    return () => subs.delete(sub);
   }
   async merge(store, path, value) {
     return this.write(store, "merge", normalizePath(path), value);
@@ -1001,6 +1159,8 @@ export {
   ExistsError,
   LeaseError,
   MemoryCache,
+  SingleFlightAbort,
+  SingleFlightTimeout,
   compile,
   decode,
   encode,

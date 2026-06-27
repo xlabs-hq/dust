@@ -150,6 +150,26 @@ declare class LeaseError extends Error {
     constructor(reason: 'occupied' | 'unavailable' | 'fenced');
 }
 /**
+ * What a `singleFlight` `fn` returns: `{ publish }` stores the value and
+ * shares it; `{ abort }` releases the lease without publishing (use for
+ * transient failures so they aren't cached) and rejects with
+ * {@link SingleFlightAbort}.
+ */
+type SfResult<T> = {
+    publish: T;
+} | {
+    abort: unknown;
+};
+/** Thrown by `singleFlight` when `fn` returns `{ abort }`. */
+declare class SingleFlightAbort extends Error {
+    readonly reason: unknown;
+    constructor(reason: unknown);
+}
+/** Thrown by `singleFlight` when a presence-mode wait times out. */
+declare class SingleFlightTimeout extends Error {
+    constructor();
+}
+/**
  * The result of `Dust.singleFlight`. `source`: `cached` (fresh local hit),
  * `computed` (this caller ran the fn), `awaited` (rode another filler's
  * result). `stale` is true only when a freshness-mode wait timed out and the
@@ -195,6 +215,31 @@ declare class Dust {
     }): Promise<Lease | null>;
     /** Release a held lease. Idempotent — a lost/stale token is a no-op. */
     release(store: string, lease: Lease): Promise<void>;
+    /**
+     * Coordinated distributed cache-fill — compute `fn` once across the fleet and
+     * share the result. At-least-once / single-flight while reachable, NOT
+     * exactly-once; `fn` must be idempotent and publish a small pointer.
+     *
+     * `fn` receives the held lease (or `null` on the degraded `runLocal` path)
+     * and returns `{ publish: value }` or `{ abort: reason }`. Resolves with a
+     * {@link Flight}; rejects with {@link SingleFlightAbort} (fn aborted),
+     * {@link SingleFlightTimeout}, or {@link LeaseError}.
+     */
+    singleFlight<T = unknown>(store: string, key: string, fn: (lease: Lease | null) => SfResult<T> | Promise<SfResult<T>>, opts?: {
+        fresh?: (value: any) => boolean;
+        leaseTtl?: number;
+        waitTimeout?: number;
+        onUnavailable?: 'runLocal' | 'error';
+        lockKey?: string;
+    }): Promise<Flight<T>>;
+    private sfCoordinate;
+    private sfWon;
+    private sfAwait;
+    private sfDegraded;
+    private sfOnTimeout;
+    private lastValue;
+    private startHeartbeat;
+    private subscribeRaw;
     merge(store: string, path: PathInput, value: Record<string, unknown>): Promise<{
         storeSeq: number;
     }>;
@@ -405,4 +450,4 @@ type Format = 'msgpack' | 'json';
 declare function encode(msg: WireMessage, format: Format): Buffer | string;
 declare function decode(data: Buffer | ArrayBuffer | string, format: Format): WireMessage;
 
-export { type Cache, ConflictError, Connection, Dust, type DustOptions, type Entry, type EnumOptions, type Event, type EventCallback, ExistsError, type Flight, type Format, type Lease, LeaseError, MemoryCache, type Page, type PathInput, type PresentEvent, type Segments, type Status, type WireMessage, compile, decode, encode, fromSegments, generateDeviceId, generateOpId, inferType, match, parseLegacyDotted, parseRendered, render };
+export { type Cache, ConflictError, Connection, Dust, type DustOptions, type Entry, type EnumOptions, type Event, type EventCallback, ExistsError, type Flight, type Format, type Lease, LeaseError, MemoryCache, type Page, type PathInput, type PresentEvent, type Segments, type SfResult, SingleFlightAbort, SingleFlightTimeout, type Status, type WireMessage, compile, decode, encode, fromSegments, generateDeviceId, generateOpId, inferType, match, parseLegacyDotted, parseRendered, render };
