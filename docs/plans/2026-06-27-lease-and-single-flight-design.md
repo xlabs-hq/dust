@@ -204,3 +204,62 @@ first; TS/CLI follow.
 
 Durable async outbox (replay-on-reconnect; fail-fast is enough here),
 `committed_at`, subtree leases, MCP surface, actor-per-key.
+
+## Panel review v2 — adopted changes (single_flight)
+
+A second panel (OTP / API / distributed-systems lenses) reviewed the
+`single_flight` implementation plan and caught real mistakes. Adopted:
+
+**Correctness:**
+- **Heartbeat-renew the lease while `fun` runs** (~`lease_ttl/3`). Without it
+  a multi-minute fill under a short TTL expires mid-run and a second node
+  steals → double-pay. The whole point, defeated by a default. *(blocker)*
+- **`CallbackRegistry` monitors subscriber pids** and auto-unregisters on
+  `:DOWN`. The await leaks an ETS row + worker per crashed waiter otherwise;
+  this is the only `rescue`-free cleanup. Prerequisite to single_flight.
+- **Losers subscribe both `key` AND `lock_key`** and re-validate the
+  predicate on every wake. `Process.monitor` fires only on crash; a clean
+  `{:abort}`/release exits normally and writes `lock_key`, not `key` — so
+  without the lock_key subscription an abort strands every waiter to
+  `wait_timeout`. The release/expiry event re-elects them.
+- **Freshness via a caller `fresh?:` predicate over the value**, not
+  `synced_at`. `synced_at` is local-receive time: an offline-then-catch-up
+  node stamps stale data as fresh and skips a needed refill. The predicate
+  reads the value's own `produced_at`; fleet-correct, no `committed_at`.
+  Drops `fresh_for: <duration>` and `age_ms`. Presence mode = no predicate.
+- **Monotonic lease deadlines** (server). Wall-clock `expires_at` lets a
+  forward NTP step expire a live lease early → premature steal → double-pay.
+  The writer keeps in-memory monotonic deadlines (`acquired_mono + ttl`) for
+  the steal/fence decision; SQLite keeps wall-clock `expires_at` for clients
+  and as the post-restart fallback (a restarted writer conservatively treats
+  unknown leases as wall-clock-bound).
+- **Jittered backoff on re-election** — when a lease expires all waiters wake
+  and re-claim the single SQLite writer at once.
+
+**API (`fun` + return):**
+- **`fun` receives the live lease**: `fun :: (%Dust.Lease{} | nil ->
+  {:publish, value} | {:abort, reason})`. Fenced follow-up writes happen
+  inside the held section. `nil` only on the degraded `:run_local` path.
+- **`{:ok, %Dust.Flight{value, source, stale?, coordinated?}}`** — `fence`
+  dropped from the struct (a returned lease is already released — footgun).
+  `source ∈ :cached | :computed | :awaited`. `:computed` values are
+  normalized through the codec so every source returns the same shape.
+- **Caller decisions:** `on_unavailable: :run_local` stays the default (never
+  block; with in-node coalescing it's pay-once-per-node, documented cost
+  tradeoff; `:error` for cost-over-availability). Crash recovery is bounded
+  by `lease_ttl` (caller-pid model; heartbeat keeps `lease_ttl` modest).
+
+**Documented contract rules:** definitive negative ⇒ `{:publish, neg}`;
+transient failure ⇒ `{:abort, reason}` (+ jittered re-election) — neither
+poisons a key nor retry-storms the upstream. Published values MUST be
+pointer-sized (no eviction yet; eviction owed eventually). Disconnect
+mid-await applies `on_unavailable`. `mode: :committed` on the await
+subscription is load-bearing (avoids false-wake on a rolled-back optimistic
+write). Mailbox flushed + subscriptions removed on every await exit.
+
+## Implementation order (revised)
+
+- **5a — monotonic lease deadlines** (server hardening on the shipped lease).
+- **5b — `CallbackRegistry` subscriber-pid monitoring** (prerequisite).
+- **6 — `Dust.single_flight`** (Elixir SDK) with all of the above.
+- TS + CLI lease parity; REST lease surface; per-op ack timer — follow-ups.

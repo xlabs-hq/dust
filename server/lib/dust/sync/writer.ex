@@ -58,7 +58,12 @@ defmodule Dust.Sync.Writer do
   def init(store_id) do
     case StoreDB.write_conn(store_id) do
       {:ok, db} ->
-        {:ok, %{store_id: store_id, db: db}, @idle_timeout}
+        # `lease_deadlines`: path => monotonic-ms deadline. Used for the
+        # steal/expiry decision so a forward wall-clock (NTP) jump can't
+        # expire a live lease early. SQLite still stores wall-clock
+        # `expires_at` for clients + as the post-restart fallback (an empty
+        # map after restart falls back to wall-clock, conservatively).
+        {:ok, %{store_id: store_id, db: db, lease_deadlines: %{}}, @idle_timeout}
 
       {:error, reason} ->
         {:stop, reason}
@@ -67,8 +72,8 @@ defmodule Dust.Sync.Writer do
 
   @impl true
   def handle_call({:write, op_attrs}, _from, state) do
-    result = do_write(state, op_attrs)
-    {:reply, result, state, @idle_timeout}
+    {result, lease_deadlines} = do_write(state, op_attrs)
+    {:reply, result, %{state | lease_deadlines: lease_deadlines}, @idle_timeout}
   end
 
   @impl true
@@ -90,7 +95,34 @@ defmodule Dust.Sync.Writer do
   end
 
   defp do_write(state, attrs) do
-    %{store_id: store_id, db: db} = state
+    # Capture both clocks once: monotonic for lease deadline decisions
+    # (NTP-immune), wall-clock for the persisted `expires_at` clients read.
+    mono_now = System.monotonic_time(:millisecond)
+    wall_now = System.system_time(:millisecond)
+    result = do_write_txn(state, attrs, mono_now, wall_now)
+    {result, update_lease_deadlines(state.lease_deadlines, attrs, result, mono_now)}
+  end
+
+  # Adjust the in-memory monotonic deadline map after a committed lease op.
+  defp update_lease_deadlines(
+         deadlines,
+         %{op: op, path: path, ttl_ms: ttl},
+         {:ok, committed},
+         mono
+       )
+       when op in [:lease, :renew] and is_map(committed) do
+    Map.put(deadlines, path, mono + ttl)
+  end
+
+  defp update_lease_deadlines(deadlines, %{op: :release, path: path}, {:ok, committed}, _mono)
+       when is_map(committed) do
+    Map.delete(deadlines, path)
+  end
+
+  defp update_lease_deadlines(deadlines, _attrs, _result, _mono), do: deadlines
+
+  defp do_write_txn(state, attrs, mono_now, wall_now) do
+    %{store_id: store_id, db: db, lease_deadlines: deadlines} = state
     metadata = %{store_id: store_id, op: attrs.op, path: attrs.path}
 
     :telemetry.span([:dust, :write], metadata, fn ->
@@ -107,11 +139,11 @@ defmodule Dust.Sync.Writer do
           next_seq = current_seq + 1
 
           if attrs.op in [:lease, :renew, :release] do
-            apply_lease_op(db, next_seq, attrs, store_id)
+            apply_lease_op(db, next_seq, attrs, store_id, mono_now, wall_now, deadlines)
           else
             with :ok <- maybe_validate_if_match(db, attrs.path, attrs),
                  :ok <- maybe_validate_if_absent(db, attrs.path, attrs),
-                 :ok <- maybe_validate_fence(db, attrs) do
+                 :ok <- maybe_validate_fence(db, attrs, mono_now, wall_now, deadlines) do
               insert_and_apply(db, next_seq, attrs, store_id)
             end
           end
@@ -241,16 +273,16 @@ defmodule Dust.Sync.Writer do
   # validation + the server clock are evaluated inside the write transaction,
   # so concurrent claims cannot both win.
 
-  defp apply_lease_op(db, seq, %{op: :lease, path: path} = attrs, store_id) do
-    now = System.system_time(:millisecond)
-
-    case read_lease(db, path, now) do
+  defp apply_lease_op(db, seq, %{op: :lease, path: path} = attrs, store_id, mono, wall, deadlines) do
+    case read_lease(db, path, mono, wall, deadlines) do
       state when state in [:absent, :expired] ->
         envelope = %{
           "_type" => "lease",
           "holder" => attrs[:holder],
           "token" => seq,
-          "expires_at" => now + attrs.ttl_ms
+          # Persisted wall-clock for clients + post-restart fallback; the live
+          # steal decision uses the monotonic deadline kept in writer state.
+          "expires_at" => wall + attrs.ttl_ms
         }
 
         attrs = attrs |> Map.put(:value, envelope) |> Map.put(:type, "lease")
@@ -264,13 +296,19 @@ defmodule Dust.Sync.Writer do
     end
   end
 
-  defp apply_lease_op(db, seq, %{op: :renew, path: path, token: token} = attrs, store_id) do
-    now = System.system_time(:millisecond)
-
-    case read_lease(db, path, now, with_value: true) do
+  defp apply_lease_op(
+         db,
+         seq,
+         %{op: :renew, path: path, token: token} = attrs,
+         store_id,
+         mono,
+         wall,
+         deadlines
+       ) do
+    case read_lease(db, path, mono, wall, deadlines, with_value: true) do
       {:live, %{"token" => ^token} = envelope} ->
         # Keep the original token; only extend expiry.
-        renewed = Map.put(envelope, "expires_at", now + attrs.ttl_ms)
+        renewed = Map.put(envelope, "expires_at", wall + attrs.ttl_ms)
         attrs = attrs |> Map.put(:value, renewed) |> Map.put(:type, "lease")
         insert_and_apply(db, seq, attrs, store_id)
 
@@ -279,10 +317,16 @@ defmodule Dust.Sync.Writer do
     end
   end
 
-  defp apply_lease_op(db, seq, %{op: :release, path: path, token: token} = attrs, store_id) do
-    now = System.system_time(:millisecond)
-
-    case read_lease(db, path, now, with_value: true) do
+  defp apply_lease_op(
+         db,
+         seq,
+         %{op: :release, path: path, token: token} = attrs,
+         store_id,
+         mono,
+         wall,
+         deadlines
+       ) do
+    case read_lease(db, path, mono, wall, deadlines, with_value: true) do
       {state, %{"token" => ^token}} when state in [:live, :expired] ->
         attrs = Map.put(attrs, :value, nil)
         insert_and_apply(db, seq, attrs, store_id)
@@ -294,19 +338,22 @@ defmodule Dust.Sync.Writer do
   end
 
   # Malformed lease op (e.g. renew/release missing a token).
-  defp apply_lease_op(_db, _seq, _attrs, _store_id), do: {:error, :invalid_lease_op}
+  defp apply_lease_op(_db, _seq, _attrs, _store_id, _mono, _wall, _deadlines),
+    do: {:error, :invalid_lease_op}
 
   # Returns :absent | :live | :expired | :occupied, or (with_value: true)
   # {:live | :expired, envelope} | :absent | :occupied.
-  defp read_lease(db, path, now, opts \\ []) do
+  defp read_lease(db, path, mono, wall, deadlines, opts \\ []) do
     case query_row(db, "SELECT value, type FROM store_entries WHERE path = ?", [path]) do
       nil ->
         :absent
 
       [json, "lease"] ->
         envelope = Jason.decode!(json)
-        exp = envelope["expires_at"]
-        state = if is_integer(exp) and exp <= now, do: :expired, else: :live
+
+        state =
+          if lease_expired?(path, envelope, mono, wall, deadlines), do: :expired, else: :live
+
         if opts[:with_value], do: {state, envelope}, else: state
 
       [_json, _other_type] ->
@@ -314,20 +361,33 @@ defmodule Dust.Sync.Writer do
     end
   end
 
+  # Prefer the in-memory monotonic deadline (NTP-immune). Fall back to the
+  # persisted wall-clock `expires_at` only when the deadline is unknown — i.e.
+  # after a writer restart, where treating it as wall-clock-bound is safe.
+  defp lease_expired?(path, envelope, mono, wall, deadlines) do
+    case Map.get(deadlines, path) do
+      nil ->
+        exp = envelope["expires_at"]
+        is_integer(exp) and exp <= wall
+
+      mono_deadline ->
+        mono >= mono_deadline
+    end
+  end
+
   # Opt-in fencing for non-lease writes: `fence: %{key, token}` (or a
   # `%Dust.Lease{}`-shaped map). The write applies only if `key` still holds a
   # LIVE lease with that token; otherwise the holder has lost it → `:fenced`.
-  defp maybe_validate_fence(db, attrs) do
+  defp maybe_validate_fence(db, attrs, mono, wall, deadlines) do
     case attrs[:fence] || attrs["fence"] do
       nil ->
         :ok
 
       fence ->
-        now = System.system_time(:millisecond)
         key = fence[:key] || fence["key"]
         token = fence[:token] || fence["token"]
 
-        case read_lease(db, key, now, with_value: true) do
+        case read_lease(db, key, mono, wall, deadlines, with_value: true) do
           {:live, %{"token" => ^token}} -> :ok
           _ -> {:error, :fenced}
         end
