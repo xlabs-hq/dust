@@ -5,18 +5,26 @@ defmodule Dust.Entry do
           path: String.t(),
           value: term(),
           type: String.t(),
-          revision: integer()
+          revision: integer(),
+          synced_at: integer() | nil
         }
 
-  defstruct [:path, :value, :type, :revision]
+  defstruct [:path, :value, :type, :revision, :synced_at]
 
+  @doc """
+  Builds an entry. `:synced_at` is optional and defaults to `nil` — it is
+  the local wall-clock (unix epoch ms) when this mirror last wrote the
+  row, populated for leaf reads and left `nil` for subtree-assembled
+  entries.
+  """
   @spec new(keyword()) :: t()
   def new(opts) do
     %__MODULE__{
       path: Keyword.fetch!(opts, :path),
       value: Keyword.fetch!(opts, :value),
       type: Keyword.fetch!(opts, :type),
-      revision: Keyword.fetch!(opts, :revision)
+      revision: Keyword.fetch!(opts, :revision),
+      synced_at: Keyword.get(opts, :synced_at)
     }
   end
 end

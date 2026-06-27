@@ -10,6 +10,12 @@ export interface Entry {
   value: unknown
   type: string
   seq: number
+  /**
+   * Local wall-clock (unix epoch ms) when this mirror last wrote the row
+   * from a sync event. `null` for entries that were never stamped (e.g.
+   * subtree-assembled values).
+   */
+  syncedAt: number | null
 }
 
 export interface Page<T> {

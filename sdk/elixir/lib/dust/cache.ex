@@ -2,7 +2,10 @@ defmodule Dust.Cache do
   @callback read(target :: term(), store :: String.t(), path :: String.t()) ::
               {:ok, term()} | :miss
   @callback read_entry(target :: term(), store :: String.t(), path :: String.t()) ::
-              {:ok, {value :: term(), type :: String.t(), seq :: integer()}} | :miss
+              {:ok,
+               {value :: term(), type :: String.t(), seq :: integer(),
+                synced_at :: integer() | nil}}
+              | :miss
   @callback read_all(target :: term(), store :: String.t(), pattern :: String.t()) :: [
               {String.t(), term()}
             ]

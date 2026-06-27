@@ -17,6 +17,24 @@ defmodule Dust.Cache.MemoryTest do
     assert :miss = Memory.read(cache, "store", "nope")
   end
 
+  test "read_entry returns metadata with synced_at", %{cache: cache} do
+    before = System.system_time(:millisecond)
+    :ok = Memory.write(cache, "store", "a/b", "hello", "string", 7)
+
+    assert {:ok, {"hello", "string", 7, synced_at}} = Memory.read_entry(cache, "store", "a/b")
+    assert is_integer(synced_at) and synced_at >= before
+  end
+
+  test "read_entry returns :miss for unknown path", %{cache: cache} do
+    assert :miss = Memory.read_entry(cache, "store", "nope")
+  end
+
+  test "delete purges synced_at alongside the entry", %{cache: cache} do
+    Memory.write(cache, "store", "x", "v", "string", 1)
+    :ok = Memory.delete(cache, "store", "x")
+    assert :miss = Memory.read_entry(cache, "store", "x")
+  end
+
   test "delete removes entry", %{cache: cache} do
     Memory.write(cache, "store", "x", "v", "string", 1)
     :ok = Memory.delete(cache, "store", "x")

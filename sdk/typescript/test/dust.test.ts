@@ -340,12 +340,13 @@ describe('Dust', () => {
 
       const result = await dust.entry('test/store', 'users/alice/name')
 
-      expect(result).toEqual({
+      expect(result).toMatchObject({
         path: 'users/alice/name',
         value: 'Alice',
         type: 'string',
         seq: 7,
       })
+      expect(typeof result.syncedAt).toBe('number')
     })
 
     it('returns null for a missing path', async () => {

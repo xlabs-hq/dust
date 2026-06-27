@@ -13,6 +13,7 @@ Ecto.Adapters.SQL.query!(Dust.TestRepo, """
     value TEXT NOT NULL,
     type TEXT NOT NULL,
     seq INTEGER NOT NULL,
+    synced_at INTEGER,
     UNIQUE(store, path)
   )
 """)

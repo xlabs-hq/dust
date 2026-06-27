@@ -150,11 +150,13 @@ module Dust
             STDERR.puts %({"error":"not_found"})
             exit 1
           else
+            synced_at = result[:synced_at]
             Output.json({
-              "path"     => JSON::Any.new(path),
-              "value"    => result[:value],
-              "type"     => JSON::Any.new(result[:type]),
-              "revision" => JSON::Any.new(result[:seq]),
+              "path"      => JSON::Any.new(path),
+              "value"     => result[:value],
+              "type"      => JSON::Any.new(result[:type]),
+              "revision"  => JSON::Any.new(result[:seq]),
+              "synced_at" => synced_at ? JSON::Any.new(synced_at) : JSON::Any.new(nil),
             })
           end
         ensure

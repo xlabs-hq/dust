@@ -33,12 +33,12 @@ if Code.ensure_loaded?(Ecto.Query) do
       query =
         from(c in CacheEntry,
           where: c.store == ^store and c.path == ^path,
-          select: {c.value, c.type, c.seq}
+          select: {c.value, c.type, c.seq, c.synced_at}
         )
 
       case repo.one(query) do
         nil -> :miss
-        {json, type, seq} -> {:ok, {Jason.decode!(json), type, seq}}
+        {json, type, seq, synced_at} -> {:ok, {Jason.decode!(json), type, seq, synced_at}}
       end
     end
 
@@ -86,16 +86,19 @@ if Code.ensure_loaded?(Ecto.Query) do
 
     @impl Dust.Cache
     def write(repo, store, path, value, type, seq) do
+      now = System.system_time(:millisecond)
+
       entry = %{
         store: store,
         path: path,
         value: Jason.encode!(value),
         type: type,
-        seq: seq
+        seq: seq,
+        synced_at: now
       }
 
       repo.insert_all(CacheEntry, [entry],
-        on_conflict: [set: [value: entry.value, type: entry.type, seq: entry.seq]],
+        on_conflict: [set: [value: entry.value, type: entry.type, seq: entry.seq, synced_at: now]],
         conflict_target: [:store, :path]
       )
 
@@ -105,6 +108,8 @@ if Code.ensure_loaded?(Ecto.Query) do
 
     @impl Dust.Cache
     def write_batch(repo, store, entries) do
+      now = System.system_time(:millisecond)
+
       rows =
         Enum.map(entries, fn {path, value, type, seq} ->
           %{
@@ -112,14 +117,15 @@ if Code.ensure_loaded?(Ecto.Query) do
             path: path,
             value: Jason.encode!(value),
             type: type,
-            seq: seq
+            seq: seq,
+            synced_at: now
           }
         end)
 
       max_seq =
         Enum.reduce(rows, 0, fn row, acc ->
           repo.insert_all(CacheEntry, [row],
-            on_conflict: [set: [value: row.value, type: row.type, seq: row.seq]],
+            on_conflict: [set: [value: row.value, type: row.type, seq: row.seq, synced_at: now]],
             conflict_target: [:store, :path]
           )
 

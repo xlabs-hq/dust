@@ -35,12 +35,21 @@ defmodule Dust.SyncEngineTest do
   end
 
   test "entry/2 returns {:ok, %Dust.Entry{}} for present leaf" do
+    before = System.system_time(:millisecond)
     :ok = SyncEngine.seed_entry("test/store", "a/b", "hello", "string")
 
-    assert {:ok, %Dust.Entry{path: "a/b", value: "hello", type: "string", revision: rev}} =
+    assert {:ok,
+            %Dust.Entry{
+              path: "a/b",
+              value: "hello",
+              type: "string",
+              revision: rev,
+              synced_at: synced_at
+            }} =
              SyncEngine.entry("test/store", "a/b")
 
     assert is_integer(rev)
+    assert is_integer(synced_at) and synced_at >= before
   end
 
   test "entry/2 returns {:error, :not_found} for missing path" do
@@ -846,7 +855,13 @@ defmodule Dust.SyncEngineTest do
       # Bump just one descendant's seq via re-seed.
       :ok = SyncEngine.set_store_seq("test/store", 7)
 
-      assert {:ok, %Dust.Entry{path: "links/foo", value: %{"title" => "Foo"}, type: "map"}} =
+      assert {:ok,
+              %Dust.Entry{
+                path: "links/foo",
+                value: %{"title" => "Foo"},
+                type: "map",
+                synced_at: nil
+              }} =
                SyncEngine.entry("test/store", "links/foo")
     end
 

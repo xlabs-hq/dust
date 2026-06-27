@@ -484,7 +484,7 @@ var MemoryCache = class {
     return result;
   }
   set(store, path, entry) {
-    this.getStore(store).set(path, entry);
+    this.getStore(store).set(path, { ...entry, syncedAt: Date.now() });
   }
   delete(store, path) {
     this.getStore(store).delete(path);

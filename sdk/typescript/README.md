@@ -46,7 +46,9 @@ const value = await dust.get("org/store", "path")
 
 // Get full entry with metadata
 const entry = await dust.entry("org/store", "path")
-// => { path, value, type, seq } | null
+// => { path, value, type, seq, syncedAt } | null
+// syncedAt: local wall-clock (unix epoch ms) when this mirror last wrote
+// the row from a sync event — use it to gauge how stale the local copy is.
 
 // Batch read (up to 1000 paths)
 const values = await dust.getMany("org/store", ["path.a", "path.b"])

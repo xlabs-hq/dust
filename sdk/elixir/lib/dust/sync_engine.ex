@@ -441,8 +441,15 @@ defmodule Dust.SyncEngine do
   def handle_call({:entry, path}, _from, state) do
     reply =
       case state.cache.read_entry(state.cache_target, state.store, path) do
-        {:ok, {value, type, seq}} ->
-          {:ok, Dust.Entry.new(path: path, value: value, type: type, revision: seq)}
+        {:ok, {value, type, seq, synced_at}} ->
+          {:ok,
+           Dust.Entry.new(
+             path: path,
+             value: value,
+             type: type,
+             revision: seq,
+             synced_at: synced_at
+           )}
 
         :miss ->
           case assemble_subtree_entry(state, path) do

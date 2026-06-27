@@ -6,7 +6,9 @@ export interface Cache {
   get(store: string, path: string): Entry | null
   readEntry(store: string, path: string): Entry | null
   readMany(store: string, paths: string[]): Record<string, Entry>
-  set(store: string, path: string, entry: Entry): void
+  // The cache stamps `syncedAt` itself on write (local wall-clock at the
+  // moment this mirror persisted the row), so callers pass the row without it.
+  set(store: string, path: string, entry: Omit<Entry, 'syncedAt'>): void
   delete(store: string, path: string): void
   deletePrefix(store: string, prefix: string): void
   entries(store: string, pattern: string): Entry[]
@@ -54,8 +56,8 @@ export class MemoryCache implements Cache {
     return result
   }
 
-  set(store: string, path: string, entry: Entry): void {
-    this.getStore(store).set(path, entry)
+  set(store: string, path: string, entry: Omit<Entry, 'syncedAt'>): void {
+    this.getStore(store).set(path, { ...entry, syncedAt: Date.now() })
   }
 
   delete(store: string, path: string): void {

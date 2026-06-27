@@ -9,6 +9,9 @@ if Code.ensure_loaded?(Ecto.Migration) do
         add(:value, :text, null: false)
         add(:type, :string, null: false)
         add(:seq, :bigint, null: false)
+        # Local wall-clock (unix epoch ms) when this mirror last wrote the
+        # row from a sync event. Nullable so pre-existing rows read back nil.
+        add(:synced_at, :bigint, null: true)
       end
 
       create(unique_index(:dust_cache, [:store, :path]))

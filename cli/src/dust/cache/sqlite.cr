@@ -27,15 +27,16 @@ module Dust
       end
     end
 
-    def read_entry(store : String, path : String) : NamedTuple(value: JSON::Any, type: String, seq: Int64)?
+    def read_entry(store : String, path : String) : NamedTuple(value: JSON::Any, type: String, seq: Int64, synced_at: Int64?)?
       @db.query_one?(
-        "SELECT value, type, seq FROM dust_cache WHERE store = ? AND path = ? AND path != ?",
+        "SELECT value, type, seq, synced_at FROM dust_cache WHERE store = ? AND path = ? AND path != ?",
         store, path, "_dust:last_seq"
       ) do |rs|
         value = JSON.parse(rs.read(String))
         type_str = rs.read(String)
         seq = rs.read(Int64)
-        {value: value, type: type_str, seq: seq}
+        synced_at = rs.read(Int64?)
+        {value: value, type: type_str, seq: seq, synced_at: synced_at}
       end
     end
 
@@ -78,10 +79,11 @@ module Dust
     end
 
     def write(store : String, path : String, value : JSON::Any, type : String, seq : Int64)
+      now = Time.utc.to_unix_ms
       @db.exec(
-        "INSERT INTO dust_cache (store, path, value, type, seq) VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(store, path) DO UPDATE SET value = excluded.value, type = excluded.type, seq = excluded.seq",
-        store, path, value.to_json, type, seq
+        "INSERT INTO dust_cache (store, path, value, type, seq, synced_at) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(store, path) DO UPDATE SET value = excluded.value, type = excluded.type, seq = excluded.seq, synced_at = excluded.synced_at",
+        store, path, value.to_json, type, seq, now
       )
       update_seq_sentinel(store, seq)
     end
@@ -165,9 +167,32 @@ module Dust
           value TEXT NOT NULL,
           type TEXT NOT NULL,
           seq INTEGER NOT NULL,
+          synced_at INTEGER,
           PRIMARY KEY (store, path)
         )
       SQL
+
+      ensure_synced_at_column
+    end
+
+    # Idempotently add the `synced_at` column to caches created before it
+    # existed. SQLite has no ADD COLUMN IF NOT EXISTS, so inspect the schema
+    # first (avoids relying on rescue for control flow).
+    private def ensure_synced_at_column
+      has_column = false
+      @db.query("PRAGMA table_info(dust_cache)") do |rs|
+        rs.each do
+          rs.read         # cid
+          name = rs.read  # name
+          rs.read         # type
+          rs.read         # notnull
+          rs.read         # dflt_value
+          rs.read         # pk
+          has_column = true if name == "synced_at"
+        end
+      end
+
+      @db.exec("ALTER TABLE dust_cache ADD COLUMN synced_at INTEGER") unless has_column
     end
 
     # NOTE: Known limitation — this fetches `limit + 1` raw rows via LIKE prefix

@@ -53,17 +53,32 @@ defmodule Dust.Cache.EctoTest do
 
   describe "read_entry" do
     test "returns full metadata for present keys" do
+      before = System.system_time(:millisecond)
       :ok = EctoCache.write(Dust.TestRepo, @store, "a/b", "hello", "string", 7)
 
-      assert EctoCache.read_entry(Dust.TestRepo, @store, "a/b") ==
-               {:ok, {"hello", "string", 7}}
+      assert {:ok, {"hello", "string", 7, synced_at}} =
+               EctoCache.read_entry(Dust.TestRepo, @store, "a/b")
+
+      assert is_integer(synced_at) and synced_at >= before
     end
 
     test "decodes non-string json values" do
       :ok = EctoCache.write(Dust.TestRepo, @store, "m", %{"k" => 1}, "map", 3)
 
-      assert EctoCache.read_entry(Dust.TestRepo, @store, "m") ==
-               {:ok, {%{"k" => 1}, "map", 3}}
+      assert {:ok, {%{"k" => 1}, "map", 3, synced_at}} =
+               EctoCache.read_entry(Dust.TestRepo, @store, "m")
+
+      assert is_integer(synced_at)
+    end
+
+    test "write_batch stamps synced_at" do
+      before = System.system_time(:millisecond)
+      :ok = EctoCache.write_batch(Dust.TestRepo, @store, [{"b/k", "v", "string", 9}])
+
+      assert {:ok, {"v", "string", 9, synced_at}} =
+               EctoCache.read_entry(Dust.TestRepo, @store, "b/k")
+
+      assert is_integer(synced_at) and synced_at >= before
     end
 
     test "returns :miss for absent keys" do

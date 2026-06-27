@@ -58,6 +58,12 @@ interface Entry {
     value: unknown;
     type: string;
     seq: number;
+    /**
+     * Local wall-clock (unix epoch ms) when this mirror last wrote the row
+     * from a sync event. `null` for entries that were never stamped (e.g.
+     * subtree-assembled values).
+     */
+    syncedAt: number | null;
 }
 interface Page<T> {
     items: T[];
@@ -244,7 +250,7 @@ interface Cache {
     get(store: string, path: string): Entry | null;
     readEntry(store: string, path: string): Entry | null;
     readMany(store: string, paths: string[]): Record<string, Entry>;
-    set(store: string, path: string, entry: Entry): void;
+    set(store: string, path: string, entry: Omit<Entry, 'syncedAt'>): void;
     delete(store: string, path: string): void;
     deletePrefix(store: string, prefix: string): void;
     entries(store: string, pattern: string): Entry[];
@@ -266,7 +272,7 @@ declare class MemoryCache implements Cache {
     get(store: string, path: string): Entry | null;
     readEntry(store: string, path: string): Entry | null;
     readMany(store: string, paths: string[]): Record<string, Entry>;
-    set(store: string, path: string, entry: Entry): void;
+    set(store: string, path: string, entry: Omit<Entry, 'syncedAt'>): void;
     delete(store: string, path: string): void;
     deletePrefix(store: string, prefix: string): void;
     entries(store: string, pattern: string): Entry[];

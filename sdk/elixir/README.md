@@ -74,11 +74,35 @@ case MyApp.Dust.put("org/store", "users/alice", updated, if_match: entry.revisio
   {:error, :conflict} -> :retry
 end
 
+# Freshness — entry.synced_at is the local wall-clock (unix epoch ms) when
+# this node last wrote the row from a sync event. Use it to reason about how
+# stale the local mirror is (nil for subtree-assembled entries).
+{:ok, entry} = MyApp.Dust.entry("org/store", "users/alice")
+age_ms = System.system_time(:millisecond) - entry.synced_at
+
 # Subscribe to changes
 MyApp.Dust.on("org/store", "users/*", fn event ->
   IO.puts("#{event.path} changed: #{inspect(event.value)}")
 end)
 ```
+
+## Upgrading
+
+### `synced_at` cache column
+
+The cache row gained a `synced_at` column (local wall-clock, unix epoch ms,
+surfaced as `Dust.Entry.synced_at`). Fresh installs get it automatically.
+**Existing adopters must add the column** before upgrading — generate a
+migration and add:
+
+```elixir
+alter table(:dust_cache) do
+  add :synced_at, :bigint
+end
+```
+
+The column is nullable, so rows written before the upgrade read back
+`synced_at: nil`.
 
 ## Full Documentation
 

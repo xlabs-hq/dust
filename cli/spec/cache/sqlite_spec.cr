@@ -50,8 +50,9 @@ describe Dust::Cache do
   end
 
   describe "#read_entry" do
-    it "returns {value, type, seq} for present entries" do
+    it "returns {value, type, seq, synced_at} for present entries" do
       cache = Dust::Cache.new(":memory:")
+      before = Time.utc.to_unix_ms
       cache.write("store", "a.b", JSON::Any.new("hello"), "string", 7_i64)
 
       result = cache.read_entry("store", "a.b")
@@ -59,6 +60,10 @@ describe Dust::Cache do
       result.not_nil![:value].should eq JSON::Any.new("hello")
       result.not_nil![:type].should eq "string"
       result.not_nil![:seq].should eq 7_i64
+
+      synced_at = result.not_nil![:synced_at]
+      synced_at.should_not be_nil
+      (synced_at.not_nil! >= before).should be_true
     end
 
     it "returns nil for missing entries" do

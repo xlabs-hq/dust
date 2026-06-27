@@ -9,6 +9,7 @@ if Code.ensure_loaded?(Ecto.Schema) do
       field(:value, :string)
       field(:type, :string)
       field(:seq, :integer)
+      field(:synced_at, :integer)
     end
   end
 end

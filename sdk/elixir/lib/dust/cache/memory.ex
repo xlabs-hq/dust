@@ -72,7 +72,13 @@ defmodule Dust.Cache.Memory do
 
   @impl true
   def init(_) do
-    {:ok, %{entries: %{}, seqs: %{}}}
+    # `entries`: {store, path} => {value, type, seq}
+    # `synced`:  {store, path} => unix epoch ms when this mirror last wrote
+    #            the row. Kept parallel to `entries` so the browse/range/
+    #            read_all paths stay on the existing 3-tuple shape; only
+    #            read_entry surfaces synced_at. Both maps are purged together
+    #            on delete/delete_subtree.
+    {:ok, %{entries: %{}, seqs: %{}, synced: %{}}}
   end
 
   @impl true
@@ -88,8 +94,12 @@ defmodule Dust.Cache.Memory do
   @impl true
   def handle_call({:read_entry, store, path}, _from, state) do
     case Map.get(state.entries, {store, path}) do
-      nil -> {:reply, :miss, state}
-      {value, type, seq} -> {:reply, {:ok, {value, type, seq}}, state}
+      nil ->
+        {:reply, :miss, state}
+
+      {value, type, seq} ->
+        synced_at = Map.get(state.synced, {store, path})
+        {:reply, {:ok, {value, type, seq, synced_at}}, state}
     end
   end
 
@@ -124,7 +134,9 @@ defmodule Dust.Cache.Memory do
 
   @impl true
   def handle_call({:write, store, path, value, type, seq}, _from, state) do
+    now = System.system_time(:millisecond)
     state = put_in(state.entries[{store, path}], {value, type, seq})
+    state = put_in(state.synced[{store, path}], now)
     current = Map.get(state.seqs, store, 0)
     state = put_in(state.seqs[store], max(current, seq))
     {:reply, :ok, state}
@@ -132,9 +144,12 @@ defmodule Dust.Cache.Memory do
 
   @impl true
   def handle_call({:write_batch, store, entries}, _from, state) do
+    now = System.system_time(:millisecond)
+
     state =
       Enum.reduce(entries, state, fn {path, value, type, seq}, acc ->
         acc = put_in(acc.entries[{store, path}], {value, type, seq})
+        acc = put_in(acc.synced[{store, path}], now)
         current = Map.get(acc.seqs, store, 0)
         put_in(acc.seqs[store], max(current, seq))
       end)
@@ -145,6 +160,7 @@ defmodule Dust.Cache.Memory do
   @impl true
   def handle_call({:delete, store, path}, _from, state) do
     state = update_in(state.entries, &Map.delete(&1, {store, path}))
+    state = update_in(state.synced, &Map.delete(&1, {store, path}))
     {:reply, :ok, state}
   end
 
@@ -158,7 +174,14 @@ defmodule Dust.Cache.Memory do
         s == store and (p == path or String.starts_with?(p, prefix))
       end)
 
-    state = %{state | entries: Map.new(kept)}
+    removed_keys = Enum.map(removed, fn {key, _} -> key end)
+
+    state = %{
+      state
+      | entries: Map.new(kept),
+        synced: Map.drop(state.synced, removed_keys)
+    }
+
     {:reply, length(removed), state}
   end
 

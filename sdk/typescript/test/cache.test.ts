@@ -70,9 +70,12 @@ describe('MemoryCache', () => {
   describe('readEntry', () => {
     it('returns the entry for a present key', () => {
       const cache = new MemoryCache()
-      const entry: Entry = { path: 'a.b', value: 'hello', type: 'string', seq: 7 }
-      cache.set('store', 'a.b', entry)
-      expect(cache.readEntry('store', 'a.b')).toEqual(entry)
+      const before = Date.now()
+      cache.set('store', 'a.b', { path: 'a.b', value: 'hello', type: 'string', seq: 7 })
+      const entry = cache.readEntry('store', 'a.b')
+      expect(entry).toMatchObject({ path: 'a.b', value: 'hello', type: 'string', seq: 7 })
+      expect(typeof entry!.syncedAt).toBe('number')
+      expect(entry!.syncedAt!).toBeGreaterThanOrEqual(before)
     })
 
     it('returns null for a missing key', () => {
@@ -198,20 +201,20 @@ describe('MemoryCache', () => {
   describe('readMany', () => {
     it('returns a record of present entries', () => {
       const cache = new MemoryCache()
-      const a: Entry = { path: 'a', value: 1, type: 'integer', seq: 1 }
-      const b: Entry = { path: 'b', value: 2, type: 'integer', seq: 2 }
-      cache.set('store', 'a', a)
-      cache.set('store', 'b', b)
+      cache.set('store', 'a', { path: 'a', value: 1, type: 'integer', seq: 1 })
+      cache.set('store', 'b', { path: 'b', value: 2, type: 'integer', seq: 2 })
       const result = cache.readMany('store', ['a', 'b'])
-      expect(result).toEqual({ a, b })
+      expect(result.a).toMatchObject({ path: 'a', value: 1, type: 'integer', seq: 1 })
+      expect(result.b).toMatchObject({ path: 'b', value: 2, type: 'integer', seq: 2 })
+      expect(typeof result.a.syncedAt).toBe('number')
     })
 
     it('omits missing paths', () => {
       const cache = new MemoryCache()
       cache.set('store', 'a', { path: 'a', value: 1, type: 'integer', seq: 1 })
-      expect(cache.readMany('store', ['a', 'missing'])).toEqual({
-        a: { path: 'a', value: 1, type: 'integer', seq: 1 },
-      })
+      const result = cache.readMany('store', ['a', 'missing'])
+      expect(Object.keys(result)).toEqual(['a'])
+      expect(result.a).toMatchObject({ path: 'a', value: 1, type: 'integer', seq: 1 })
     })
 
     it('returns empty for empty paths list', () => {
@@ -221,9 +224,10 @@ describe('MemoryCache', () => {
 
     it('deduplicates input paths', () => {
       const cache = new MemoryCache()
-      const a: Entry = { path: 'a', value: 1, type: 'integer', seq: 1 }
-      cache.set('store', 'a', a)
-      expect(cache.readMany('store', ['a', 'a', 'a'])).toEqual({ a })
+      cache.set('store', 'a', { path: 'a', value: 1, type: 'integer', seq: 1 })
+      const result = cache.readMany('store', ['a', 'a', 'a'])
+      expect(Object.keys(result)).toEqual(['a'])
+      expect(result.a).toMatchObject({ path: 'a', value: 1, type: 'integer', seq: 1 })
     })
   })
 })
