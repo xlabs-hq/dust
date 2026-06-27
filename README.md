@@ -8,6 +8,17 @@ Like Tailscale made networking disappear, Dust makes shared state disappear.
 
 Dust is a hosted reactive map with native language SDKs. You create named stores, write structured data, and every connected client sees changes instantly. Subscribers register glob-pattern callbacks that fire when matching keys change. One write, every subscriber reacts.
 
+## Which Package Should I Use?
+
+Use **`dust`** for hot-path application reads, realtime subscriptions, and
+offline-tolerant services. It runs a supervised sync engine and reads from a
+local cache in your app's database.
+
+Use **`dust_ecto`** when you want an Ecto-shaped API (`Schema`, changesets,
+and a small Repo facade) over Dust records. For production hot paths, run the
+`dust` supervisor and configure `dust_ecto` to use SDK mode; its HTTP mode is
+best for scripts, release tasks, and low-frequency stateless calls.
+
 ## Quick Start
 
 ### CLI
@@ -158,12 +169,24 @@ dust enum james/blog "posts/**" --select keys
 
 ### Entry
 
-Get the full entry (path, value, type, revision) instead of just the value:
+Get the full entry (path, value, type, revision, and local sync timestamp)
+instead of just the value:
 
 ```elixir
 {:ok, entry} = Dust.entry("james/blog", "posts/hello")
-# => %Dust.Entry{path: "posts/hello", value: %{...}, type: "map", revision: 42}
+# => %Dust.Entry{
+#      path: "posts/hello",
+#      value: %{...},
+#      type: "map",
+#      revision: 42,
+#      synced_at: 1_787_000_000_000
+#    }
 ```
+
+`synced_at` is the local wall-clock time, in Unix epoch milliseconds, when
+this mirror last wrote the cache row from a sync event. Use it to reason about
+local mirror freshness. It is not server commit time, and subtree-assembled
+entries may report `nil`.
 
 ### GetMany
 
