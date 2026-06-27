@@ -1110,6 +1110,118 @@ defmodule Dust.SyncEngineTest do
     end
   end
 
+  describe "lease / renew / release" do
+    setup do
+      Process.register(self(), Dust.Connection)
+      # Lease ops fail fast unless connected; flip status and flush the cast.
+      SyncEngine.set_status("test/store", :connected)
+      _ = SyncEngine.status("test/store")
+      :ok
+    end
+
+    test "lease/3 fails fast with :unavailable when disconnected" do
+      SyncEngine.set_status("test/store", :disconnected)
+      _ = SyncEngine.status("test/store")
+      assert {:error, :unavailable} = SyncEngine.lease("test/store", "lock/a", ttl_ms: 60_000)
+      # Nothing should have been sent to the connection.
+      refute_receive {:send_write, "test/store", %{op: :lease}}, 100
+    end
+
+    test "lease acquire forwards ttl/holder and returns a %Dust.Lease{}" do
+      task =
+        Task.async(fn ->
+          SyncEngine.lease("test/store", "lock/a", ttl_ms: 60_000, holder: "n1")
+        end)
+
+      assert_receive {:send_write, "test/store",
+                      %{
+                        op: :lease,
+                        path: "lock/a",
+                        ttl_ms: 60_000,
+                        holder: "n1",
+                        client_op_id: id
+                      }},
+                     500
+
+      SyncEngine.handle_write_accepted("test/store", id, %{
+        store_seq: 5,
+        token: 5,
+        expires_at: 9_999,
+        holder: "n1"
+      })
+
+      assert {:ok, %Dust.Lease{key: "lock/a", token: 5, expires_at: 9_999, holder: "n1"}} =
+               Task.await(task, 500)
+    end
+
+    test "lease acquire on a held key returns {:error, :held}" do
+      task = Task.async(fn -> SyncEngine.lease("test/store", "lock/a", ttl_ms: 60_000) end)
+      assert_receive {:send_write, "test/store", %{op: :lease, client_op_id: id}}, 500
+
+      SyncEngine.handle_write_rejected("test/store", id, "held")
+      assert Task.await(task, 500) == {:error, :held}
+    end
+
+    test "renew forwards the token and returns the refreshed lease" do
+      lease = %Dust.Lease{key: "lock/a", token: 5, holder: "n1", expires_at: 9_999}
+      task = Task.async(fn -> SyncEngine.renew("test/store", lease, ttl_ms: 120_000) end)
+
+      assert_receive {:send_write, "test/store",
+                      %{op: :renew, path: "lock/a", token: 5, ttl_ms: 120_000, client_op_id: id}},
+                     500
+
+      SyncEngine.handle_write_accepted("test/store", id, %{
+        store_seq: 8,
+        token: 5,
+        expires_at: 20_000,
+        holder: "n1"
+      })
+
+      assert {:ok, %Dust.Lease{token: 5, expires_at: 20_000}} = Task.await(task, 500)
+    end
+
+    test "renew on a lost lease returns {:error, :not_held}" do
+      lease = %Dust.Lease{key: "lock/a", token: 5, holder: nil, expires_at: 1}
+      task = Task.async(fn -> SyncEngine.renew("test/store", lease) end)
+      assert_receive {:send_write, "test/store", %{op: :renew, client_op_id: id}}, 500
+
+      SyncEngine.handle_write_rejected("test/store", id, "not_held")
+      assert Task.await(task, 500) == {:error, :not_held}
+    end
+
+    test "release returns :ok (real release and idempotent no-op alike)" do
+      lease = %Dust.Lease{key: "lock/a", token: 5, holder: nil, expires_at: 9_999}
+
+      task = Task.async(fn -> SyncEngine.release("test/store", lease) end)
+      assert_receive {:send_write, "test/store", %{op: :release, token: 5, client_op_id: id}}, 500
+      SyncEngine.handle_write_accepted("test/store", id, %{store_seq: 9})
+      assert Task.await(task, 500) == :ok
+
+      # No-op release: server replies {released: false} (no store_seq).
+      task2 = Task.async(fn -> SyncEngine.release("test/store", lease) end)
+      assert_receive {:send_write, "test/store", %{op: :release, client_op_id: id2}}, 500
+      SyncEngine.handle_write_accepted("test/store", id2, %{released: false})
+      assert Task.await(task2, 500) == :ok
+    end
+
+    test "fence: a put forwards the lease fence to the connection" do
+      lease = %Dust.Lease{key: "lock/a", token: 5, holder: nil, expires_at: 9_999}
+      task = Task.async(fn -> SyncEngine.put("test/store", "result/a", "done", fence: lease) end)
+
+      assert_receive {:send_write, "test/store",
+                      %{
+                        op: :set,
+                        path: "result/a",
+                        fence: %{key: "lock/a", token: 5},
+                        client_op_id: id
+                      }},
+                     500
+
+      SyncEngine.handle_write_accepted("test/store", id, %{store_seq: 10})
+      assert Task.await(task, 500) == {:ok, 10}
+    end
+  end
+
   defp drain_events(timeout_ms) do
     receive do
       {:event, event} -> [event | drain_events(timeout_ms)]

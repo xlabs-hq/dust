@@ -222,11 +222,12 @@ defmodule Dust.Connection do
           {:error, %{reason: reason}} ->
             Dust.SyncEngine.handle_write_rejected(store_name, client_op_id, reason)
 
-          {:ok, %{"store_seq" => store_seq}} ->
-            Dust.SyncEngine.handle_write_accepted(store_name, client_op_id, store_seq)
-
-          {:ok, %{store_seq: store_seq}} ->
-            Dust.SyncEngine.handle_write_accepted(store_name, client_op_id, store_seq)
+          # Pass the whole reply map through — lease acquire/renew carry
+          # token/expires_at/holder, a no-op release carries {released: false},
+          # and ordinary writes carry just store_seq. The engine shapes the
+          # caller reply per op.
+          {:ok, reply} when is_map(reply) ->
+            Dust.SyncEngine.handle_write_accepted(store_name, client_op_id, reply)
 
           _ ->
             :ok
@@ -277,6 +278,8 @@ defmodule Dust.Connection do
       |> maybe_put_path_segments(op_attrs)
       |> maybe_put_if_match(op_attrs)
       |> maybe_put_if_absent(op_attrs)
+      |> maybe_put_fence(op_attrs)
+      |> maybe_put_lease_wire(op_attrs)
 
     if MapSet.member?(socket.assigns.joined_stores, store_name) do
       {:ok, ref} = push(socket, topic, "write", params)
@@ -349,6 +352,25 @@ defmodule Dust.Connection do
   end
 
   defp maybe_put_if_absent(params, _op_attrs), do: params
+
+  defp maybe_put_fence(params, %{fence: %{key: key, token: token}}) do
+    Map.put(params, "fence", %{"key" => key, "token" => token})
+  end
+
+  defp maybe_put_fence(params, _op_attrs), do: params
+
+  # Lease ops carry ttl_ms/holder (acquire/renew) and token (renew/release).
+  defp maybe_put_lease_wire(params, %{op: op} = op_attrs) when op in [:lease, :renew, :release] do
+    params
+    |> put_if_present("ttl_ms", op_attrs[:ttl_ms])
+    |> put_if_present("holder", op_attrs[:holder])
+    |> put_if_present("token", op_attrs[:token])
+  end
+
+  defp maybe_put_lease_wire(params, _op_attrs), do: params
+
+  defp put_if_present(params, _key, nil), do: params
+  defp put_if_present(params, key, value), do: Map.put(params, key, value)
 
   # SyncEngine populates :path_segments alongside :path for capver 3
   # writes. Channels prefer segments when present and fall back to

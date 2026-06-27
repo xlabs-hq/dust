@@ -132,6 +132,18 @@ defmodule Dust.SyncEngine do
     GenServer.call(via(store), {:entry, norm!(path)})
   end
 
+  def lease(store, key, opts \\ []) when is_list(opts) do
+    GenServer.call(via(store), {:lease, norm!(key), opts}, :infinity)
+  end
+
+  def renew(store, %Dust.Lease{} = lease, opts \\ []) when is_list(opts) do
+    GenServer.call(via(store), {:renew, lease, opts}, :infinity)
+  end
+
+  def release(store, %Dust.Lease{} = lease) do
+    GenServer.call(via(store), {:release, lease}, :infinity)
+  end
+
   def status(store) do
     GenServer.call(via(store), :status)
   end
@@ -161,8 +173,12 @@ defmodule Dust.SyncEngine do
     GenServer.cast(via(store), {:write_rejected, client_op_id, reason})
   end
 
-  def handle_write_accepted(store, client_op_id, store_seq) do
-    GenServer.cast(via(store), {:write_accepted, client_op_id, store_seq})
+  def handle_write_accepted(store, client_op_id, store_seq) when is_integer(store_seq) do
+    GenServer.cast(via(store), {:write_accepted, client_op_id, %{store_seq: store_seq}})
+  end
+
+  def handle_write_accepted(store, client_op_id, reply) when is_map(reply) do
+    GenServer.cast(via(store), {:write_accepted, client_op_id, reply})
   end
 
   def set_catch_up_complete(store, through_seq) do
@@ -265,6 +281,44 @@ defmodule Dust.SyncEngine do
     {op_msg, state} = do_put(path, value, opts, from, state)
     send_to_connection(state.store, op_msg)
     {:noreply, state}
+  end
+
+  # Lease ops are server-authoritative and acked. Fail fast when disconnected
+  # (a lease acquired late is meaningless) rather than block on the ack.
+  @impl true
+  def handle_call({:lease, key, opts}, from, state) do
+    if state.status == :connected do
+      {op_msg, state} = do_lease_op(%{op: :lease, path: key}, lease_extra(opts), from, state)
+      send_to_connection(state.store, op_msg)
+      {:noreply, state}
+    else
+      {:reply, {:error, :unavailable}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:renew, lease, opts}, from, state) do
+    if state.status == :connected do
+      extra = %{token: lease.token, ttl_ms: Keyword.get(opts, :ttl_ms, 30_000)}
+      {op_msg, state} = do_lease_op(%{op: :renew, path: lease.key}, extra, from, state)
+      send_to_connection(state.store, op_msg)
+      {:noreply, state}
+    else
+      {:reply, {:error, :unavailable}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:release, lease}, from, state) do
+    if state.status == :connected do
+      {op_msg, state} =
+        do_lease_op(%{op: :release, path: lease.key}, %{token: lease.token}, from, state)
+
+      send_to_connection(state.store, op_msg)
+      {:noreply, state}
+    else
+      {:reply, {:error, :unavailable}, state}
+    end
   end
 
   @impl true
@@ -555,6 +609,16 @@ defmodule Dust.SyncEngine do
         # Already reconciled or unknown op
         {:noreply, state}
 
+      {op_attrs, pending} when op_attrs.op in [:lease, :renew, :release] ->
+        # Lease ops never wrote the cache optimistically and the key may hold
+        # someone else's live lease — reply the error, touch nothing.
+        case Map.get(op_attrs, :from) do
+          nil -> :ok
+          from -> GenServer.reply(from, {:error, reason_to_atom(reason)})
+        end
+
+        {:noreply, %{state | pending_ops: pending}}
+
       {op_attrs, pending} ->
         path = op_attrs.path
 
@@ -591,19 +655,19 @@ defmodule Dust.SyncEngine do
   end
 
   @impl true
-  def handle_cast({:write_accepted, client_op_id, store_seq}, state) do
+  def handle_cast({:write_accepted, client_op_id, reply}, state) do
     case Map.get(state.pending_ops, client_op_id) do
       nil ->
         {:noreply, state}
 
       op_attrs ->
-        # Reply to any put/4 caller waiting for the server ack.
+        # Reply to any caller waiting for the server ack, shaped per op.
         case Map.get(op_attrs, :from) do
           nil ->
             :ok
 
           from ->
-            GenServer.reply(from, {:ok, store_seq})
+            GenServer.reply(from, build_ack_reply(op_attrs, reply))
         end
 
         # Leave pending_ops intact — it's cleared by :server_event reconciliation
@@ -658,6 +722,13 @@ defmodule Dust.SyncEngine do
 
       :put_file ->
         state.cache.write(state.cache_target, state.store, path, value, "file", store_seq)
+
+      op when op in [:lease, :renew] ->
+        # Lease envelope is a typed value; store it opaquely at the key.
+        state.cache.write(state.cache_target, state.store, path, value, "lease", store_seq)
+
+      :release ->
+        state.cache.delete(state.cache_target, state.store, path)
     end
 
     # Reconcile pending ops
@@ -811,6 +882,7 @@ defmodule Dust.SyncEngine do
       %{op: :set, path: path, value: value, client_op_id: client_op_id, prev: prev}
       |> maybe_put_if_match(opts)
       |> maybe_put_if_absent(opts)
+      |> maybe_put_fence_opt(opts)
       |> maybe_put_from(from)
 
     pending = Map.put(state.pending_ops, client_op_id, op_msg)
@@ -834,6 +906,50 @@ defmodule Dust.SyncEngine do
 
   defp maybe_put_from(op_msg, nil), do: op_msg
   defp maybe_put_from(op_msg, from), do: Map.put(op_msg, :from, from)
+
+  defp maybe_put_fence_opt(op_msg, opts) do
+    case Keyword.get(opts, :fence) do
+      %Dust.Lease{key: key, token: token} -> Map.put(op_msg, :fence, %{key: key, token: token})
+      %{key: key, token: token} -> Map.put(op_msg, :fence, %{key: key, token: token})
+      _ -> op_msg
+    end
+  end
+
+  defp lease_extra(opts) do
+    %{ttl_ms: Keyword.get(opts, :ttl_ms, 30_000), holder: Keyword.get(opts, :holder)}
+  end
+
+  # Lease ops do NOT write the cache optimistically — they are server-
+  # authoritative claims, and the local key may hold someone else's live
+  # lease that must not be clobbered or rolled back.
+  defp do_lease_op(base, extra, from, state) do
+    client_op_id = generate_op_id()
+
+    op_msg =
+      base
+      |> Map.merge(extra)
+      |> Map.put(:client_op_id, client_op_id)
+      |> Map.put(:from, from)
+
+    {op_msg, %{state | pending_ops: Map.put(state.pending_ops, client_op_id, op_msg)}}
+  end
+
+  # Shape the ack reply by op: leases hand back a %Dust.Lease{}, release is
+  # idempotent :ok, everything else keeps the {:ok, store_seq} contract.
+  defp build_ack_reply(%{op: op, path: path}, reply) when op in [:lease, :renew] do
+    {:ok,
+     Dust.Lease.new(
+       key: path,
+       token: reply_field(reply, :token),
+       holder: reply_field(reply, :holder),
+       expires_at: reply_field(reply, :expires_at)
+     )}
+  end
+
+  defp build_ack_reply(%{op: :release}, _reply), do: :ok
+  defp build_ack_reply(_op_attrs, reply), do: {:ok, reply_field(reply, :store_seq)}
+
+  defp reply_field(reply, key), do: Map.get(reply, key) || Map.get(reply, to_string(key))
 
   defp do_delete(path, from, state) do
     client_op_id = generate_op_id()
@@ -969,6 +1085,10 @@ defmodule Dust.SyncEngine do
   defp reason_to_atom("invalid_precondition"), do: :invalid_precondition
   defp reason_to_atom("if_absent_unsupported_op"), do: :if_absent_unsupported_op
   defp reason_to_atom("if_absent_multi_leaf"), do: :if_absent_multi_leaf
+  defp reason_to_atom("held"), do: :held
+  defp reason_to_atom("occupied"), do: :occupied
+  defp reason_to_atom("not_held"), do: :not_held
+  defp reason_to_atom("fenced"), do: :fenced
   # Unknown string reasons are returned as-is so callers see the server's
   # raw reason without risking unsafe atom creation.
   defp reason_to_atom(reason) when is_binary(reason), do: reason
