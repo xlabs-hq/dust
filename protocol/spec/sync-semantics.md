@@ -123,10 +123,44 @@ path. If one already exists the write is rejected with
 - Over HTTP, `If-None-Match: *` on `PUT /entries/...` is the equivalent;
   `412` with `{error: "exists"}` on conflict.
 
+## Leases (lease / renew / release + fencing)
+
+A lease is **lease-as-entry**: a reserved typed value
+`{"_type": "lease", "holder", "token", "expires_at"}` stored at a key. It is
+the server-enforced distributed lock that `single_flight` (an SDK-side
+composition) builds on.
+
+Three ops, all server-authoritative (the server stamps `token` + `expires_at`
+inside the write transaction — clients cannot supply them):
+
+- **`lease`** (acquire): succeeds if the key is **absent OR holds an expired
+  lease** (atomic steal). `token` = the acquiring op's `store_seq` (globally
+  monotonic, preserved across renew). Reply carries `{store_seq, token,
+  expires_at, holder}`. Errors: `{reason: "held"}` (a live lease held by
+  another), `{reason: "occupied"}` (a non-lease value at the key). Fields:
+  `ttl_ms`, optional `holder`.
+- **`renew`**: extends `expires_at`, **keeps** the token. Requires a live
+  lease whose token matches; else `{reason: "not_held"}`. Fields: `token`,
+  `ttl_ms`.
+- **`release`**: deletes the lease iff the token matches; **idempotent** —
+  a non-matching/absent token replies `{released: false}` and broadcasts
+  nothing. Field: `token`.
+
+**Expiry is lazy** (no sweeper): the absent-or-expired check is evaluated at
+acquire time. The server compares against a **monotonic** deadline so a
+forward wall-clock/NTP step can't expire a live lease early; the persisted
+`expires_at` is wall-clock for clients and the post-restart fallback.
+
+**Fencing** — any non-lease write may carry `fence: {key, token}`. The write
+applies only if `key` still holds a live lease with that token, else
+`{reason: "fenced"}`. This guards a holder's Dust writes against having
+silently lost the lease. (External side effects — S3, third-party APIs —
+are not fenced; coordination is at-least-once, callers stay idempotent.)
+
 ### Capver gate
 
-`if_absent` requires **capver >= 3** (the current floor, so no extra gate is
-needed in practice).
+Lease ops + `fence` and `if_absent` all require **capver >= 3** (the current
+floor, so no extra gate is needed in practice).
 
 `if_match` requires **capver >= 2**. A capver=1 client that sends `if_match`
 gets `{error: {reason: "capver_mismatch"}}`. This prevents silent downgrade:

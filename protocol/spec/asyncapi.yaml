@@ -163,11 +163,13 @@ components:
             type: string
           op:
             type: string
-            enum: [set, delete, merge, increment, add, remove]
+            enum: [set, delete, merge, increment, add, remove, lease, renew, release]
             description: |
               `set` / `delete` / `merge` are the base ops. `increment`
               writes to a counter, `add` / `remove` mutate set members.
               `put_file` is sent as a distinct message (see PutFile).
+              `lease` / `renew` / `release` operate the server-enforced lease
+              (see sync-semantics.md); the server stamps `token` + `expires_at`.
           path_segments:
             type: array
             items:
@@ -206,6 +208,26 @@ components:
               (leaf) values; mutually exclusive with `if_match`. The check is
               atomic against concurrent claims. (HTTP equivalent:
               `If-None-Match: *`.)
+          fence:
+            type: object
+            description: |
+              Optional fencing precondition on a non-lease write. The write
+              applies only if `key` still holds a live lease with `token`,
+              else `{error: {reason: "fenced"}}`. Requires capver >= 3.
+            properties:
+              key: { type: string }
+              token: { type: integer }
+          ttl_ms:
+            type: integer
+            description: Lease TTL in ms (lease/renew ops). Server stamps the deadline.
+          holder:
+            type: string
+            description: Optional opaque holder identity (lease op; observability).
+          token:
+            type: integer
+            description: |
+              The fence token of a held lease (renew/release ops). On `lease`
+              acquire the server returns the token in the reply.
 
     PutFile:
       name: put_file

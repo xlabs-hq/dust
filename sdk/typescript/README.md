@@ -139,6 +139,48 @@ const unsub = await dust.watch("org/store", "posts/*", (event) => {
 }, { limit: 100, order: "desc" })
 ```
 
+### Coordination: leases & single-flight
+
+`singleFlight` computes an expensive thing **once across your fleet** and
+shares the result. **At-least-once while reachable, not exactly-once** — `fn`
+must be idempotent and publish a small pointer.
+
+```typescript
+import { SingleFlightAbort } from "@dust-sync/sdk"
+
+// Done-forever (presence mode):
+const flight = await dust.singleFlight(store, `artifacts/${hash}`, async () => {
+  const keys = await downloadAndOcr(hash)   // bytes stay in S3
+  return { publish: { manifest: keys } }    // small pointer
+}, { leaseTtl: 20 * 60_000 })               // heartbeat-renewed while it runs
+flight.value // { manifest: [...] };  flight.source: 'cached'|'computed'|'awaited'
+
+// Fresh-within-a-window (freshness mode): value carries its own timestamp.
+await dust.singleFlight(store, `pages/${slug}`, async () => {
+  return { publish: { posts: await poll(slug), fetchedAt: Date.now() } }
+}, {
+  fresh: (v) => Date.now() - v.fetchedAt < 60 * 60_000,
+  leaseTtl: 5 * 60_000,
+  onUnavailable: "runLocal",                // never block; pay-once-per-node if Dust is down
+})
+```
+
+`fn` returns `{ publish: value }` or `{ abort: reason }`. Prefer `{ abort }`
+over throwing for transient failures (it releases the lease immediately;
+others re-elect at once). `singleFlight` rejects with `SingleFlightAbort`,
+`SingleFlightTimeout`, or `LeaseError`.
+
+The low-level lease is available directly too:
+
+```typescript
+const lease = await dust.lease(store, "jobs/nightly", { ttlMs: 60_000 })
+if (lease) {
+  await doWork()
+  await dust.put(store, "jobs/nightly/result", result, { fence: lease }) // throws LeaseError('fenced') if lost
+  await dust.release(store, lease)
+} // lease === null → someone else holds it
+```
+
 ### Connection
 
 ```typescript

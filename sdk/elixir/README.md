@@ -93,6 +93,55 @@ MyApp.Dust.on("org/store", "users/*", fn event ->
 end)
 ```
 
+## Coordination: leases & single-flight
+
+`single_flight` computes an expensive thing **once across your fleet** and
+shares the result — replacing hand-rolled "check S3, maybe do the work,
+coordinate with other nodes" schemes. It is **at-least-once while Dust is
+reachable, not exactly-once**: `fun` must be idempotent and publish a small
+pointer (keep the bytes in S3/your DB).
+
+```elixir
+# Done-forever (presence mode): OCR a PDF once per content hash.
+{:ok, %Dust.Flight{value: manifest}} =
+  MyApp.Dust.single_flight("org/store", "artifacts/#{hash}", fn _lease ->
+    {:ok, keys} = download_and_ocr(hash)   # bytes stay in R2
+    {:publish, %{"manifest" => keys}}      # publish a small pointer
+  end, lease_ttl: :timer.minutes(20))      # heartbeat-renewed while it runs
+
+# Fresh-within-a-window (freshness mode): poll a Facebook page at most hourly,
+# shared across prod + staging. The value carries its own timestamp.
+MyApp.Dust.single_flight("org/store", "pages/#{slug}", fn _lease ->
+  {:publish, %{"posts" => poll(slug), "fetched_at" => System.system_time(:millisecond)}}
+end,
+  fresh?: fn v -> System.system_time(:millisecond) - v["fetched_at"] < :timer.hours(1) end,
+  lease_ttl: :timer.minutes(5),
+  on_unavailable: :run_local)              # never block; pay-once-per-node when Dust is down
+```
+
+`fun` returns `{:publish, value}` (store + share it) or `{:abort, reason}`
+(release the lease, publish nothing). **Prefer `{:abort, _}` over raising**
+for transient failures — abort releases immediately (waiters re-elect at
+once); a raised `fun` only frees the lease at `lease_ttl`. Map definitive
+negatives to `{:publish}` (so the freshness window holds) and transient ones
+to `{:abort}` (so they aren't cached).
+
+The low-level lease underneath is also available directly:
+
+```elixir
+case MyApp.Dust.lease("org/store", "jobs/nightly", ttl_ms: 60_000) do
+  {:ok, lease} ->
+    do_work()
+    MyApp.Dust.put("org/store", "jobs/nightly/result", result, fence: lease)
+    MyApp.Dust.release("org/store", lease)
+
+  {:error, :held} -> :someone_else_has_it
+end
+```
+
+`fence: lease` rejects a write (`{:error, :fenced}`) if the lease was lost
+mid-run, so a stale holder can't clobber a newer one's result.
+
 ## Upgrading
 
 ### `synced_at` cache column
