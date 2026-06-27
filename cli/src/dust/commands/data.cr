@@ -97,6 +97,113 @@ module Dust
         Output.success("OK store_seq=#{seq}")
       end
 
+      # dust lease <store> <key> [--ttl-ms N] [--holder H]
+      def self.lease(config : Config, args : Array(String))
+        Output.require_auth!(config)
+        usage = "dust lease <store> <key> [--ttl-ms N] [--holder H]"
+        positional = [] of String
+        ttl_ms = 30_000_i64
+        holder : String? = nil
+
+        i = 0
+        while i < args.size
+          case args[i]
+          when "--ttl-ms"
+            Output.error("--ttl-ms requires a value. Usage: #{usage}") unless i + 1 < args.size
+            begin
+              ttl_ms = args[i + 1].to_i64
+            rescue ArgumentError
+              Output.error("--ttl-ms requires an integer value")
+            end
+            i += 2
+          when "--holder"
+            Output.error("--holder requires a value. Usage: #{usage}") unless i + 1 < args.size
+            holder = args[i + 1]
+            i += 2
+          else
+            positional << args[i]
+            i += 1
+          end
+        end
+
+        Output.require_args!(positional, 2, usage)
+        store, key = positional[0], positional[1]
+
+        fields = {"ttl_ms" => JSON::Any.new(ttl_ms)} of String => JSON::Any
+        fields["holder"] = JSON::Any.new(holder) if holder
+        result = lease_op(config, store, "lease", key, fields)
+
+        case lease_reason(result)
+        when nil
+          resp = result["response"]
+          Output.json({
+            "token"      => resp["token"],
+            "expires_at" => resp["expires_at"],
+            "holder"     => resp["holder"]? || JSON::Any.new(nil),
+          })
+        when "held"
+          STDERR.puts %({"error":"held"})
+          exit 1
+        else
+          Output.error("Lease failed: #{lease_reason(result)}")
+        end
+      end
+
+      # dust renew <store> <key> <token> [--ttl-ms N]
+      def self.renew(config : Config, args : Array(String))
+        Output.require_auth!(config)
+        usage = "dust renew <store> <key> <token> [--ttl-ms N]"
+        positional = [] of String
+        ttl_ms = 30_000_i64
+
+        i = 0
+        while i < args.size
+          if args[i] == "--ttl-ms"
+            Output.error("--ttl-ms requires a value. Usage: #{usage}") unless i + 1 < args.size
+            begin
+              ttl_ms = args[i + 1].to_i64
+            rescue ArgumentError
+              Output.error("--ttl-ms requires an integer value")
+            end
+            i += 2
+          else
+            positional << args[i]
+            i += 1
+          end
+        end
+
+        Output.require_args!(positional, 3, usage)
+        store, key = positional[0], positional[1]
+        token = positional[2].to_i64
+
+        fields = {"token" => JSON::Any.new(token), "ttl_ms" => JSON::Any.new(ttl_ms)} of String => JSON::Any
+        result = lease_op(config, store, "renew", key, fields)
+
+        case lease_reason(result)
+        when nil
+          resp = result["response"]
+          Output.json({"token" => resp["token"], "expires_at" => resp["expires_at"]})
+        when "not_held"
+          STDERR.puts %({"error":"not_held"})
+          exit 1
+        else
+          Output.error("Renew failed: #{lease_reason(result)}")
+        end
+      end
+
+      # dust release <store> <key> <token>
+      def self.release(config : Config, args : Array(String))
+        Output.require_auth!(config)
+        Output.require_args!(args, 3, "dust release <store> <key> <token>")
+        store, key = args[0], args[1]
+        token = args[2].to_i64
+
+        fields = {"token" => JSON::Any.new(token)} of String => JSON::Any
+        _ = lease_op(config, store, "release", key, fields)
+        # Release is idempotent — ok whether it deleted the lease or was a no-op.
+        Output.success("OK")
+      end
+
       # dust get <store> <path>
       def self.get(config : Config, args : Array(String))
         Output.require_auth!(config)
@@ -432,6 +539,37 @@ module Dust
           result
         ensure
           conn.close
+        end
+      end
+
+      # Push a lease op (lease/renew/release) and return the raw channel reply.
+      private def self.lease_op(config : Config, store : String, op : String, key : String, fields : Hash(String, JSON::Any)) : JSON::Any
+        conn = Connection.new(config)
+        begin
+          conn.connect_sync
+          channel = conn.join(store)
+          segments = Dust::Path.parse_rendered(key)
+
+          payload = {
+            "op"            => JSON::Any.new(op),
+            "path"          => JSON::Any.new(key),
+            "path_segments" => JSON::Any.new(segments.map { |s| JSON::Any.new(s) }),
+            "client_op_id"  => JSON::Any.new(Random::Secure.hex(8)),
+          } of String => JSON::Any
+
+          fields.each { |k, v| payload[k] = v }
+          channel.push("write", payload)
+        ensure
+          conn.close
+        end
+      end
+
+      # nil when the reply is ok, else the server error reason string.
+      private def self.lease_reason(result : JSON::Any) : String?
+        if result["status"].as_s == "ok"
+          nil
+        else
+          result["response"]?.try(&.["reason"]?.try(&.as_s)) || "unknown"
         end
       end
 

@@ -32,6 +32,9 @@ module Dust
         when "get-many"   then Commands::Data.get_many(config, rest)
         when "merge"      then Commands::Data.merge(config, rest)
         when "delete"     then Commands::Data.delete(config, rest)
+        when "lease"      then Commands::Data.lease(config, rest)
+        when "renew"      then Commands::Data.renew(config, rest)
+        when "release"    then Commands::Data.release(config, rest)
         when "enum"       then Commands::Data.enum(config, rest)
         when "range"      then Commands::Data.range(config, rest)
         when "entry"      then Commands::Data.entry(config, rest)
@@ -71,12 +74,18 @@ module Dust
         stores                        List stores
         status [store]                Show sync status
 
-        put <store> <path> <json> [--if-match N]
-                                      Set a value (--if-match: CAS on revision N)
+        put <store> <path> <json> [--if-match N] [--if-absent]
+                                      Set a value (--if-match: CAS on revision N;
+                                      --if-absent: only if the key doesn't exist)
         get <store> <path>            Read a value
         get-many <store> <path>...    Batch-read paths ({entries, missing} envelope)
         merge <store> <path> <json>   Merge keys
         delete <store> <path>         Delete a path
+        lease <store> <key> [--ttl-ms N --holder H]
+                                      Acquire/steal a lease (prints token, expires_at)
+        renew <store> <key> <token> [--ttl-ms N]
+                                      Extend a held lease (keeps the token)
+        release <store> <key> <token> Release a held lease (idempotent)
         enum <store> <pattern> [--limit N --after C --order asc|desc --select entries|keys|prefixes]
                                       List matching entries (flagless: {path => value}; flagged: paginated)
         range <store> <from> <to> [--limit N --after C --order asc|desc --select entries|keys]
