@@ -329,4 +329,109 @@ defmodule Dust.SyncTest do
                })
     end
   end
+
+  describe "leases" do
+    test "acquire on an absent key stamps holder, token, expires_at", %{store: store} do
+      assert {:ok, op} = Sync.lease(store.id, "lock/a", 60_000, "node-1")
+      env = op.materialized_value
+      assert env["_type"] == "lease"
+      assert env["holder"] == "node-1"
+      assert env["token"] == op.store_seq
+      assert is_integer(env["expires_at"])
+    end
+
+    test "acquire on a live-held lease returns :held", %{store: store} do
+      {:ok, _} = Sync.lease(store.id, "lock/a", 60_000, "node-1")
+      assert {:error, :held} = Sync.lease(store.id, "lock/a", 60_000, "node-2")
+    end
+
+    test "an expired lease is stolen atomically with a fresh token", %{store: store} do
+      {:ok, first} = Sync.lease(store.id, "lock/a", 0, "node-1")
+      assert {:ok, second} = Sync.lease(store.id, "lock/a", 60_000, "node-2")
+      assert second.materialized_value["holder"] == "node-2"
+      assert second.materialized_value["token"] > first.materialized_value["token"]
+    end
+
+    test "acquire on a key holding a non-lease value returns :occupied", %{store: store} do
+      {:ok, _} =
+        Sync.write(store.id, %{
+          op: :set,
+          path: "lock/a",
+          value: 1,
+          device_id: "d",
+          client_op_id: "c"
+        })
+
+      assert {:error, :occupied} = Sync.lease(store.id, "lock/a", 60_000, "node-1")
+    end
+
+    test "renew keeps the token and extends expiry", %{store: store} do
+      {:ok, op} = Sync.lease(store.id, "lock/a", 60_000, "node-1")
+      token = op.materialized_value["token"]
+      exp1 = op.materialized_value["expires_at"]
+
+      assert {:ok, renewed} = Sync.renew_lease(store.id, "lock/a", token, 120_000)
+      assert renewed.materialized_value["token"] == token
+      assert renewed.materialized_value["expires_at"] >= exp1
+    end
+
+    test "renew with a wrong token returns :not_held", %{store: store} do
+      {:ok, _} = Sync.lease(store.id, "lock/a", 60_000, "node-1")
+      assert {:error, :not_held} = Sync.renew_lease(store.id, "lock/a", 999_999, 60_000)
+    end
+
+    test "renew on an expired lease returns :not_held", %{store: store} do
+      {:ok, op} = Sync.lease(store.id, "lock/a", 0, "node-1")
+      token = op.materialized_value["token"]
+      assert {:error, :not_held} = Sync.renew_lease(store.id, "lock/a", token, 60_000)
+    end
+
+    test "release with the matching token deletes the lease", %{store: store} do
+      {:ok, op} = Sync.lease(store.id, "lock/a", 60_000, "node-1")
+      token = op.materialized_value["token"]
+
+      assert {:ok, %{store_seq: _}} = Sync.release_lease(store.id, "lock/a", token)
+      assert is_nil(Sync.get_entry(store.id, "lock/a"))
+    end
+
+    test "release with a wrong token is an idempotent no-op", %{store: store} do
+      {:ok, _} = Sync.lease(store.id, "lock/a", 60_000, "node-1")
+      assert {:ok, :noop} = Sync.release_lease(store.id, "lock/a", 999_999)
+      # The real lease is untouched.
+      refute is_nil(Sync.get_entry(store.id, "lock/a"))
+    end
+
+    test "fence: a write guarded by a live held lease succeeds", %{store: store} do
+      {:ok, op} = Sync.lease(store.id, "lock/a", 60_000, "node-1")
+      token = op.materialized_value["token"]
+
+      assert {:ok, %{store_seq: _}} =
+               Sync.write(store.id, %{
+                 op: :set,
+                 path: "result/a",
+                 value: "done",
+                 device_id: "d",
+                 client_op_id: "c",
+                 fence: %{key: "lock/a", token: token}
+               })
+
+      assert %{value: "done"} = Sync.get_entry(store.id, "result/a")
+    end
+
+    test "fence: a write with a stale token is rejected with :fenced", %{store: store} do
+      {:ok, _} = Sync.lease(store.id, "lock/a", 60_000, "node-1")
+
+      assert {:error, :fenced} =
+               Sync.write(store.id, %{
+                 op: :set,
+                 path: "result/a",
+                 value: "stale",
+                 device_id: "d",
+                 client_op_id: "c",
+                 fence: %{key: "lock/a", token: 999_999}
+               })
+
+      assert is_nil(Sync.get_entry(store.id, "result/a"))
+    end
+  end
 end

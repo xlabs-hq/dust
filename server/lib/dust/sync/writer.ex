@@ -106,14 +106,23 @@ defmodule Dust.Sync.Writer do
           current_seq = max(ops_seq, snap_seq)
           next_seq = current_seq + 1
 
-          with :ok <- maybe_validate_if_match(db, attrs.path, attrs),
-               :ok <- maybe_validate_if_absent(db, attrs.path, attrs) do
-            insert_and_apply(db, next_seq, attrs, store_id)
+          if attrs.op in [:lease, :renew, :release] do
+            apply_lease_op(db, next_seq, attrs, store_id)
+          else
+            with :ok <- maybe_validate_if_match(db, attrs.path, attrs),
+                 :ok <- maybe_validate_if_absent(db, attrs.path, attrs),
+                 :ok <- maybe_validate_fence(db, attrs) do
+              insert_and_apply(db, next_seq, attrs, store_id)
+            end
           end
         end)
 
       # Update cached metadata in Postgres (best-effort, after durable commit)
       case result do
+        # No-op release (token didn't match): nothing committed, nothing to broadcast.
+        {:ok, :noop} ->
+          {result, metadata}
+
         {:ok, op} ->
           update_store_metadata(store_id, op.store_seq, db, 1)
           {result, metadata}
@@ -222,6 +231,104 @@ defmodule Dust.Sync.Writer do
 
   defp fetch_if_match(attrs) do
     attrs[:if_match] || attrs["if_match"]
+  end
+
+  # --- Leases (lease-as-entry, typed "lease" value; lazy expiry + atomic steal) ---
+  #
+  # The lease envelope is `%{"_type" => "lease", "holder" =>, "token" =>,
+  # "expires_at" =>}`. `token` = the acquiring op's store_seq (monotonic,
+  # preserved across renew, bumped only on a fresh acquire/steal). All
+  # validation + the server clock are evaluated inside the write transaction,
+  # so concurrent claims cannot both win.
+
+  defp apply_lease_op(db, seq, %{op: :lease, path: path} = attrs, store_id) do
+    now = System.system_time(:millisecond)
+
+    case read_lease(db, path, now) do
+      state when state in [:absent, :expired] ->
+        envelope = %{
+          "_type" => "lease",
+          "holder" => attrs[:holder],
+          "token" => seq,
+          "expires_at" => now + attrs.ttl_ms
+        }
+
+        attrs = attrs |> Map.put(:value, envelope) |> Map.put(:type, "lease")
+        insert_and_apply(db, seq, attrs, store_id)
+
+      :live ->
+        {:error, :held}
+
+      :occupied ->
+        {:error, :occupied}
+    end
+  end
+
+  defp apply_lease_op(db, seq, %{op: :renew, path: path, token: token} = attrs, store_id) do
+    now = System.system_time(:millisecond)
+
+    case read_lease(db, path, now, with_value: true) do
+      {:live, %{"token" => ^token} = envelope} ->
+        # Keep the original token; only extend expiry.
+        renewed = Map.put(envelope, "expires_at", now + attrs.ttl_ms)
+        attrs = attrs |> Map.put(:value, renewed) |> Map.put(:type, "lease")
+        insert_and_apply(db, seq, attrs, store_id)
+
+      _ ->
+        {:error, :not_held}
+    end
+  end
+
+  defp apply_lease_op(db, seq, %{op: :release, path: path, token: token} = attrs, store_id) do
+    now = System.system_time(:millisecond)
+
+    case read_lease(db, path, now, with_value: true) do
+      {state, %{"token" => ^token}} when state in [:live, :expired] ->
+        attrs = Map.put(attrs, :value, nil)
+        insert_and_apply(db, seq, attrs, store_id)
+
+      _ ->
+        # Already released, stolen, or never held by this token — idempotent no-op.
+        :noop
+    end
+  end
+
+  # Returns :absent | :live | :expired | :occupied, or (with_value: true)
+  # {:live | :expired, envelope} | :absent | :occupied.
+  defp read_lease(db, path, now, opts \\ []) do
+    case query_row(db, "SELECT value, type FROM store_entries WHERE path = ?", [path]) do
+      nil ->
+        :absent
+
+      [json, "lease"] ->
+        envelope = Jason.decode!(json)
+        exp = envelope["expires_at"]
+        state = if is_integer(exp) and exp <= now, do: :expired, else: :live
+        if opts[:with_value], do: {state, envelope}, else: state
+
+      [_json, _other_type] ->
+        :occupied
+    end
+  end
+
+  # Opt-in fencing for non-lease writes: `fence: %{key, token}` (or a
+  # `%Dust.Lease{}`-shaped map). The write applies only if `key` still holds a
+  # LIVE lease with that token; otherwise the holder has lost it → `:fenced`.
+  defp maybe_validate_fence(db, attrs) do
+    case attrs[:fence] || attrs["fence"] do
+      nil ->
+        :ok
+
+      fence ->
+        now = System.system_time(:millisecond)
+        key = fence[:key] || fence["key"]
+        token = fence[:token] || fence["token"]
+
+        case read_lease(db, key, now, with_value: true) do
+          {:live, %{"token" => ^token}} -> :ok
+          _ -> {:error, :fenced}
+        end
+    end
   end
 
   # `if_absent` claims a key only when no entry exists for the path. The
@@ -365,6 +472,19 @@ defmodule Dust.Sync.Writer do
     delete_descendants(db, segments)
     upsert_entry(db, path, ref, "file", seq)
     ref
+  end
+
+  # Acquire/steal and renew both upsert the (server-constructed) lease envelope.
+  defp apply_to_entries(db, seq, %{op: op, path: path, value: envelope})
+       when op in [:lease, :renew] do
+    upsert_entry(db, path, envelope, "lease", seq)
+    envelope
+  end
+
+  # Release deletes the lease entry (token already validated by apply_lease_op).
+  defp apply_to_entries(db, _seq, %{op: :release, path: path}) do
+    exec(db, "DELETE FROM store_entries WHERE path = ?", [path])
+    nil
   end
 
   # --- SQLite helpers ---

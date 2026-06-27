@@ -42,6 +42,10 @@ defmodule Dust.Sync do
          :ok <- validate_if_match_attrs(op_attrs),
          :ok <- validate_if_absent_attrs(op_attrs) do
       case Writer.write(store_id, op_attrs) do
+        # Idempotent lease release that matched nothing — nothing committed.
+        {:ok, :noop} ->
+          {:ok, :noop}
+
         {:ok, op} ->
           notify_webhooks(store_id, op)
           {:ok, op}
@@ -52,6 +56,54 @@ defmodule Dust.Sync do
     end
   catch
     :exit, reason -> {:error, {:writer_unavailable, reason}}
+  end
+
+  @doc """
+  Acquire (or steal an expired) lease at `key`. Server-stamps the fence
+  `token` (= the acquire op's `store_seq`) and `expires_at` (now + `ttl_ms`).
+
+  Returns `{:ok, op}` (with `op.materialized_value` = the lease envelope) on
+  acquisition, `{:error, :held}` if a live lease is held by someone else, or
+  `{:error, :occupied}` if a non-lease value sits at the key.
+  """
+  def lease(store_id, key, ttl_ms, holder, opts \\ []) do
+    write(store_id, %{
+      op: :lease,
+      path: key,
+      ttl_ms: ttl_ms,
+      holder: holder,
+      device_id: opts[:device_id] || holder || "server",
+      client_op_id: opts[:client_op_id] || Ecto.UUID.generate()
+    })
+  end
+
+  @doc """
+  Extend a held lease, keeping its `token`. `{:error, :not_held}` if the lease
+  has expired, been stolen, or released.
+  """
+  def renew_lease(store_id, key, token, ttl_ms, opts \\ []) do
+    write(store_id, %{
+      op: :renew,
+      path: key,
+      token: token,
+      ttl_ms: ttl_ms,
+      device_id: opts[:device_id] || "server",
+      client_op_id: opts[:client_op_id] || Ecto.UUID.generate()
+    })
+  end
+
+  @doc """
+  Release a held lease. Idempotent: a token that no longer matches (released,
+  stolen, or expired-and-stolen) returns `{:ok, :noop}` without broadcasting.
+  """
+  def release_lease(store_id, key, token, opts \\ []) do
+    write(store_id, %{
+      op: :release,
+      path: key,
+      token: token,
+      device_id: opts[:device_id] || "server",
+      client_op_id: opts[:client_op_id] || Ecto.UUID.generate()
+    })
   end
 
   @doc """

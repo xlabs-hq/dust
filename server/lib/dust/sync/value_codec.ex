@@ -37,6 +37,7 @@ defmodule Dust.Sync.ValueCodec do
 
   def detect_type(%Decimal{}), do: "decimal"
   def detect_type(%DateTime{}), do: "datetime"
+  def detect_type(%{"_type" => "lease"}), do: "lease"
   def detect_type(value) when is_map(value), do: "map"
   def detect_type(value) when is_binary(value), do: "string"
   def detect_type(value) when is_integer(value), do: "integer"
@@ -76,6 +77,7 @@ defmodule Dust.Sync.ValueCodec do
 
   @doc "Check if a value is a typed envelope (file ref, Decimal, DateTime) that should not be expanded."
   def typed_value?(%{"_type" => "file"}), do: true
+  def typed_value?(%{"_type" => "lease"}), do: true
   def typed_value?(%{"_typed" => _, "_type" => _}), do: true
   def typed_value?(%Decimal{}), do: true
   def typed_value?(%DateTime{}), do: true
