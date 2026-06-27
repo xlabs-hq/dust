@@ -41,7 +41,7 @@ defmodule Dust.ConnectionInfoTest do
     end
   end
 
-  describe "telemetry [:dust, :connection, :state_change]" do
+  describe "telemetry [:dustlayer, :connection, :state_change]" do
     test "fires on init with from=nil, to=:disconnected" do
       handler_id = "test-init-#{System.unique_integer()}"
       test_pid = self()
@@ -49,7 +49,7 @@ defmodule Dust.ConnectionInfoTest do
       :ok =
         :telemetry.attach(
           handler_id,
-          [:dust, :connection, :state_change],
+          [:dustlayer, :connection, :state_change],
           fn _event, measurements, metadata, _config ->
             send(test_pid, {:state_change, measurements, metadata})
           end,

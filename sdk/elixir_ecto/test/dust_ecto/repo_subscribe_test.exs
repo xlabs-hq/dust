@@ -13,12 +13,12 @@ defmodule DustEcto.RepoSubscribeTest do
     {:ok, _pid} =
       Dust.SyncEngine.start_link(store: @store, cache: {Dust.Cache.Memory, []})
 
-    Application.put_env(:dust_ecto, :store, @store)
-    Application.put_env(:dust_ecto, :dust_facade, Dust)
+    Application.put_env(:dustlayer_ecto, :store, @store)
+    Application.put_env(:dustlayer_ecto, :dust_facade, Dust)
 
     on_exit(fn ->
-      Application.delete_env(:dust_ecto, :store)
-      Application.delete_env(:dust_ecto, :dust_facade)
+      Application.delete_env(:dustlayer_ecto, :store)
+      Application.delete_env(:dustlayer_ecto, :dust_facade)
     end)
 
     :ok

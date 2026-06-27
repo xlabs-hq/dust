@@ -6,7 +6,7 @@ defmodule Dust.MixProject do
 
   def project do
     [
-      app: :dust,
+      app: :dustlayer,
       version: @version,
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
@@ -53,6 +53,7 @@ defmodule Dust.MixProject do
 
   defp package do
     [
+      maintainers: ["James Tippett"],
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url},
       files: ~w(lib priv mix.exs README.md LICENSE)
@@ -62,7 +63,7 @@ defmodule Dust.MixProject do
   defp docs do
     [
       main: "Dust",
-      source_ref: "v#{@version}",
+      source_ref: "dustlayer-v#{@version}",
       extras: ["README.md"]
     ]
   end

@@ -7,7 +7,7 @@ Reactive state sync for Elixir and Phoenix apps. Connect to a Dust store, read a
 ```elixir
 # mix.exs
 def deps do
-  [{:dust, "~> 0.1"}]
+  [{:dustlayer, "~> 0.1"}]
 end
 ```
 

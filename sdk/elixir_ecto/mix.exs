@@ -6,7 +6,7 @@ defmodule DustEcto.MixProject do
 
   def project do
     [
-      app: :dust_ecto,
+      app: :dustlayer_ecto,
       version: @version,
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
@@ -20,7 +20,7 @@ defmodule DustEcto.MixProject do
         main: "readme",
         extras: ["README.md"],
         source_url: @source_url,
-        source_ref: "v#{@version}"
+        source_ref: "dustlayer_ecto-v#{@version}"
       ]
     ]
   end
@@ -37,12 +37,12 @@ defmodule DustEcto.MixProject do
 
   defp deps do
     [
-      {:dust, path: "../elixir"},
+      {:dustlayer, dustlayer_dep()},
       {:ecto, "~> 3.12"},
       {:req, "~> 0.5"},
       # Plug is only used in tests (Req.Test stubs hitting our HTTP
       # transport without a real server). It's also a transitive dep of
-      # :dust via Phoenix-shaped tooling, so production users won't see
+      # :dustlayer via Phoenix-shaped tooling, so production users won't see
       # an extra dep here.
       {:plug, "~> 1.0", only: [:dev, :test]},
       # phoenix_pubsub is an optional integration: dust_ecto's
@@ -54,6 +54,14 @@ defmodule DustEcto.MixProject do
     ]
   end
 
+  # In the monorepo (dev, test, CI) depend on the sibling `dustlayer` source so
+  # core changes are picked up without a publish round-trip. `mix hex.publish`
+  # rejects path deps, so the release workflow sets DUST_HEX=1 to pin the
+  # published version into the package's dependency metadata instead.
+  defp dustlayer_dep do
+    if System.get_env("DUST_HEX"), do: "~> 0.1", else: [path: "../elixir"]
+  end
+
   defp description do
     "Ecto-shaped facade over Dust — Dust.Schema + Dust.Repo for Phoenix apps."
   end
@@ -63,7 +71,7 @@ defmodule DustEcto.MixProject do
       maintainers: ["James Tippett"],
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url},
-      files: ~w(lib mix.exs README.md)
+      files: ~w(lib mix.exs README.md LICENSE)
     ]
   end
 end

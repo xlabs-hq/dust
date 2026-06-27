@@ -889,7 +889,7 @@ defmodule DustEcto.Repo do
   # Always drop :slug from the wire body — it's the primary key,
   # encoded in the URL path, never serialized as data. Plain-nil fields
   # are kept (write JSON null at that field) since nil is a deliberate
-  # value in dust_ecto's contract.
+  # value in dustlayer_ecto's contract.
   defp dump_for_wire(struct) do
     struct
     |> Ecto.embedded_dump(:json)

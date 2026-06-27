@@ -20,12 +20,12 @@ defmodule DustEcto.PhoenixTest do
     pubsub = :"pubsub_#{System.unique_integer([:positive])}"
     start_supervised!({Phoenix.PubSub, name: pubsub})
 
-    Application.put_env(:dust_ecto, :store, @store)
-    Application.put_env(:dust_ecto, :dust_facade, Dust)
+    Application.put_env(:dustlayer_ecto, :store, @store)
+    Application.put_env(:dustlayer_ecto, :dust_facade, Dust)
 
     on_exit(fn ->
-      Application.delete_env(:dust_ecto, :store)
-      Application.delete_env(:dust_ecto, :dust_facade)
+      Application.delete_env(:dustlayer_ecto, :store)
+      Application.delete_env(:dustlayer_ecto, :dust_facade)
     end)
 
     %{pubsub: pubsub, topic: "links-#{System.unique_integer([:positive])}"}
@@ -128,18 +128,18 @@ defmodule DustEcto.PhoenixTest do
       # the facade. Both signals Transport.pick/0 uses to choose SDK
       # mode are now off — it'll fall through to HTTP, whose subscribe
       # returns :not_supported.
-      Application.delete_env(:dust_ecto, :dust_facade)
-      Application.put_env(:dust_ecto, :store, "no-such/store")
-      Application.put_env(:dust_ecto, :base_url, "http://stub")
-      Application.put_env(:dust_ecto, :token, "tok")
+      Application.delete_env(:dustlayer_ecto, :dust_facade)
+      Application.put_env(:dustlayer_ecto, :store, "no-such/store")
+      Application.put_env(:dustlayer_ecto, :base_url, "http://stub")
+      Application.put_env(:dustlayer_ecto, :token, "tok")
 
       fresh_topic = "no-sdk-#{System.unique_integer([:positive])}"
 
       assert {:error, %Error{kind: :not_supported}} =
                DustEcto.Phoenix.subscribe_to_pubsub(Link, pubsub, fresh_topic)
     after
-      Application.delete_env(:dust_ecto, :base_url)
-      Application.delete_env(:dust_ecto, :token)
+      Application.delete_env(:dustlayer_ecto, :base_url)
+      Application.delete_env(:dustlayer_ecto, :token)
     end
   end
 

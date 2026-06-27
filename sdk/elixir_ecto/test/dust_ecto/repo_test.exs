@@ -7,16 +7,16 @@ defmodule DustEcto.RepoTest do
   @store "myorg/mystore"
 
   setup do
-    Application.put_env(:dust_ecto, :store, @store)
-    Application.put_env(:dust_ecto, :base_url, "http://stub")
-    Application.put_env(:dust_ecto, :token, "tok_test")
-    Application.delete_env(:dust_ecto, :dust_facade)
+    Application.put_env(:dustlayer_ecto, :store, @store)
+    Application.put_env(:dustlayer_ecto, :base_url, "http://stub")
+    Application.put_env(:dustlayer_ecto, :token, "tok_test")
+    Application.delete_env(:dustlayer_ecto, :dust_facade)
 
     on_exit(fn ->
-      Application.delete_env(:dust_ecto, :store)
-      Application.delete_env(:dust_ecto, :base_url)
-      Application.delete_env(:dust_ecto, :token)
-      Application.delete_env(:dust_ecto, :req_plug)
+      Application.delete_env(:dustlayer_ecto, :store)
+      Application.delete_env(:dustlayer_ecto, :base_url)
+      Application.delete_env(:dustlayer_ecto, :token)
+      Application.delete_env(:dustlayer_ecto, :req_plug)
     end)
 
     :ok
@@ -25,7 +25,7 @@ defmodule DustEcto.RepoTest do
   defp stub(handler) do
     stub_id = :"stub_#{System.unique_integer([:positive])}"
     Req.Test.stub(stub_id, handler)
-    Application.put_env(:dust_ecto, :req_plug, {Req.Test, stub_id})
+    Application.put_env(:dustlayer_ecto, :req_plug, {Req.Test, stub_id})
     :ok
   end
 
@@ -202,7 +202,7 @@ defmodule DustEcto.RepoTest do
       # Every declared field gets a PUT in flat mode — including nil-valued
       # ones (written as JSON null). :slug is the primary key and is never
       # written. :note and :added_at are nil in valid_link_attrs/1 but still
-      # get a write per dust_ecto's "nil is a deliberate value" contract.
+      # get a write per dustlayer_ecto's "nil is a deliberate value" contract.
       assert sorted == [
                "/api/stores/myorg/mystore/entries/links/foo/added_at",
                "/api/stores/myorg/mystore/entries/links/foo/note",

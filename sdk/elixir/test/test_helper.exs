@@ -1,4 +1,4 @@
-Application.put_env(:dust, Dust.TestRepo,
+Application.put_env(:dustlayer, Dust.TestRepo,
   database: ":memory:",
   pool_size: 1
 )

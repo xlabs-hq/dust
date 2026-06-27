@@ -6,7 +6,7 @@ defmodule DustEcto.Transport.HTTP do
   `{:error, :not_supported}`.
 
   All bodies are encoded/decoded with the stdlib `JSON` module
-  (Elixir 1.18+). The token comes from `config :dust_ecto, :token`;
+  (Elixir 1.18+). The token comes from `config :dustlayer_ecto, :token`;
   base URL from `:base_url`.
   """
 
@@ -186,12 +186,12 @@ defmodule DustEcto.Transport.HTTP do
           _ ->
             raise ArgumentError,
                   "DustEcto.Transport.HTTP called without an active HTTP config. " <>
-                    "Set :base_url and :token under :dust_ecto."
+                    "Set :base_url and :token under :dustlayer_ecto."
         end
 
     # Test-only: callers can install a Req.Test stub via Application
     # config so requests get intercepted without a real HTTP server.
-    case Application.get_env(:dust_ecto, :req_plug) do
+    case Application.get_env(:dustlayer_ecto, :req_plug) do
       nil -> config
       plug -> Map.put(config, :plug, plug)
     end
@@ -284,7 +284,7 @@ defmodule DustEcto.Transport.HTTP do
     body = Keyword.get(opts, :body)
     params = Keyword.get(opts, :params, [])
 
-    # Auto-retry is off here — dust_ecto surfaces transport errors
+    # Auto-retry is off here — dustlayer_ecto surfaces transport errors
     # (429, 5xx) to the caller via the %Error{retryable?:} flag so the
     # *application* decides whether to retry. Auto-retry inside Req
     # would silently double-write non-idempotent ops on a flaky network.
@@ -299,8 +299,8 @@ defmodule DustEcto.Transport.HTTP do
         params: params,
         decode_body: false,
         retry: false,
-        receive_timeout: Application.get_env(:dust_ecto, :receive_timeout, 15_000),
-        connect_options: [timeout: Application.get_env(:dust_ecto, :connect_timeout, 30_000)]
+        receive_timeout: Application.get_env(:dustlayer_ecto, :receive_timeout, 15_000),
+        connect_options: [timeout: Application.get_env(:dustlayer_ecto, :connect_timeout, 30_000)]
       ]
       |> maybe_put_body(method, body)
       |> maybe_put_test_plug(config)

@@ -50,7 +50,7 @@ defmodule DustEcto.Phoenix do
 
   Needs the `phoenix_pubsub` package and an active SDK transport
   (i.e. `Dust.Supervisor` running in your supervision tree, or
-  `config :dust_ecto, :dust_facade, MyApp.Dust`). From HTTP mode the
+  `config :dustlayer_ecto, :dust_facade, MyApp.Dust`). From HTTP mode the
   underlying `Repo.subscribe/2` returns `:not_supported`, which
   surfaces here as a `%DustEcto.Error{kind: :not_supported}`.
   """

@@ -1,8 +1,8 @@
 defmodule DustEcto.Transport do
   @moduledoc """
-  Behaviour every dust_ecto transport adapter implements. Two
+  Behaviour every dustlayer_ecto transport adapter implements. Two
   implementations ship: `DustEcto.Transport.SDK` (recommended, uses
-  Phoenix Channels via `:dust`) and `DustEcto.Transport.HTTP`
+  Phoenix Channels via `:dustlayer`) and `DustEcto.Transport.HTTP`
   (Req-based, stateless, no realtime).
 
   Repo functions never call adapters directly — they go through
@@ -45,7 +45,7 @@ defmodule DustEcto.Transport do
   through (e.g. the SDK facade module name, or the HTTP base_url).
 
   Detection order:
-    1. Explicit `config :dust_ecto, :dust_facade, MyApp.Dust` — SDK mode.
+    1. Explicit `config :dustlayer_ecto, :dust_facade, MyApp.Dust` — SDK mode.
     2. `Dust.SyncEngineRegistry` has the configured store registered —
        SDK mode using the global `Dust` module.
     3. Otherwise — HTTP mode.
@@ -57,7 +57,7 @@ defmodule DustEcto.Transport do
   @spec pick() :: {module(), map()}
   def pick do
     cond do
-      facade = Application.get_env(:dust_ecto, :dust_facade) ->
+      facade = Application.get_env(:dustlayer_ecto, :dust_facade) ->
         {DustEcto.Transport.SDK, %{facade: facade}}
 
       sdk_registry_has_store?() ->
@@ -72,8 +72,8 @@ defmodule DustEcto.Transport do
            # to set this for staging environments or self-hosted Dust.
            # The token has no sensible default (it's a secret) so we
            # still hard-require it.
-           base_url: Application.get_env(:dust_ecto, :base_url, @default_base_url),
-           token: Application.fetch_env!(:dust_ecto, :token)
+           base_url: Application.get_env(:dustlayer_ecto, :base_url, @default_base_url),
+           token: Application.fetch_env!(:dustlayer_ecto, :token)
          }}
     end
   end
@@ -86,11 +86,11 @@ defmodule DustEcto.Transport do
   @degraded_warn_interval_ms 60_000
 
   defp warn_if_sdk_degraded do
-    store = Application.get_env(:dust_ecto, :store)
+    store = Application.get_env(:dustlayer_ecto, :store)
 
     if store && Process.whereis(Dust.SyncEngineRegistry) && warn_due?() do
       Logger.warning(
-        "dust_ecto: sync engine for store #{inspect(store)} is not registered; " <>
+        "dustlayer_ecto: sync engine for store #{inspect(store)} is not registered; " <>
           "falling back to the HTTP transport (slow, no realtime)"
       )
     end
@@ -114,7 +114,7 @@ defmodule DustEcto.Transport do
         false
 
       _ ->
-        case Application.get_env(:dust_ecto, :store) do
+        case Application.get_env(:dustlayer_ecto, :store) do
           nil -> false
           store -> Registry.lookup(Dust.SyncEngineRegistry, store) != []
         end
@@ -124,6 +124,6 @@ defmodule DustEcto.Transport do
   @doc "The configured default store name for Repo calls. Required."
   @spec store!() :: store()
   def store! do
-    Application.fetch_env!(:dust_ecto, :store)
+    Application.fetch_env!(:dustlayer_ecto, :store)
   end
 end

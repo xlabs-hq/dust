@@ -7,16 +7,16 @@ defmodule DustEcto.Transport.HTTPTest do
   @store "myorg/mystore"
 
   setup do
-    Application.put_env(:dust_ecto, :store, @store)
-    Application.put_env(:dust_ecto, :base_url, "http://stub")
-    Application.put_env(:dust_ecto, :token, "tok_test")
-    Application.delete_env(:dust_ecto, :dust_facade)
+    Application.put_env(:dustlayer_ecto, :store, @store)
+    Application.put_env(:dustlayer_ecto, :base_url, "http://stub")
+    Application.put_env(:dustlayer_ecto, :token, "tok_test")
+    Application.delete_env(:dustlayer_ecto, :dust_facade)
 
     on_exit(fn ->
-      Application.delete_env(:dust_ecto, :store)
-      Application.delete_env(:dust_ecto, :base_url)
-      Application.delete_env(:dust_ecto, :token)
-      Application.delete_env(:dust_ecto, :req_plug)
+      Application.delete_env(:dustlayer_ecto, :store)
+      Application.delete_env(:dustlayer_ecto, :base_url)
+      Application.delete_env(:dustlayer_ecto, :token)
+      Application.delete_env(:dustlayer_ecto, :req_plug)
     end)
 
     :ok
@@ -25,7 +25,7 @@ defmodule DustEcto.Transport.HTTPTest do
   defp stub(handler) do
     stub_id = :"stub_#{System.unique_integer([:positive])}"
     Req.Test.stub(stub_id, handler)
-    Application.put_env(:dust_ecto, :req_plug, {Req.Test, stub_id})
+    Application.put_env(:dustlayer_ecto, :req_plug, {Req.Test, stub_id})
     :ok
   end
 

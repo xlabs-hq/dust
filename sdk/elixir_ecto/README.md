@@ -47,14 +47,14 @@ map (`where`, `from`, `preload`, `transaction`) aren't there. See
 # mix.exs
 def deps do
   [
-    {:dust_ecto, "~> 0.1"}
+    {:dustlayer_ecto, "~> 0.1"}
   ]
 end
 ```
 
 ```elixir
 # config/runtime.exs
-config :dust_ecto,
+config :dustlayer_ecto,
   store: System.get_env("DUST_STORE") || "myorg/mystore",
   base_url: System.get_env("DUST_BASE_URL") || "https://dustlayer.io",
   token: System.fetch_env!("DUST_TOKEN")
@@ -92,6 +92,11 @@ Repo.delete(Link, "hello")
 That's a working installation against the deployed dustlayer.io. No
 supervision tree, no migrations. **Realtime subscriptions need extra
 setup** — see [Subscribe](#subscribe).
+
+For hot-path reads in a Phoenix app, prefer SDK mode: run your `Dust`
+supervisor, configure `config :dustlayer_ecto, :dust_facade, MyApp.Dust`, and let
+reads come from the local cache. The minimal HTTP configuration above is best
+for scripts, release tasks, and low-frequency stateless access.
 
 ---
 
@@ -141,7 +146,7 @@ Two transports ship: `DustEcto.Transport.SDK` (recommended; uses
 
 `DustEcto.Transport.pick/0` runs on every Repo call. Selection order:
 
-1. Explicit `config :dust_ecto, :dust_facade, MyApp.Dust` → SDK mode.
+1. Explicit `config :dustlayer_ecto, :dust_facade, MyApp.Dust` → SDK mode.
 2. `Dust.SyncEngineRegistry` has the configured store running → SDK
    mode using the global `Dust` facade.
 3. Otherwise → HTTP mode.
@@ -199,7 +204,7 @@ end
 | `:http` | Unrecognized non-2xx status. 5xx is retryable, 4xx isn't. |
 | `:conflict` | `If-Match` precondition failed. `detail` has `current_revision`. |
 | `:not_supported` | Feature unavailable on the active transport (e.g. `subscribe` in HTTP mode). |
-| `:not_implemented` | Server returned 404 on a whole route — the deployed server is older than dust_ecto expects. |
+| `:not_implemented` | Server returned 404 on a whole route — the deployed server is older than dustlayer_ecto expects. |
 | `:nothing_to_write` | `insert`/`update` had no fields to send. Usually a bug in the caller's changeset. |
 | `:timeout` | SDK write didn't get an ack in time. Don't blind-retry; the write may still land. |
 | `:unauthorized` | Token rejected. |
@@ -293,7 +298,7 @@ config :my_app, MyApp.Dust,
   stores: ["myorg/mystore"],
   repo: MyApp.Repo
 
-config :dust_ecto, :dust_facade, MyApp.Dust
+config :dustlayer_ecto, :dust_facade, MyApp.Dust
 ```
 
 ```elixir
@@ -393,7 +398,7 @@ mechanical:
 | `{:error, {:http, status, body}}` tuples | `{:error, %DustEcto.Error{}}` — pattern-match on `:kind` |
 
 Config rename: whatever app key you used (`:my_app, MyApp.Dust`)
-becomes `:dust_ecto` directly.
+becomes `:dustlayer_ecto` directly.
 
 ---
 
@@ -411,7 +416,7 @@ becomes `:dust_ecto` directly.
 
 ## Environment variables
 
-Config keys (under `:dust_ecto`):
+Config keys (under `:dustlayer_ecto`):
 
 | Key | Default | Where to get it |
 |---|---|---|
@@ -422,7 +427,7 @@ Config keys (under `:dust_ecto`):
 Minimum config:
 
 ```elixir
-config :dust_ecto,
+config :dustlayer_ecto,
   store: System.fetch_env!("DUST_STORE"),
   token: System.fetch_env!("DUST_TOKEN")
 ```
@@ -430,7 +435,7 @@ config :dust_ecto,
 If you're hitting a non-default Dust host:
 
 ```elixir
-config :dust_ecto,
+config :dustlayer_ecto,
   store: System.fetch_env!("DUST_STORE"),
   token: System.fetch_env!("DUST_TOKEN"),
   base_url: System.fetch_env!("DUST_BASE_URL")
@@ -443,7 +448,7 @@ doesn't reread `Application.put_env` from `.env` files.
 
 ## Server compatibility
 
-| dust_ecto | Required dust server |
+| dustlayer_ecto | Required dust server |
 |---|---|
 | `0.1.x` | `0.1.x` (DELETE and `batch_write` routes). Older servers will surface `%DustEcto.Error{kind: :not_implemented}` on those calls. |
 

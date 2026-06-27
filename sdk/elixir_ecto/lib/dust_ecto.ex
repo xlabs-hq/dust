@@ -29,7 +29,7 @@ defmodule DustEcto do
       end
 
       # Configure once at startup:
-      #   config :dust_ecto,
+      #   config :dustlayer_ecto,
       #     store: System.get_env("DUST_STORE"),
       #     dust_facade: MyApp.Dust   # WS-mode (recommended)
       #     # OR for HTTP-only:

@@ -331,7 +331,7 @@ defmodule Dust.Connection do
       |> Map.merge(extra_meta)
 
     :telemetry.execute(
-      [:dust, :connection, :state_change],
+      [:dustlayer, :connection, :state_change],
       %{system_time: System.system_time()},
       metadata
     )

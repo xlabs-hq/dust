@@ -1,0 +1,70 @@
+name: SDK Release (Hex)
+
+# Publish the Elixir SDK packages to Hex. Push a prefixed tag to ship one:
+#   dustlayer-v0.1.0        -> sdk/elixir       (the `dustlayer` core)
+#   dustlayer_ecto-v0.1.0   -> sdk/elixir_ecto  (the `dustlayer_ecto` facade)
+# dustlayer_ecto depends on `dustlayer`, so publish the core first and let it
+# land on Hex before tagging the ecto package.
+#
+# The `publish` job is gated by the `hex` environment, so GitHub pauses for a
+# required-reviewer approval before anything ships — eyeball the run first.
+
+on:
+  push:
+    tags:
+      - 'dustlayer-v*'
+      - 'dustlayer_ecto-v*'
+
+permissions:
+  contents: read
+
+env:
+  # Opt JavaScript-based actions in to Node.js 24 ahead of GitHub's forced
+  # cutover — same as the other workflows in this repo.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+  # Flip dustlayer_ecto's sibling path dep to the published `~> 0.1` version
+  # (see sdk/elixir_ecto/mix.exs). Harmless for the core, which has no toggle.
+  DUST_HEX: '1'
+  # Match the versions pinned in elixir-ci.yml.
+  ELIXIR_VERSION: '1.18.4'
+  OTP_VERSION: '27.3'
+
+jobs:
+  publish:
+    name: Publish to Hex
+    runs-on: ubuntu-latest
+    environment: hex
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve package directory from tag
+        id: pkg
+        run: |
+          case "$GITHUB_REF_NAME" in
+            dustlayer_ecto-v*) echo "dir=sdk/elixir_ecto" >> "$GITHUB_OUTPUT" ;;
+            dustlayer-v*)      echo "dir=sdk/elixir"      >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::unrecognized tag $GITHUB_REF_NAME"; exit 1 ;;
+          esac
+
+      - name: Install Elixir + OTP
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+
+      - name: Fetch deps
+        working-directory: ${{ steps.pkg.outputs.dir }}
+        run: mix deps.get
+
+      - name: Publish package to Hex
+        working-directory: ${{ steps.pkg.outputs.dir }}
+        env:
+          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+        run: mix hex.publish package --yes
+
+      - name: Publish docs to HexDocs
+        working-directory: ${{ steps.pkg.outputs.dir }}
+        continue-on-error: true
+        env:
+          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+        run: mix hex.publish docs --yes

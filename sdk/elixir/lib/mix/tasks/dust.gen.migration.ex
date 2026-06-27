@@ -27,7 +27,7 @@ if Code.ensure_loaded?(Ecto.Migrator) do
         path = Ecto.Migrator.migrations_path(repo)
 
         source_path =
-          :dust
+          :dustlayer
           |> Application.app_dir("priv/templates/dust.gen.migration/migration.exs.eex")
 
         generated_file = EEx.eval_file(source_path, module_prefix: app_module())
