@@ -261,5 +261,24 @@ write). Mailbox flushed + subscriptions removed on every await exit.
 
 - **5a — monotonic lease deadlines** (server hardening on the shipped lease).
 - **5b — `CallbackRegistry` subscriber-pid monitoring** (prerequisite).
-- **6 — `Dust.single_flight`** (Elixir SDK) with all of the above.
-- TS + CLI lease parity; REST lease surface; per-op ack timer — follow-ups.
+- **6 — `Dust.single_flight`** (Elixir SDK) with all of the above. ✅ shipped.
+- TS + CLI lease parity; REST lease surface; per-op ack timer; in-node
+  coalescing Registry (deferred optimization) — follow-ups.
+
+### Phase 6 implementation notes (as shipped)
+
+- Stored value is **JSON-encoded as a scalar leaf** (not a plain map) so
+  Dust's map-flattening doesn't shred a pointer into a subtree; every reader
+  decodes it, so all sources return the same shape.
+- `fun :: (%Dust.Lease{} | nil -> {:publish, value} | {:abort, reason})`;
+  a wrong return raises `ArgumentError`.
+- Heartbeat is a `spawn_link`ed loop renewing at `lease_ttl/3`; a raised `fun`
+  kills the linked heartbeat → renewals stop → lease expires at `lease_ttl`
+  (the documented recovery bound, caller-pid model).
+- Loser awaits **both** `key` (committed publish) and `lock_key` (a committed
+  `:delete` = release/expiry → re-elect) via `monitor: true` subscriptions,
+  re-validating the `fresh?` predicate on every wake; jittered backoff on
+  re-election; mailbox flushed + unsubscribed on every exit.
+- In-node coalescing Registry was **deferred** — the distributed lease already
+  prevents duplicate *work* for all callers; the Registry only saves redundant
+  lease round-trips among concurrent same-node callers (a perf optimization).

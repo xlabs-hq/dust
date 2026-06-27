@@ -54,4 +54,37 @@ defmodule Dust do
   defdelegate lease(store, key, opts \\ []), to: Dust.SyncEngine
   defdelegate renew(store, lease, opts \\ []), to: Dust.SyncEngine
   defdelegate release(store, lease), to: Dust.SyncEngine
+
+  @doc """
+  Coordinated distributed cache-fill — compute `fun` once across the fleet and
+  share the result.
+
+  Returns `{:ok, %Dust.Flight{}}` or `{:error, reason}`.
+
+  `fun` receives the held `%Dust.Lease{}` (or `nil` on the degraded
+  `:run_local` path) and MUST return:
+
+    * `{:publish, value}` — store `value` at `key` and return it. `value` must
+      be a small pointer (put the bytes in S3/your DB); a definitive negative
+      result (a real 404) is fine to publish.
+    * `{:abort, reason}` — release the lease, publish nothing, return
+      `{:error, reason}`. Use this for *transient* failures so they don't get
+      cached.
+
+  Options:
+
+    * `:fresh?` — `nil` (default) = presence mode (key exists ⇒ fresh; for
+      done-forever results). A `(value -> boolean)` predicate = freshness mode
+      (the value carries its own timestamp; refill when the predicate says so).
+    * `:lease_ttl` — max in-flight fill time before the lease is stealable
+      (default 30s; the lease is heartbeat-renewed while `fun` runs).
+    * `:wait_timeout` — max a follower waits for the winner (default
+      `lease_ttl + 5s`).
+    * `:on_unavailable` — `:run_local` (default; run `fun` uncoordinated, never
+      block — possible duplicate work, `coordinated?: false`) or `:error`.
+    * `:lock_key` — the lease key (default a reserved sibling of `key`).
+
+  **At-least-once, not exactly-once.** `fun` must be idempotent.
+  """
+  defdelegate single_flight(store, key, fun, opts \\ []), to: Dust.SingleFlight, as: :run
 end
