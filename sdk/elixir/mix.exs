@@ -55,8 +55,11 @@ defmodule Dust.MixProject do
     [
       maintainers: ["James Tippett"],
       licenses: ["MIT"],
-      links: %{"GitHub" => @source_url},
-      files: ~w(lib priv mix.exs README.md LICENSE)
+      links: %{
+        "GitHub" => @source_url,
+        "Changelog" => "#{@source_url}/blob/master/sdk/elixir/CHANGELOG.md"
+      },
+      files: ~w(lib priv mix.exs README.md CHANGELOG.md LICENSE)
     ]
   end
 
@@ -64,7 +67,7 @@ defmodule Dust.MixProject do
     [
       main: "Dust",
       source_ref: "dustlayer-v#{@version}",
-      extras: ["README.md"]
+      extras: ["README.md", "CHANGELOG.md"]
     ]
   end
 end

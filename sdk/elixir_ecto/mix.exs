@@ -18,7 +18,7 @@ defmodule DustEcto.MixProject do
       source_url: @source_url,
       docs: [
         main: "readme",
-        extras: ["README.md"],
+        extras: ["README.md", "CHANGELOG.md"],
         source_url: @source_url,
         source_ref: "dustlayer_ecto-v#{@version}"
       ]
@@ -70,8 +70,12 @@ defmodule DustEcto.MixProject do
     [
       maintainers: ["James Tippett"],
       licenses: ["MIT"],
-      links: %{"GitHub" => @source_url},
-      files: ~w(lib mix.exs README.md LICENSE)
+      links: %{
+        "GitHub" => @source_url,
+        "Changelog" =>
+          "https://github.com/xlabs-hq/dust/blob/master/sdk/elixir_ecto/CHANGELOG.md"
+      },
+      files: ~w(lib mix.exs README.md CHANGELOG.md LICENSE)
     ]
   end
 end
