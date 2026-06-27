@@ -24,8 +24,8 @@ env:
   MIX_ENV: test
   # Pin Elixir/OTP centrally — every job inherits the same versions
   # so a "bump everywhere at once" change is a one-line edit.
-  ELIXIR_VERSION: '1.18.4'
-  OTP_VERSION: '27.3'
+  ELIXIR_VERSION: '1.20.2'
+  OTP_VERSION: '29.0.2'
 
 jobs:
   # Server gets its own job because it needs a Postgres service

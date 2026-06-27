@@ -25,9 +25,9 @@ env:
   # Flip dustlayer_ecto's sibling path dep to the published `~> 0.1` version
   # (see sdk/elixir_ecto/mix.exs). Harmless for the core, which has no toggle.
   DUST_HEX: '1'
-  # Match the versions pinned in elixir-ci.yml.
-  ELIXIR_VERSION: '1.18.4'
-  OTP_VERSION: '27.3'
+  # Match the versions pinned in elixir-ci.yml / server Dockerfile.
+  ELIXIR_VERSION: '1.20.2'
+  OTP_VERSION: '29.0.2'
 
 jobs:
   publish:

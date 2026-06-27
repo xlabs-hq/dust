@@ -2,14 +2,14 @@
 # instead of Alpine to avoid DNS resolution issues in production.
 #
 # https://hub.docker.com/r/hexpm/elixir/tags?name=debian
-# https://hub.docker.com/_/debian/tags?name=bookworm-slim
+# https://hub.docker.com/_/debian/tags?name=trixie-slim
 #
 # Build context is the parent dust/ directory (set via Kamal builder.context)
 # so that the dust_protocol path dependency can be copied into the image.
 #
-ARG ELIXIR_VERSION=1.18.4
-ARG OTP_VERSION=27.3.4.1
-ARG DEBIAN_VERSION=bookworm-20250630
+ARG ELIXIR_VERSION=1.20.2
+ARG OTP_VERSION=29.0.2
+ARG DEBIAN_VERSION=trixie-20260623
 
 ARG BUILDER_IMAGE="hexpm/elixir:${ELIXIR_VERSION}-erlang-${OTP_VERSION}-debian-${DEBIAN_VERSION}"
 ARG RUNNER_IMAGE="debian:${DEBIAN_VERSION}"
@@ -82,7 +82,7 @@ RUN apt-get update -y && \
   apt-get install -y --no-install-recommends \
   libstdc++6 \
   openssl \
-  libncurses5 \
+  libncurses6 \
   locales \
   ca-certificates \
   tini \
