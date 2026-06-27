@@ -2,8 +2,19 @@ import { Connection } from './connection'
 import { MemoryCache } from './cache'
 import { match } from './glob'
 import { normalizePath, normalizePattern, parseRendered, type PathInput } from './path'
-import { ConflictError, ExistsError } from './types'
-import type { DustOptions, EnumOptions, Entry, Event, EventCallback, Page, PresentEvent, Status } from './types'
+import { ConflictError, ExistsError, LeaseError } from './types'
+import type {
+  DustOptions,
+  EnumOptions,
+  Entry,
+  Event,
+  EventCallback,
+  Flight,
+  Lease,
+  Page,
+  PresentEvent,
+  Status,
+} from './types'
 
 type WatchCallback = (event: Event | PresentEvent) => void
 
@@ -55,9 +66,57 @@ export class Dust {
     store: string,
     path: PathInput,
     value: unknown,
-    opts?: { ifMatch?: number; ifAbsent?: boolean },
+    opts?: { ifMatch?: number; ifAbsent?: boolean; fence?: Lease },
   ): Promise<{ storeSeq: number }> {
     return this.write(store, 'set', normalizePath(path), value, opts)
+  }
+
+  /**
+   * Acquire (or steal an expired) lease at `key`. Returns the {@link Lease} on
+   * acquisition, `null` if a live lease is held by someone else. Throws
+   * {@link LeaseError} (`occupied` | `unavailable`) for the exceptional cases.
+   */
+  async lease(
+    store: string,
+    key: string,
+    opts: { ttlMs?: number; holder?: string } = {},
+  ): Promise<Lease | null> {
+    const payload: Record<string, unknown> = { ttl_ms: opts.ttlMs ?? 30_000 }
+    if (opts.holder !== undefined) payload.holder = opts.holder
+
+    const reply = await this.leaseWrite(store, 'lease', normalizePath(key), payload)
+    switch (reply.kind) {
+      case 'ok':
+        return leaseFromReply(normalizePath(key), reply.resp)
+      case 'held':
+      case 'not_held':
+        return null
+      default:
+        throw new LeaseError(reply.reason)
+    }
+  }
+
+  /** Extend a held lease (keeps its token). `null` if it was lost. */
+  async renew(store: string, lease: Lease, opts: { ttlMs?: number } = {}): Promise<Lease | null> {
+    const reply = await this.leaseWrite(store, 'renew', lease.key, {
+      token: lease.token,
+      ttl_ms: opts.ttlMs ?? 30_000,
+    })
+
+    switch (reply.kind) {
+      case 'ok':
+        return leaseFromReply(lease.key, reply.resp, lease.holder)
+      case 'held':
+      case 'not_held':
+        return null
+      default:
+        throw new LeaseError(reply.reason)
+    }
+  }
+
+  /** Release a held lease. Idempotent — a lost/stale token is a no-op. */
+  async release(store: string, lease: Lease): Promise<void> {
+    await this.leaseWrite(store, 'release', lease.key, { token: lease.token })
   }
 
   async merge(store: string, path: PathInput, value: Record<string, unknown>): Promise<{ storeSeq: number }> {
@@ -259,7 +318,7 @@ export class Dust {
     op: string,
     path: string,
     value: unknown,
-    opts?: { ifMatch?: number; ifAbsent?: boolean },
+    opts?: { ifMatch?: number; ifAbsent?: boolean; fence?: Lease },
   ): Promise<{ storeSeq: number }> {
     await this.ensureJoined(store)
 
@@ -288,6 +347,10 @@ export class Dust {
       payload.if_absent = true
     }
 
+    if (opts && opts.fence) {
+      payload.fence = { key: opts.fence.key, token: opts.fence.token }
+    }
+
     let response: { store_seq: number }
     try {
       response = (await this.connection.push(topic, 'write', payload)) as { store_seq: number }
@@ -307,10 +370,58 @@ export class Dust {
         if (reason === 'exists') {
           throw new ExistsError(currentRevision)
         }
+
+        if (reason === 'fenced') {
+          throw new LeaseError('fenced')
+        }
       }
       throw err
     }
     return { storeSeq: response.store_seq }
+  }
+
+  // Push a lease op and classify the reply. Ordinary contention (held /
+  // not_held) is a normal outcome, not an error; occupied/unavailable surface
+  // as LeaseError to callers.
+  private async leaseWrite(
+    store: string,
+    op: string,
+    key: string,
+    fields: Record<string, unknown>,
+  ): Promise<
+    | { kind: 'ok'; resp: Record<string, unknown> }
+    | { kind: 'held' }
+    | { kind: 'not_held' }
+    | { kind: 'error'; reason: 'occupied' | 'unavailable' }
+  > {
+    await this.ensureJoined(store)
+    const payload: Record<string, unknown> = {
+      op,
+      path: key,
+      path_segments: parseRendered(key),
+      client_op_id: generateOpId(),
+      ...fields,
+    }
+
+    try {
+      const resp = (await this.connection.push(`store:${store}`, 'write', payload)) as Record<
+        string,
+        unknown
+      >
+      return { kind: 'ok', resp }
+    } catch (err) {
+      const resp = (err as { response?: unknown })?.response
+      const reason =
+        resp !== null && typeof resp === 'object'
+          ? (resp as { reason?: unknown }).reason
+          : undefined
+
+      if (reason === 'held') return { kind: 'held' }
+      if (reason === 'not_held') return { kind: 'not_held' }
+      if (reason === 'occupied') return { kind: 'error', reason: 'occupied' }
+      // No server reason (timeout / disconnected) → treat as unavailable.
+      return { kind: 'error', reason: 'unavailable' }
+    }
   }
 
   private ensureJoined(store: string): Promise<void> {
@@ -410,10 +521,12 @@ export class Dust {
     // Update cache based on op. `path + '/'` is the canonical
     // descendant-prefix form (slash-rendered, trailing slash so a
     // sibling like `posts/hello2` can't false-match `posts/hello`).
-    if (op === 'delete') {
+    if (op === 'delete' || op === 'release') {
+      // `release` deletes the lease entry at the lock key.
       this.cache.delete(store, path)
       this.cache.deletePrefix(store, path + '/')
     } else {
+      // `lease`/`renew` set the lease envelope; everything else sets its value.
       const type = inferType(value)
       this.cache.set(store, path, { path, value, type, seq: storeSeq })
     }
@@ -478,6 +591,20 @@ export function generateOpId(): string {
     { length: 16 },
     () => Math.floor(Math.random() * 16).toString(16),
   ).join('')
+}
+
+// Build a Lease from a server lease/renew reply (token + expires_at + holder).
+function leaseFromReply(
+  key: string,
+  resp: Record<string, unknown>,
+  fallbackHolder: string | null = null,
+): Lease {
+  return {
+    key,
+    token: resp.token as number,
+    holder: (resp.holder as string | null | undefined) ?? fallbackHolder,
+    expiresAt: resp.expires_at as number,
+  }
 }
 
 export function inferType(value: unknown): string {

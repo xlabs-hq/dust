@@ -126,6 +126,42 @@ declare class ExistsError extends Error {
     readonly currentRevision: number | null;
     constructor(currentRevision?: number | null);
 }
+/**
+ * A held lease — a point-in-time snapshot capability handle. Authority lives
+ * on the server; `token` is the server-stamped monotonic fence token
+ * (preserved across `renew`). Pass it to `renew`/`release` or a write's
+ * `fence:` option.
+ */
+interface Lease {
+    key: string;
+    token: number;
+    holder: string | null;
+    expiresAt: number;
+}
+/**
+ * Thrown by lease operations and fenced writes for the exceptional cases:
+ * `occupied` (a non-lease value sits at the key), `unavailable` (Dust
+ * unreachable), or `fenced` (a write guarded by a lost lease). Ordinary
+ * contention (`lease` held by someone else) is NOT an error — `lease`/`renew`
+ * return `null` for that.
+ */
+declare class LeaseError extends Error {
+    readonly reason: 'occupied' | 'unavailable' | 'fenced';
+    constructor(reason: 'occupied' | 'unavailable' | 'fenced');
+}
+/**
+ * The result of `Dust.singleFlight`. `source`: `cached` (fresh local hit),
+ * `computed` (this caller ran the fn), `awaited` (rode another filler's
+ * result). `stale` is true only when a freshness-mode wait timed out and the
+ * last value is returned. `coordinated` is false only on the degraded
+ * `onUnavailable: 'runLocal'` path (possible duplicate work).
+ */
+interface Flight<T = unknown> {
+    value: T;
+    source: 'cached' | 'computed' | 'awaited';
+    stale: boolean;
+    coordinated: boolean;
+}
 
 type WatchCallback = (event: Event | PresentEvent) => void;
 declare class Dust {
@@ -140,9 +176,25 @@ declare class Dust {
     put(store: string, path: PathInput, value: unknown, opts?: {
         ifMatch?: number;
         ifAbsent?: boolean;
+        fence?: Lease;
     }): Promise<{
         storeSeq: number;
     }>;
+    /**
+     * Acquire (or steal an expired) lease at `key`. Returns the {@link Lease} on
+     * acquisition, `null` if a live lease is held by someone else. Throws
+     * {@link LeaseError} (`occupied` | `unavailable`) for the exceptional cases.
+     */
+    lease(store: string, key: string, opts?: {
+        ttlMs?: number;
+        holder?: string;
+    }): Promise<Lease | null>;
+    /** Extend a held lease (keeps its token). `null` if it was lost. */
+    renew(store: string, lease: Lease, opts?: {
+        ttlMs?: number;
+    }): Promise<Lease | null>;
+    /** Release a held lease. Idempotent — a lost/stale token is a no-op. */
+    release(store: string, lease: Lease): Promise<void>;
     merge(store: string, path: PathInput, value: Record<string, unknown>): Promise<{
         storeSeq: number;
     }>;
@@ -203,6 +255,7 @@ declare class Dust {
     status(store: string): Status;
     close(): void;
     private write;
+    private leaseWrite;
     private ensureJoined;
     private doJoin;
     private registeredHandlers;
@@ -352,4 +405,4 @@ type Format = 'msgpack' | 'json';
 declare function encode(msg: WireMessage, format: Format): Buffer | string;
 declare function decode(data: Buffer | ArrayBuffer | string, format: Format): WireMessage;
 
-export { type Cache, ConflictError, Connection, Dust, type DustOptions, type Entry, type EnumOptions, type Event, type EventCallback, ExistsError, type Format, MemoryCache, type Page, type PathInput, type PresentEvent, type Segments, type Status, type WireMessage, compile, decode, encode, fromSegments, generateDeviceId, generateOpId, inferType, match, parseLegacyDotted, parseRendered, render };
+export { type Cache, ConflictError, Connection, Dust, type DustOptions, type Entry, type EnumOptions, type Event, type EventCallback, ExistsError, type Flight, type Format, type Lease, LeaseError, MemoryCache, type Page, type PathInput, type PresentEvent, type Segments, type Status, type WireMessage, compile, decode, encode, fromSegments, generateDeviceId, generateOpId, inferType, match, parseLegacyDotted, parseRendered, render };

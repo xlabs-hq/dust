@@ -555,6 +555,13 @@ var ExistsError = class extends Error {
     this.currentRevision = currentRevision;
   }
 };
+var LeaseError = class extends Error {
+  constructor(reason) {
+    super(reason);
+    this.name = "LeaseError";
+    this.reason = reason;
+  }
+};
 
 // src/dust.ts
 var Dust = class {
@@ -588,6 +595,45 @@ var Dust = class {
   }
   async put(store, path, value, opts) {
     return this.write(store, "set", normalizePath(path), value, opts);
+  }
+  /**
+   * Acquire (or steal an expired) lease at `key`. Returns the {@link Lease} on
+   * acquisition, `null` if a live lease is held by someone else. Throws
+   * {@link LeaseError} (`occupied` | `unavailable`) for the exceptional cases.
+   */
+  async lease(store, key, opts = {}) {
+    const payload = { ttl_ms: opts.ttlMs ?? 3e4 };
+    if (opts.holder !== void 0) payload.holder = opts.holder;
+    const reply = await this.leaseWrite(store, "lease", normalizePath(key), payload);
+    switch (reply.kind) {
+      case "ok":
+        return leaseFromReply(normalizePath(key), reply.resp);
+      case "held":
+      case "not_held":
+        return null;
+      default:
+        throw new LeaseError(reply.reason);
+    }
+  }
+  /** Extend a held lease (keeps its token). `null` if it was lost. */
+  async renew(store, lease, opts = {}) {
+    const reply = await this.leaseWrite(store, "renew", lease.key, {
+      token: lease.token,
+      ttl_ms: opts.ttlMs ?? 3e4
+    });
+    switch (reply.kind) {
+      case "ok":
+        return leaseFromReply(lease.key, reply.resp, lease.holder);
+      case "held":
+      case "not_held":
+        return null;
+      default:
+        throw new LeaseError(reply.reason);
+    }
+  }
+  /** Release a held lease. Idempotent — a lost/stale token is a no-op. */
+  async release(store, lease) {
+    await this.leaseWrite(store, "release", lease.key, { token: lease.token });
   }
   async merge(store, path, value) {
     return this.write(store, "merge", normalizePath(path), value);
@@ -753,6 +799,9 @@ var Dust = class {
     if (opts && opts.ifAbsent === true) {
       payload.if_absent = true;
     }
+    if (opts && opts.fence) {
+      payload.fence = { key: opts.fence.key, token: opts.fence.token };
+    }
     let response;
     try {
       response = await this.connection.push(topic, "write", payload);
@@ -768,10 +817,37 @@ var Dust = class {
         if (reason === "exists") {
           throw new ExistsError(currentRevision);
         }
+        if (reason === "fenced") {
+          throw new LeaseError("fenced");
+        }
       }
       throw err;
     }
     return { storeSeq: response.store_seq };
+  }
+  // Push a lease op and classify the reply. Ordinary contention (held /
+  // not_held) is a normal outcome, not an error; occupied/unavailable surface
+  // as LeaseError to callers.
+  async leaseWrite(store, op, key, fields) {
+    await this.ensureJoined(store);
+    const payload = {
+      op,
+      path: key,
+      path_segments: parseRendered(key),
+      client_op_id: generateOpId(),
+      ...fields
+    };
+    try {
+      const resp = await this.connection.push(`store:${store}`, "write", payload);
+      return { kind: "ok", resp };
+    } catch (err) {
+      const resp = err?.response;
+      const reason = resp !== null && typeof resp === "object" ? resp.reason : void 0;
+      if (reason === "held") return { kind: "held" };
+      if (reason === "not_held") return { kind: "not_held" };
+      if (reason === "occupied") return { kind: "error", reason: "occupied" };
+      return { kind: "error", reason: "unavailable" };
+    }
   }
   ensureJoined(store) {
     const existing = this.joinedStores.get(store);
@@ -843,7 +919,7 @@ var Dust = class {
     const value = raw.value;
     const deviceId = raw.device_id;
     const clientOpId = raw.client_op_id;
-    if (op === "delete") {
+    if (op === "delete" || op === "release") {
       this.cache.delete(store, path);
       this.cache.deletePrefix(store, path + "/");
     } else {
@@ -901,6 +977,14 @@ function generateOpId() {
     () => Math.floor(Math.random() * 16).toString(16)
   ).join("");
 }
+function leaseFromReply(key, resp, fallbackHolder = null) {
+  return {
+    key,
+    token: resp.token,
+    holder: resp.holder ?? fallbackHolder,
+    expiresAt: resp.expires_at
+  };
+}
 function inferType(value) {
   if (value === null || value === void 0) return "null";
   if (typeof value === "boolean") return "boolean";
@@ -915,6 +999,7 @@ export {
   Connection,
   Dust,
   ExistsError,
+  LeaseError,
   MemoryCache,
   compile,
   decode,
