@@ -107,6 +107,43 @@ defmodule Dust.SingleFlightTest do
     assert {:ok, %Dust.Flight{value: %{"age" => 0}, source: :awaited}} = Task.await(task, 1_000)
   end
 
+  test "loser re-elects and is promoted when the holder goes away" do
+    # Small lease_ttl so the time-based re-election poll (steal of a crashed
+    # holder's expired lease) fires quickly and deterministically. fun is
+    # instant, so the heartbeat (ttl/3) never fires before stop.
+    task =
+      Task.async(fn ->
+        Dust.single_flight(@store, "k", fn _ -> {:publish, %{"r" => 2}} end, lease_ttl: 300)
+      end)
+
+    # 1. first acquire loses — someone else holds it
+    assert_receive {:send_write, @store, %{op: :lease, client_op_id: l1}}, 500
+    SyncEngine.handle_write_rejected(@store, l1, "held")
+
+    # 2. a committed release on the lock key may wake us early; otherwise the
+    #    ~lease_ttl poll re-election guarantees a re-attempt either way.
+    SyncEngine.handle_server_event(@store, %{
+      "path" => "_dust:sf/k",
+      "op" => "release",
+      "value" => nil,
+      "store_seq" => 4,
+      "device_id" => "other",
+      "client_op_id" => "other-release"
+    })
+
+    # 3. re-acquire succeeds → promoted to winner → publish → release
+    assert_receive {:send_write, @store, %{op: :lease, client_op_id: l2}}, 1_000
+    SyncEngine.handle_write_accepted(@store, l2, %{store_seq: 5, token: 5, expires_at: 9_999})
+
+    assert_receive {:send_write, @store, %{op: :set, path: "k", client_op_id: p1}}, 500
+    SyncEngine.handle_write_accepted(@store, p1, %{store_seq: 6})
+
+    assert_receive {:send_write, @store, %{op: :release, token: 5, client_op_id: r1}}, 500
+    SyncEngine.handle_write_accepted(@store, r1, %{store_seq: 7})
+
+    assert {:ok, %Dust.Flight{value: %{"r" => 2}, source: :computed}} = Task.await(task, 2_000)
+  end
+
   test "run_local degrade: runs uncoordinated when Dust is unavailable" do
     SyncEngine.set_status(@store, :disconnected)
     _ = SyncEngine.status(@store)

@@ -46,18 +46,19 @@ defmodule Dust.SingleFlight do
 
       {:error, :held} ->
         case await(store, key, cfg, deadline) do
-          {:re_elect, backoff} ->
-            if remaining_ms(deadline) > backoff do
-              # Jittered backoff so all waiters don't re-claim the single
-              # writer in lockstep when a lease frees up.
-              Process.sleep(backoff)
+          {:ok, flight} ->
+            {:ok, flight}
+
+          # The holder released, or its lease may now be stealable — try to
+          # (re-)acquire, with a jittered backoff so waiters don't re-claim the
+          # single writer in lockstep. Bounded by the overall deadline.
+          :retry ->
+            if remaining_ms(deadline) > 0 do
+              Process.sleep(min(backoff(), remaining_ms(deadline)))
               coordinate(store, key, fun, cfg, deadline)
             else
               on_timeout(store, key, cfg)
             end
-
-          result ->
-            result
         end
 
       {:error, :unavailable} ->
@@ -129,8 +130,16 @@ defmodule Dust.SingleFlight do
 
     result =
       case fresh_cached(store, key, cfg.fresh) do
-        {:ok, value} -> {:ok, Flight.new(value: value, source: :awaited)}
-        _ -> wait_loop(store, key, cfg, deadline)
+        {:ok, value} ->
+          {:ok, Flight.new(value: value, source: :awaited)}
+
+        _ ->
+          # Wait at most until the soonest a crashed holder's lease could become
+          # stealable (lease_ttl), bounded by the overall deadline. On expiry we
+          # return :retry so the coordinator re-attempts the (now stealable)
+          # lease rather than giving up — that is how a dead winner is taken over.
+          wait = min(cfg.lease_ttl, remaining_ms(deadline))
+          if wait <= 0, do: :retry, else: wait_loop(store, key, cfg, monotonic_deadline(wait))
       end
 
     Dust.off(store, kref)
@@ -139,11 +148,11 @@ defmodule Dust.SingleFlight do
     result
   end
 
-  defp wait_loop(store, key, cfg, deadline) do
-    remaining = remaining_ms(deadline)
+  defp wait_loop(store, key, cfg, until) do
+    remaining = remaining_ms(until)
 
     if remaining <= 0 do
-      on_timeout(store, key, cfg)
+      :retry
     else
       receive do
         {:sf_key, _ev} ->
@@ -151,24 +160,21 @@ defmodule Dust.SingleFlight do
           # (e.g. a delete) does not by itself mean "fresh value present".
           case fresh_cached(store, key, cfg.fresh) do
             {:ok, value} -> {:ok, Flight.new(value: value, source: :awaited)}
-            _ -> wait_loop(store, key, cfg, deadline)
+            _ -> wait_loop(store, key, cfg, until)
           end
 
         {:sf_lock, ev} ->
-          if lock_released?(ev) do
-            {:re_elect, backoff()}
-          else
-            wait_loop(store, key, cfg, deadline)
-          end
+          if lock_released?(ev), do: :retry, else: wait_loop(store, key, cfg, until)
       after
-        remaining -> on_timeout(store, key, cfg)
+        remaining -> :retry
       end
     end
   end
 
-  # A committed delete on the lock key (release, or expiry-steal that wrote a
-  # release) means the fill ended without a fresh result reaching us → re-elect.
-  defp lock_released?(%{op: :delete}), do: true
+  # A committed release of the lock key means the fill ended without a fresh
+  # result reaching us → re-elect. (A steal arrives as an :lease event, not a
+  # release: a new holder exists, so keep awaiting the result instead.)
+  defp lock_released?(%{op: :release}), do: true
   defp lock_released?(_), do: false
 
   defp on_timeout(store, key, cfg) do
