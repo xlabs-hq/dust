@@ -293,6 +293,9 @@ defmodule Dust.Sync.Writer do
     end
   end
 
+  # Malformed lease op (e.g. renew/release missing a token).
+  defp apply_lease_op(_db, _seq, _attrs, _store_id), do: {:error, :invalid_lease_op}
+
   # Returns :absent | :live | :expired | :occupied, or (with_value: true)
   # {:live | :expired, envelope} | :absent | :occupied.
   defp read_lease(db, path, now, opts \\ []) do

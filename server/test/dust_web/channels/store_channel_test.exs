@@ -772,4 +772,117 @@ defmodule DustWeb.StoreChannelTest do
       assert length(jobs) == 1
     end
   end
+
+  describe "leases over the channel" do
+    setup %{socket: socket, store: store} do
+      {:ok, _, socket} =
+        subscribe_and_join(socket, DustWeb.StoreChannel, "store:#{store.id}", %{
+          "last_store_seq" => 0
+        })
+
+      %{socket: socket}
+    end
+
+    test "lease acquire replies with token, expires_at, holder", %{socket: socket} do
+      ref =
+        push(socket, "write", %{
+          "op" => "lease",
+          "path" => "lock/a",
+          "ttl_ms" => 60_000,
+          "holder" => "n1",
+          "client_op_id" => "l1"
+        })
+
+      assert_reply ref, :ok, %{store_seq: seq, token: token, expires_at: exp, holder: "n1"}
+      assert is_integer(seq) and is_integer(token) and is_integer(exp)
+    end
+
+    test "lease acquire on a live-held key replies held", %{socket: socket} do
+      ref =
+        push(socket, "write", %{
+          "op" => "lease",
+          "path" => "lock/a",
+          "ttl_ms" => 60_000,
+          "client_op_id" => "l1"
+        })
+
+      assert_reply ref, :ok, %{token: _}
+
+      ref2 =
+        push(socket, "write", %{
+          "op" => "lease",
+          "path" => "lock/a",
+          "ttl_ms" => 60_000,
+          "client_op_id" => "l2"
+        })
+
+      assert_reply ref2, :error, %{reason: "held"}
+    end
+
+    test "release with the token frees it; wrong token is a no-op", %{socket: socket} do
+      ref =
+        push(socket, "write", %{
+          "op" => "lease",
+          "path" => "lock/a",
+          "ttl_ms" => 60_000,
+          "client_op_id" => "l1"
+        })
+
+      assert_reply ref, :ok, %{token: token}
+
+      noop =
+        push(socket, "write", %{
+          "op" => "release",
+          "path" => "lock/a",
+          "token" => 999_999,
+          "client_op_id" => "r0"
+        })
+
+      assert_reply noop, :ok, %{released: false}
+
+      ok =
+        push(socket, "write", %{
+          "op" => "release",
+          "path" => "lock/a",
+          "token" => token,
+          "client_op_id" => "r1"
+        })
+
+      assert_reply ok, :ok, %{store_seq: _}
+    end
+
+    test "fenced write succeeds while held and is rejected with a stale token", %{socket: socket} do
+      ref =
+        push(socket, "write", %{
+          "op" => "lease",
+          "path" => "lock/a",
+          "ttl_ms" => 60_000,
+          "client_op_id" => "l1"
+        })
+
+      assert_reply ref, :ok, %{token: token}
+
+      good =
+        push(socket, "write", %{
+          "op" => "set",
+          "path" => "result/a",
+          "value" => "done",
+          "client_op_id" => "w1",
+          "fence" => %{"key" => "lock/a", "token" => token}
+        })
+
+      assert_reply good, :ok, %{store_seq: _}
+
+      stale =
+        push(socket, "write", %{
+          "op" => "set",
+          "path" => "result/a",
+          "value" => "stale",
+          "client_op_id" => "w2",
+          "fence" => %{"key" => "lock/a", "token" => 999_999}
+        })
+
+      assert_reply stale, :error, %{reason: "fenced"}
+    end
+  end
 end

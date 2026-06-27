@@ -12,7 +12,10 @@ defmodule DustWeb.StoreChannel do
     "increment" => :increment,
     "add" => :add,
     "remove" => :remove,
-    "put_file" => :put_file
+    "put_file" => :put_file,
+    "lease" => :lease,
+    "renew" => :renew,
+    "release" => :release
   }
 
   @impl true
@@ -217,15 +220,33 @@ defmodule DustWeb.StoreChannel do
             }
             |> maybe_put_if_match(params)
             |> maybe_put_if_absent(params)
+            |> maybe_put_fence(params)
+            |> maybe_put_lease_fields(op, params)
 
           case Sync.write(socket.assigns.store_id, op_attrs) do
+            # Idempotent lease release that matched nothing — no broadcast.
+            {:ok, :noop} ->
+              {:reply, {:ok, %{released: false}}, socket}
+
             {:ok, db_op} ->
               broadcast!(socket, "event", format_event(db_op))
               notify_org(socket)
-              {:reply, {:ok, %{store_seq: db_op.store_seq}}, socket}
+              {:reply, {:ok, lease_aware_reply(db_op)}, socket}
 
             {:error, :conflict} ->
               {:reply, {:error, %{reason: "conflict"}}, socket}
+
+            {:error, :held} ->
+              {:reply, {:error, %{reason: "held"}}, socket}
+
+            {:error, :occupied} ->
+              {:reply, {:error, %{reason: "occupied"}}, socket}
+
+            {:error, :not_held} ->
+              {:reply, {:error, %{reason: "not_held"}}, socket}
+
+            {:error, :fenced} ->
+              {:reply, {:error, %{reason: "fenced"}}, socket}
 
             {:error, :exists} ->
               {:reply, {:error, %{reason: "exists"}}, socket}
@@ -296,6 +317,46 @@ defmodule DustWeb.StoreChannel do
   end
 
   defp maybe_put_if_absent(attrs, _params), do: attrs
+
+  # Opt-in fence on a non-lease write: `fence: %{"key" => ..., "token" => ...}`.
+  defp maybe_put_fence(attrs, %{"fence" => %{"key" => key, "token" => token}})
+       when is_binary(key) and is_integer(token) do
+    Map.put(attrs, :fence, %{key: key, token: token})
+  end
+
+  defp maybe_put_fence(attrs, _params), do: attrs
+
+  # Lease ops: acquire/renew need a ttl (default 30s); renew/release need the
+  # caller's token. The server stamps the authoritative token + expires_at.
+  defp maybe_put_lease_fields(attrs, op, params) when op in [:lease, :renew] do
+    attrs
+    |> Map.put(:ttl_ms, params["ttl_ms"] || 30_000)
+    |> maybe_put_key(:holder, params["holder"])
+    |> maybe_put_key(:token, params["token"])
+  end
+
+  defp maybe_put_lease_fields(attrs, :release, params) do
+    maybe_put_key(attrs, :token, params["token"])
+  end
+
+  defp maybe_put_lease_fields(attrs, _op, _params), do: attrs
+
+  defp maybe_put_key(attrs, _key, nil), do: attrs
+  defp maybe_put_key(attrs, key, value), do: Map.put(attrs, key, value)
+
+  # For :lease/:renew, surface the lease envelope (token/expires_at/holder) so
+  # the client can build a %Dust.Lease{}. Other ops just get store_seq.
+  defp lease_aware_reply(%{op: op, store_seq: seq, materialized_value: env})
+       when op in [:lease, :renew] and is_map(env) do
+    %{
+      store_seq: seq,
+      token: env["token"],
+      expires_at: env["expires_at"],
+      holder: env["holder"]
+    }
+  end
+
+  defp lease_aware_reply(%{store_seq: seq}), do: %{store_seq: seq}
 
   @impl true
   def handle_info({:catch_up, last_seq}, socket) do
