@@ -103,6 +103,24 @@ try {
 }
 ```
 
+### Put-new (claim if absent)
+
+Pass `ifAbsent: true` to write only when the key does not already exist —
+a race-free claim. Throws `ExistsError` if another writer got there first:
+
+```typescript
+import { ExistsError } from "@dust-sync/sdk"
+
+try {
+  await dust.put("org/store", "locks/poll", nodeId, { ifAbsent: true })
+  // won the claim
+} catch (err) {
+  if (err instanceof ExistsError) {
+    // someone else holds it
+  }
+}
+```
+
 ### Subscriptions
 
 ```typescript

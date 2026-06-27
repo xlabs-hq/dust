@@ -702,6 +702,56 @@ defmodule Dust.SyncEngineTest do
     end
   end
 
+  describe "put/4 with if_absent" do
+    setup do
+      Process.register(self(), Dust.Connection)
+      :ok
+    end
+
+    test "forwards if_absent through the pending op to the connection" do
+      task =
+        Task.async(fn ->
+          SyncEngine.put("test/store", "claim", 1, if_absent: true)
+        end)
+
+      assert_receive {:send_write, "test/store",
+                      %{op: :set, path: "claim", value: 1, if_absent: true, client_op_id: op_id}},
+                     500
+
+      SyncEngine.handle_write_accepted("test/store", op_id, 7)
+
+      assert Task.await(task, 500) == {:ok, 7}
+    end
+
+    test "put/4 with if_absent: false does not set the field" do
+      task =
+        Task.async(fn ->
+          SyncEngine.put("test/store", "k", "v", if_absent: false)
+        end)
+
+      assert_receive {:send_write, "test/store", %{client_op_id: op_id} = op_attrs},
+                     500
+
+      refute Map.has_key?(op_attrs, :if_absent)
+
+      SyncEngine.handle_write_accepted("test/store", op_id, 3)
+      assert Task.await(task, 500) == {:ok, 3}
+    end
+
+    test "put/4 returns {:error, :exists} when server rejects with exists" do
+      task =
+        Task.async(fn ->
+          SyncEngine.put("test/store", "claim", 1, if_absent: true)
+        end)
+
+      assert_receive {:send_write, "test/store", %{client_op_id: op_id}}, 500
+
+      SyncEngine.handle_write_rejected("test/store", op_id, "exists")
+
+      assert Task.await(task, 500) == {:error, :exists}
+    end
+  end
+
   describe "sync variants for delete/merge/increment/add/remove" do
     setup do
       Process.register(self(), Dust.Connection)

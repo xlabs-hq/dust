@@ -276,6 +276,7 @@ defmodule Dust.Connection do
       }
       |> maybe_put_path_segments(op_attrs)
       |> maybe_put_if_match(op_attrs)
+      |> maybe_put_if_absent(op_attrs)
 
     if MapSet.member?(socket.assigns.joined_stores, store_name) do
       {:ok, ref} = push(socket, topic, "write", params)
@@ -342,6 +343,12 @@ defmodule Dust.Connection do
   end
 
   defp maybe_put_if_match(params, _op_attrs), do: params
+
+  defp maybe_put_if_absent(params, %{if_absent: true}) do
+    Map.put(params, "if_absent", true)
+  end
+
+  defp maybe_put_if_absent(params, _op_attrs), do: params
 
   # SyncEngine populates :path_segments alongside :path for capver 3
   # writes. Channels prefer segments when present and fall back to

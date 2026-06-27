@@ -264,4 +264,69 @@ defmodule Dust.SyncTest do
       assert %{value: 2} = Sync.get_entry(store.id, "k")
     end
   end
+
+  describe "if_absent (put_new) writes" do
+    test "set with if_absent on a missing key succeeds", %{store: store} do
+      assert {:ok, %{store_seq: _}} =
+               Sync.write(store.id, %{
+                 op: :set,
+                 path: "claim",
+                 value: 1,
+                 device_id: "d",
+                 client_op_id: "c1",
+                 if_absent: true
+               })
+
+      assert %{value: 1} = Sync.get_entry(store.id, "claim")
+    end
+
+    test "set with if_absent on an existing key returns :exists and does not write", %{
+      store: store
+    } do
+      {:ok, _} =
+        Sync.write(store.id, %{
+          op: :set,
+          path: "claim",
+          value: 1,
+          device_id: "d",
+          client_op_id: "c1"
+        })
+
+      assert {:error, :exists} =
+               Sync.write(store.id, %{
+                 op: :set,
+                 path: "claim",
+                 value: 2,
+                 device_id: "d",
+                 client_op_id: "c2",
+                 if_absent: true
+               })
+
+      assert %{value: 1} = Sync.get_entry(store.id, "claim")
+    end
+
+    test "if_absent combined with if_match is rejected", %{store: store} do
+      assert {:error, :invalid_precondition} =
+               Sync.write(store.id, %{
+                 op: :set,
+                 path: "claim",
+                 value: 1,
+                 device_id: "d",
+                 client_op_id: "c1",
+                 if_absent: true,
+                 if_match: 3
+               })
+    end
+
+    test "if_absent on a delete op is rejected", %{store: store} do
+      assert {:error, :if_absent_unsupported_op} =
+               Sync.write(store.id, %{
+                 op: :delete,
+                 path: "claim",
+                 device_id: "d",
+                 client_op_id: "c1",
+                 if_absent: true
+               })
+    end
+  end
 end

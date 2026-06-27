@@ -115,6 +115,17 @@ declare class ConflictError extends Error {
     readonly currentRevision: number | null;
     constructor(currentRevision?: number | null);
 }
+/**
+ * Thrown by `Dust.put` when an `ifAbsent` (put-new) precondition fails
+ * because the key already exists.
+ *
+ * `currentRevision` is the server's view of the existing entry revision
+ * at the time of the conflict, or `null` if not reported.
+ */
+declare class ExistsError extends Error {
+    readonly currentRevision: number | null;
+    constructor(currentRevision?: number | null);
+}
 
 type WatchCallback = (event: Event | PresentEvent) => void;
 declare class Dust {
@@ -128,6 +139,7 @@ declare class Dust {
     entry(store: string, path: PathInput): Promise<Entry | null>;
     put(store: string, path: PathInput, value: unknown, opts?: {
         ifMatch?: number;
+        ifAbsent?: boolean;
     }): Promise<{
         storeSeq: number;
     }>;
@@ -340,4 +352,4 @@ type Format = 'msgpack' | 'json';
 declare function encode(msg: WireMessage, format: Format): Buffer | string;
 declare function decode(data: Buffer | ArrayBuffer | string, format: Format): WireMessage;
 
-export { type Cache, ConflictError, Connection, Dust, type DustOptions, type Entry, type EnumOptions, type Event, type EventCallback, type Format, MemoryCache, type Page, type PathInput, type PresentEvent, type Segments, type Status, type WireMessage, compile, decode, encode, fromSegments, generateDeviceId, generateOpId, inferType, match, parseLegacyDotted, parseRendered, render };
+export { type Cache, ConflictError, Connection, Dust, type DustOptions, type Entry, type EnumOptions, type Event, type EventCallback, ExistsError, type Format, MemoryCache, type Page, type PathInput, type PresentEvent, type Segments, type Status, type WireMessage, compile, decode, encode, fromSegments, generateDeviceId, generateOpId, inferType, match, parseLegacyDotted, parseRendered, render };

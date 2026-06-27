@@ -216,6 +216,7 @@ defmodule DustWeb.StoreChannel do
               client_op_id: params["client_op_id"]
             }
             |> maybe_put_if_match(params)
+            |> maybe_put_if_absent(params)
 
           case Sync.write(socket.assigns.store_id, op_attrs) do
             {:ok, db_op} ->
@@ -226,11 +227,23 @@ defmodule DustWeb.StoreChannel do
             {:error, :conflict} ->
               {:reply, {:error, %{reason: "conflict"}}, socket}
 
+            {:error, :exists} ->
+              {:reply, {:error, %{reason: "exists"}}, socket}
+
+            {:error, :invalid_precondition} ->
+              {:reply, {:error, %{reason: "invalid_precondition"}}, socket}
+
             {:error, :if_match_unsupported_op} ->
               {:reply, {:error, %{reason: "if_match_unsupported_op", op: params["op"]}}, socket}
 
             {:error, :if_match_multi_leaf} ->
               {:reply, {:error, %{reason: "if_match_multi_leaf"}}, socket}
+
+            {:error, :if_absent_unsupported_op} ->
+              {:reply, {:error, %{reason: "if_absent_unsupported_op", op: params["op"]}}, socket}
+
+            {:error, :if_absent_multi_leaf} ->
+              {:reply, {:error, %{reason: "if_absent_multi_leaf"}}, socket}
 
             {:error, reason} ->
               {:reply, {:error, %{reason: inspect(reason)}}, socket}
@@ -277,6 +290,12 @@ defmodule DustWeb.StoreChannel do
   end
 
   defp maybe_put_if_match(attrs, _params), do: attrs
+
+  defp maybe_put_if_absent(attrs, %{"if_absent" => true}) do
+    Map.put(attrs, :if_absent, true)
+  end
+
+  defp maybe_put_if_absent(attrs, _params), do: attrs
 
   @impl true
   def handle_info({:catch_up, last_seq}, socket) do

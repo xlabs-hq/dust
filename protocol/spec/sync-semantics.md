@@ -105,7 +105,28 @@ Phase 5 CAS is deliberately narrow:
 - `if_match` is a positive integer. There is no `0` sentinel for "must not
   exist" and no wildcard.
 
+### `if_absent` (put-new)
+
+`if_absent: true` on a `set` write commits only if **no entry exists** at the
+path. If one already exists the write is rejected with
+`{error: {reason: "exists"}}` and nothing is written. This is the race-free
+"claim a key that may not exist yet" primitive — the missing-revision case
+`if_match` cannot express.
+
+- Leaf `set` only. `if_absent` on a non-`set` op →
+  `{error: {reason: "if_absent_unsupported_op"}}`; with a multi-leaf map value
+  → `{error: {reason: "if_absent_multi_leaf"}}`.
+- `if_absent` and `if_match` are mutually exclusive in one op →
+  `{error: {reason: "invalid_precondition"}}`.
+- The existence check runs inside the write transaction, so concurrent claims
+  cannot both win.
+- Over HTTP, `If-None-Match: *` on `PUT /entries/...` is the equivalent;
+  `412` with `{error: "exists"}` on conflict.
+
 ### Capver gate
+
+`if_absent` requires **capver >= 3** (the current floor, so no extra gate is
+needed in practice).
 
 `if_match` requires **capver >= 2**. A capver=1 client that sends `if_match`
 gets `{error: {reason: "capver_mismatch"}}`. This prevents silent downgrade:

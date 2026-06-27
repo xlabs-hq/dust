@@ -106,7 +106,8 @@ defmodule Dust.Sync.Writer do
           current_seq = max(ops_seq, snap_seq)
           next_seq = current_seq + 1
 
-          with :ok <- maybe_validate_if_match(db, attrs.path, attrs) do
+          with :ok <- maybe_validate_if_match(db, attrs.path, attrs),
+               :ok <- maybe_validate_if_absent(db, attrs.path, attrs) do
             insert_and_apply(db, next_seq, attrs, store_id)
           end
         end)
@@ -139,11 +140,11 @@ defmodule Dust.Sync.Writer do
           |> Enum.reduce_while({:ok, []}, fn {attrs, index}, {:ok, acc} ->
             next_seq = start_seq + index + 1
 
-            case maybe_validate_if_match(db, attrs.path, attrs) do
-              :ok ->
-                op = insert_and_apply(db, next_seq, attrs, store_id)
-                {:cont, {:ok, [op | acc]}}
-
+            with :ok <- maybe_validate_if_match(db, attrs.path, attrs),
+                 :ok <- maybe_validate_if_absent(db, attrs.path, attrs) do
+              op = insert_and_apply(db, next_seq, attrs, store_id)
+              {:cont, {:ok, [op | acc]}}
+            else
               {:error, reason} ->
                 # Annotate the failure with which op in the batch caused
                 # it so the caller can render a precise error.
@@ -221,6 +222,20 @@ defmodule Dust.Sync.Writer do
 
   defp fetch_if_match(attrs) do
     attrs[:if_match] || attrs["if_match"]
+  end
+
+  # `if_absent` claims a key only when no entry exists for the path. The
+  # check runs inside the same transaction as the insert, so two concurrent
+  # claims can't both win.
+  defp maybe_validate_if_absent(db, path, attrs) do
+    if attrs[:if_absent] || attrs["if_absent"] do
+      case query_one(db, "SELECT seq FROM store_entries WHERE path = ?", [path]) do
+        nil -> :ok
+        _seq -> {:error, :exists}
+      end
+    else
+      :ok
+    end
   end
 
   defp do_compact(db) do

@@ -652,6 +652,56 @@ defmodule DustWeb.Api.EntriesApiControllerTest do
       assert %{value: "Alice"} = Sync.get_entry(store.id, "users/alice/name")
     end
 
+    test "If-None-Match: * on a missing key creates it (put_new)", %{
+      conn: conn,
+      token: token,
+      store: store
+    } do
+      resp =
+        conn
+        |> api_conn(token)
+        |> put_req_header("content-type", "application/json")
+        |> put_req_header("if-none-match", "*")
+        |> put("/api/stores/entriesorg/mystore/entries/claim/key", "1")
+
+      body = json_response(resp, 200)
+      assert body["revision"] > 0
+      assert %{value: 1} = Sync.get_entry(store.id, "claim/key")
+    end
+
+    test "If-None-Match: * on an existing key returns 412 exists", %{
+      conn: conn,
+      token: token,
+      store: store
+    } do
+      seed_entry(store, "claim/key", 1)
+
+      resp =
+        conn
+        |> api_conn(token)
+        |> put_req_header("content-type", "application/json")
+        |> put_req_header("if-none-match", "*")
+        |> put("/api/stores/entriesorg/mystore/entries/claim/key", "2")
+
+      body = json_response(resp, 412)
+      assert body["error"] == "exists"
+
+      # Entry is unchanged.
+      assert %{value: 1} = Sync.get_entry(store.id, "claim/key")
+    end
+
+    test "If-Match and If-None-Match together returns 400", %{conn: conn, token: token} do
+      resp =
+        conn
+        |> api_conn(token)
+        |> put_req_header("content-type", "application/json")
+        |> put_req_header("if-match", "5")
+        |> put_req_header("if-none-match", "*")
+        |> put("/api/stores/entriesorg/mystore/entries/claim/key", "2")
+
+      assert json_response(resp, 400)["error"] == "invalid_params"
+    end
+
     test "returns 401 without Bearer token", %{conn: conn} do
       resp =
         conn

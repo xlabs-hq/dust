@@ -80,3 +80,20 @@ export class ConflictError extends Error {
     this.currentRevision = currentRevision
   }
 }
+
+/**
+ * Thrown by `Dust.put` when an `ifAbsent` (put-new) precondition fails
+ * because the key already exists.
+ *
+ * `currentRevision` is the server's view of the existing entry revision
+ * at the time of the conflict, or `null` if not reported.
+ */
+export class ExistsError extends Error {
+  readonly currentRevision: number | null
+
+  constructor(currentRevision: number | null = null) {
+    super('exists')
+    this.name = 'ExistsError'
+    this.currentRevision = currentRevision
+  }
+}

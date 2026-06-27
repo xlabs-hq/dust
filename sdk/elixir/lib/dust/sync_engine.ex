@@ -810,6 +810,7 @@ defmodule Dust.SyncEngine do
     op_msg =
       %{op: :set, path: path, value: value, client_op_id: client_op_id, prev: prev}
       |> maybe_put_if_match(opts)
+      |> maybe_put_if_absent(opts)
       |> maybe_put_from(from)
 
     pending = Map.put(state.pending_ops, client_op_id, op_msg)
@@ -820,6 +821,14 @@ defmodule Dust.SyncEngine do
     case Keyword.fetch(opts, :if_match) do
       {:ok, value} -> Map.put(op_msg, :if_match, value)
       :error -> op_msg
+    end
+  end
+
+  defp maybe_put_if_absent(op_msg, opts) do
+    if Keyword.get(opts, :if_absent, false) do
+      Map.put(op_msg, :if_absent, true)
+    else
+      op_msg
     end
   end
 
@@ -956,6 +965,10 @@ defmodule Dust.SyncEngine do
   defp reason_to_atom("capver_mismatch"), do: :capver_mismatch
   defp reason_to_atom("if_match_unsupported_op"), do: :if_match_unsupported_op
   defp reason_to_atom("if_match_multi_leaf"), do: :if_match_multi_leaf
+  defp reason_to_atom("exists"), do: :exists
+  defp reason_to_atom("invalid_precondition"), do: :invalid_precondition
+  defp reason_to_atom("if_absent_unsupported_op"), do: :if_absent_unsupported_op
+  defp reason_to_atom("if_absent_multi_leaf"), do: :if_absent_multi_leaf
   # Unknown string reasons are returned as-is so callers see the server's
   # raw reason without risking unsafe atom creation.
   defp reason_to_atom(reason) when is_binary(reason), do: reason

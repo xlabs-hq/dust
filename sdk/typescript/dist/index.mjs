@@ -548,6 +548,13 @@ var ConflictError = class extends Error {
     this.currentRevision = currentRevision;
   }
 };
+var ExistsError = class extends Error {
+  constructor(currentRevision = null) {
+    super("exists");
+    this.name = "ExistsError";
+    this.currentRevision = currentRevision;
+  }
+};
 
 // src/dust.ts
 var Dust = class {
@@ -743,15 +750,24 @@ var Dust = class {
     if (opts && typeof opts.ifMatch === "number") {
       payload.if_match = opts.ifMatch;
     }
+    if (opts && opts.ifAbsent === true) {
+      payload.if_absent = true;
+    }
     let response;
     try {
       response = await this.connection.push(topic, "write", payload);
     } catch (err) {
       const resp = err?.response;
-      if (resp !== null && typeof resp === "object" && resp.reason === "conflict") {
+      if (resp !== null && typeof resp === "object") {
+        const reason = resp.reason;
         const current = resp.current_revision;
         const currentRevision = typeof current === "number" ? current : null;
-        throw new ConflictError(currentRevision);
+        if (reason === "conflict") {
+          throw new ConflictError(currentRevision);
+        }
+        if (reason === "exists") {
+          throw new ExistsError(currentRevision);
+        }
       }
       throw err;
     }
@@ -898,6 +914,7 @@ export {
   ConflictError,
   Connection,
   Dust,
+  ExistsError,
   MemoryCache,
   compile,
   decode,

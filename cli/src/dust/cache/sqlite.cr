@@ -182,12 +182,12 @@ module Dust
       has_column = false
       @db.query("PRAGMA table_info(dust_cache)") do |rs|
         rs.each do
-          rs.read         # cid
-          name = rs.read  # name
-          rs.read         # type
-          rs.read         # notnull
-          rs.read         # dflt_value
-          rs.read         # pk
+          rs.read        # cid
+          name = rs.read # name
+          rs.read        # type
+          rs.read        # notnull
+          rs.read        # dflt_value
+          rs.read        # pk
           has_column = true if name == "synced_at"
         end
       end

@@ -74,6 +74,13 @@ case MyApp.Dust.put("org/store", "users/alice", updated, if_match: entry.revisio
   {:error, :conflict} -> :retry
 end
 
+# Put-new — claim a key only if it does not already exist (race-free).
+# Returns {:error, :exists} if another writer got there first.
+case MyApp.Dust.put("org/store", "locks/poll", node_id, if_absent: true) do
+  {:ok, _seq} -> :i_won_the_claim
+  {:error, :exists} -> :someone_else_holds_it
+end
+
 # Freshness — entry.synced_at is the local wall-clock (unix epoch ms) when
 # this node last wrote the row from a sync event. Use it to reason about how
 # stale the local mirror is (nil for subtree-assembled entries).

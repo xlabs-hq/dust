@@ -2,7 +2,7 @@ import { Connection } from './connection'
 import { MemoryCache } from './cache'
 import { match } from './glob'
 import { normalizePath, normalizePattern, parseRendered, type PathInput } from './path'
-import { ConflictError } from './types'
+import { ConflictError, ExistsError } from './types'
 import type { DustOptions, EnumOptions, Entry, Event, EventCallback, Page, PresentEvent, Status } from './types'
 
 type WatchCallback = (event: Event | PresentEvent) => void
@@ -55,7 +55,7 @@ export class Dust {
     store: string,
     path: PathInput,
     value: unknown,
-    opts?: { ifMatch?: number },
+    opts?: { ifMatch?: number; ifAbsent?: boolean },
   ): Promise<{ storeSeq: number }> {
     return this.write(store, 'set', normalizePath(path), value, opts)
   }
@@ -259,7 +259,7 @@ export class Dust {
     op: string,
     path: string,
     value: unknown,
-    opts?: { ifMatch?: number },
+    opts?: { ifMatch?: number; ifAbsent?: boolean },
   ): Promise<{ storeSeq: number }> {
     await this.ensureJoined(store)
 
@@ -284,21 +284,29 @@ export class Dust {
       payload.if_match = opts.ifMatch
     }
 
+    if (opts && opts.ifAbsent === true) {
+      payload.if_absent = true
+    }
+
     let response: { store_seq: number }
     try {
       response = (await this.connection.push(topic, 'write', payload)) as { store_seq: number }
     } catch (err) {
-      // Detect the conflict error shape from Connection.push: the thrown Error
-      // has a `response` property mirroring the server's error reply.
+      // Detect the precondition error shapes from Connection.push: the thrown
+      // Error has a `response` property mirroring the server's error reply.
       const resp = (err as { response?: unknown })?.response
-      if (
-        resp !== null &&
-        typeof resp === 'object' &&
-        (resp as { reason?: unknown }).reason === 'conflict'
-      ) {
+      if (resp !== null && typeof resp === 'object') {
+        const reason = (resp as { reason?: unknown }).reason
         const current = (resp as { current_revision?: unknown }).current_revision
         const currentRevision = typeof current === 'number' ? current : null
-        throw new ConflictError(currentRevision)
+
+        if (reason === 'conflict') {
+          throw new ConflictError(currentRevision)
+        }
+
+        if (reason === 'exists') {
+          throw new ExistsError(currentRevision)
+        }
       }
       throw err
     }

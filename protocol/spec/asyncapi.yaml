@@ -196,6 +196,16 @@ components:
               non-dict (leaf) values. On mismatch the server replies with
               `{error: {reason: "conflict", current_revision: N | null}}` and the
               write is not applied.
+          if_absent:
+            type: boolean
+            description: |
+              Optional put-new precondition. If `true`, the `set` write only
+              succeeds when no entry exists at the path; if one exists the server
+              replies with `{error: {reason: "exists"}}` and nothing is written.
+              Requires capver >= 3. Only supported on `set` ops with non-dict
+              (leaf) values; mutually exclusive with `if_match`. The check is
+              atomic against concurrent claims. (HTTP equivalent:
+              `If-None-Match: *`.)
 
     PutFile:
       name: put_file

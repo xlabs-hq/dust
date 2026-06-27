@@ -12,6 +12,9 @@ defmodule DustProtocol do
   #    wildcard segments. No backwards compatibility with capver 2 for
   #    new writes — pre-launch break, see
   #    docs/plans/2026-05-12-segment-first-paths.md.
+  #    Also adds optional `if_absent` (put-new) on `set` writes with leaf
+  #    values; introduces the `exists` reply. See
+  #    docs/plans/2026-06-27-put-new-if-absent-design.md.
   @current_capver 3
   # Bumped together — clients on capver 2 must upgrade. Pre-launch we
   # don't owe backwards compatibility.

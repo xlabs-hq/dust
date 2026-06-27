@@ -3,12 +3,14 @@ require "json"
 module Dust
   module Commands
     module Data
-      # dust put <store> <path> <json> [--if-match N]
+      # dust put <store> <path> <json> [--if-match N] [--if-absent]
       def self.put(config : Config, args : Array(String))
         Output.require_auth!(config)
 
+        usage = "dust put <store> <path> <json> [--if-match N] [--if-absent]"
         positional = [] of String
         if_match : Int64? = nil
+        if_absent = false
 
         i = 0
         while i < args.size
@@ -22,20 +24,27 @@ module Dust
               end
               i += 2
             else
-              Output.error("--if-match requires a value. Usage: dust put <store> <path> <json> [--if-match N]")
+              Output.error("--if-match requires a value. Usage: #{usage}")
               i += 1
             end
+          when "--if-absent"
+            if_absent = true
+            i += 1
           else
             positional << args[i]
             i += 1
           end
         end
 
-        Output.require_args!(positional, 3, "dust put <store> <path> <json> [--if-match N]")
+        if if_match && if_absent
+          Output.error("--if-match and --if-absent are mutually exclusive")
+        end
+
+        Output.require_args!(positional, 3, usage)
 
         store, path, json_str = positional[0], positional[1], positional[2]
         value = parse_json(json_str)
-        result = write_op(config, store, "set", path, value, if_match: if_match)
+        result = write_op(config, store, "set", path, value, if_match: if_match, if_absent: if_absent)
         seq = result["response"]["store_seq"]
         Output.success("OK store_seq=#{seq}")
       end
@@ -379,7 +388,7 @@ module Dust
         end
       end
 
-      private def self.write_op(config : Config, store : String, op : String, path : String, value : JSON::Any?, if_match : Int64? = nil) : JSON::Any
+      private def self.write_op(config : Config, store : String, op : String, path : String, value : JSON::Any?, if_match : Int64? = nil, if_absent : Bool = false) : JSON::Any
         conn = Connection.new(config)
         begin
           conn.connect_sync
@@ -404,13 +413,17 @@ module Dust
             payload["if_match"] = JSON::Any.new(im)
           end
 
+          if if_absent
+            payload["if_absent"] = JSON::Any.new(true)
+          end
+
           result = channel.push("write", payload)
 
           status = result["status"].as_s
           unless status == "ok"
             reason = result["response"]?.try(&.["reason"]?.try(&.as_s)) || "unknown error"
-            if reason == "conflict"
-              STDERR.puts %({"error":"conflict"})
+            if reason == "conflict" || reason == "exists"
+              STDERR.puts %({"error":"#{reason}"})
               exit 1
             end
             Output.error("Write failed: #{reason}")

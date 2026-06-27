@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { Dust, inferType } from '../src/dust'
-import { ConflictError } from '../src/types'
+import { ConflictError, ExistsError } from '../src/types'
 import type { PresentEvent, Event } from '../src/types'
 
 type WatchEvent = Event | PresentEvent
@@ -563,6 +563,41 @@ describe('Dust', () => {
       }
       expect(caught).toBeInstanceOf(Error)
       expect(caught).not.toBeInstanceOf(ConflictError)
+    })
+
+    it('put with ifAbsent sends if_absent in payload', async () => {
+      const dust = createDust() as any
+      const pushed = stubPush(dust, { store_seq: 7 })
+
+      const result = await dust.put('test/store', 'claim', 1, { ifAbsent: true })
+
+      expect(result).toEqual({ storeSeq: 7 })
+      expect(pushed[0].payload.if_absent).toBe(true)
+    })
+
+    it('put with ifAbsent: false does not send if_absent', async () => {
+      const dust = createDust() as any
+      const pushed = stubPush(dust, { store_seq: 5 })
+
+      await dust.put('test/store', 'k', 'v', { ifAbsent: false })
+
+      expect(pushed[0].payload).not.toHaveProperty('if_absent')
+    })
+
+    it('put with ifAbsent on an existing key throws ExistsError', async () => {
+      const dust = createDust() as any
+      stubPush(dust, pushError({ reason: 'exists', current_revision: 12 }))
+
+      let caught: unknown = null
+      try {
+        await dust.put('test/store', 'claim', 1, { ifAbsent: true })
+      } catch (err) {
+        caught = err
+      }
+
+      expect(caught).toBeInstanceOf(ExistsError)
+      expect((caught as ExistsError).currentRevision).toBe(12)
+      expect((caught as ExistsError).message).toBe('exists')
     })
   })
 

@@ -476,10 +476,21 @@ defmodule DustWeb.Api.EntriesApiController do
       client_op_id: request_op_id(conn)
     }
 
-    case body_if_match(params) do
-      {:ok, :none} -> {:ok, base}
-      {:ok, n} -> {:ok, Map.put(base, :if_match, n)}
-      err -> err
+    case {body_if_match(params), body_if_absent(params)} do
+      {{:error, _} = err, _} ->
+        err
+
+      {{:ok, n}, true} when is_integer(n) ->
+        {:error, {:invalid_params, "if_match and if_absent are mutually exclusive"}}
+
+      {{:ok, :none}, true} ->
+        {:ok, Map.put(base, :if_absent, true)}
+
+      {{:ok, :none}, false} ->
+        {:ok, base}
+
+      {{:ok, n}, false} ->
+        {:ok, Map.put(base, :if_match, n)}
     end
   end
 
@@ -504,6 +515,9 @@ defmodule DustWeb.Api.EntriesApiController do
     do: {:error, {:invalid_params, "if_match must be a positive integer (got #{inspect(other)})"}}
 
   defp body_if_match(_), do: {:ok, :none}
+
+  defp body_if_absent(%{"if_absent" => true}), do: true
+  defp body_if_absent(_), do: false
 
   defp build_delete_attrs(conn, path, principal) do
     base = %{
@@ -536,6 +550,38 @@ defmodule DustWeb.Api.EntriesApiController do
         |> json(%{
           error: "conflict",
           current_revision: current_revision_for(store, path)
+        })
+
+      {:error, :exists} ->
+        conn
+        |> put_status(412)
+        |> json(%{
+          error: "exists",
+          current_revision: current_revision_for(store, path)
+        })
+
+      {:error, :invalid_precondition} ->
+        conn
+        |> put_status(400)
+        |> json(%{
+          error: "invalid_precondition",
+          detail: "If-Match and If-None-Match are mutually exclusive"
+        })
+
+      {:error, :if_absent_unsupported_op} ->
+        conn
+        |> put_status(400)
+        |> json(%{
+          error: "if_absent_unsupported_op",
+          detail: "If-None-Match is only supported for set operations"
+        })
+
+      {:error, :if_absent_multi_leaf} ->
+        conn
+        |> put_status(400)
+        |> json(%{
+          error: "if_absent_multi_leaf",
+          detail: "If-None-Match requires a leaf value, not a map/dict"
         })
 
       {:error, :if_match_unsupported_op} ->
@@ -588,14 +634,26 @@ defmodule DustWeb.Api.EntriesApiController do
       client_op_id: request_op_id(conn)
     }
 
-    case get_req_header(conn, "if-match") do
-      [] ->
-        {:ok, base}
+    cond do
+      get_req_header(conn, "if-none-match") != [] and get_req_header(conn, "if-match") != [] ->
+        {:error, {:invalid_params, "If-Match and If-None-Match are mutually exclusive"}}
 
-      [raw | _] ->
-        case Integer.parse(raw) do
-          {n, ""} when n > 0 -> {:ok, Map.put(base, :if_match, n)}
-          _ -> {:error, {:invalid_params, "If-Match must be a positive integer"}}
+      get_req_header(conn, "if-none-match") != [] ->
+        case get_req_header(conn, "if-none-match") do
+          ["*" | _] -> {:ok, Map.put(base, :if_absent, true)}
+          _ -> {:error, {:invalid_params, ~s(If-None-Match only supports "*")}}
+        end
+
+      true ->
+        case get_req_header(conn, "if-match") do
+          [] ->
+            {:ok, base}
+
+          [raw | _] ->
+            case Integer.parse(raw) do
+              {n, ""} when n > 0 -> {:ok, Map.put(base, :if_match, n)}
+              _ -> {:error, {:invalid_params, "If-Match must be a positive integer"}}
+            end
         end
     end
   end

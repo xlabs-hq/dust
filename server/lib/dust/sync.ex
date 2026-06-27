@@ -39,7 +39,8 @@ defmodule Dust.Sync do
 
   def write(store_id, op_attrs) do
     with {:ok, op_attrs} <- normalize_path_in_attrs(op_attrs),
-         :ok <- validate_if_match_attrs(op_attrs) do
+         :ok <- validate_if_match_attrs(op_attrs),
+         :ok <- validate_if_absent_attrs(op_attrs) do
       case Writer.write(store_id, op_attrs) do
         {:ok, op} ->
           notify_webhooks(store_id, op)
@@ -105,8 +106,10 @@ defmodule Dust.Sync do
 
   defp validate_batch_attrs(ops_attrs) do
     Enum.reduce_while(ops_attrs, {:ok, 0}, fn attrs, {:ok, index} ->
-      case validate_if_match_attrs(attrs) do
-        :ok -> {:cont, {:ok, index + 1}}
+      with :ok <- validate_if_match_attrs(attrs),
+           :ok <- validate_if_absent_attrs(attrs) do
+        {:cont, {:ok, index + 1}}
+      else
         {:error, reason} -> {:halt, {:error, {reason, %{op_index: index, path: attrs[:path]}}}}
       end
     end)
@@ -152,6 +155,38 @@ defmodule Dust.Sync do
 
   defp fetch_if_match(attrs) do
     attrs[:if_match] || attrs["if_match"]
+  end
+
+  # Transport-agnostic `if_absent` preconditions, mirroring the `if_match`
+  # gates above. `if_absent` claims a key only when it does not yet exist:
+  # leaf `set` writes only, mutually exclusive with `if_match`. The actual
+  # existence check runs inside the writer transaction (atomic against
+  # concurrent claims).
+  defp validate_if_absent_attrs(attrs) do
+    if fetch_if_absent(attrs) do
+      op = attrs[:op] || attrs["op"]
+      value = attrs[:value] || attrs["value"]
+
+      cond do
+        fetch_if_match(attrs) != nil ->
+          {:error, :invalid_precondition}
+
+        op != :set ->
+          {:error, :if_absent_unsupported_op}
+
+        is_map(value) and not ValueCodec.typed_value?(value) ->
+          {:error, :if_absent_multi_leaf}
+
+        true ->
+          :ok
+      end
+    else
+      :ok
+    end
+  end
+
+  defp fetch_if_absent(attrs) do
+    attrs[:if_absent] || attrs["if_absent"]
   end
 
   defp notify_webhooks(store_id, op) do
