@@ -288,7 +288,6 @@ if Code.ensure_loaded?(Phoenix.LiveDashboard.PageBuilder) do
     defp status_color(:not_started), do: "#6c757d"
     defp status_color(_), do: "#6c757d"
 
-    defp format_uptime(nil), do: "—"
     defp format_uptime(seconds) when seconds < 60, do: "#{seconds}s"
 
     defp format_uptime(seconds) when seconds < 3600,
