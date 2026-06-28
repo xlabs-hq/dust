@@ -16,24 +16,25 @@ defmodule DustWeb.ApiPrincipal do
   agnostic to which path got us here.
   """
 
-  alias Dust.Stores.StoreToken
+  alias Dust.AccessTokens
+  alias Dust.AccessTokens.Token
 
   @type t :: %__MODULE__{
           type: :bearer | :session,
-          store_token: StoreToken.t() | nil,
+          store_token: Token.t() | nil,
           user: map() | nil,
           organization: map() | nil
         }
 
   defstruct [:type, :store_token, :user, :organization]
 
-  @doc "Build a bearer-token principal from an authenticated StoreToken."
-  @spec from_bearer(StoreToken.t()) :: t()
-  def from_bearer(%StoreToken{} = token) do
+  @doc "Build a bearer-token principal from an authenticated API token."
+  @spec from_bearer(Token.t()) :: t()
+  def from_bearer(%Token{} = token) do
     %__MODULE__{
       type: :bearer,
       store_token: token,
-      organization: token.store.organization
+      organization: token.organization
     }
   end
 
@@ -52,13 +53,17 @@ defmodule DustWeb.ApiPrincipal do
   end
 
   @doc "True if this principal may read entries."
-  def can_read?(%__MODULE__{type: :bearer, store_token: t}), do: StoreToken.can_read?(t)
+  def can_read?(%__MODULE__{type: :bearer, store_token: t}),
+    do: AccessTokens.has_scope?(t, "entries:read")
+
   # Session users always have read access to their org's stores. Per-store
   # ACLs aren't in this version; refine here if/when they land.
   def can_read?(%__MODULE__{type: :session}), do: true
 
   @doc "True if this principal may write entries."
-  def can_write?(%__MODULE__{type: :bearer, store_token: t}), do: StoreToken.can_write?(t)
+  def can_write?(%__MODULE__{type: :bearer, store_token: t}),
+    do: AccessTokens.has_scope?(t, "entries:write")
+
   def can_write?(%__MODULE__{type: :session}), do: true
 
   @doc """
@@ -67,10 +72,17 @@ defmodule DustWeb.ApiPrincipal do
   store in the same org).
   """
   def scopes_store?(%__MODULE__{type: :bearer, store_token: t}, store),
-    do: t.store_id == store.id
+    do: AccessTokens.scopes_store?(t, store)
 
   def scopes_store?(%__MODULE__{type: :session, organization: org}, store),
     do: org.id == store.organization_id
+
+  def authorize_store(%__MODULE__{type: :bearer, store_token: t}, store, scope),
+    do: AccessTokens.authorize_store(t, store, scope)
+
+  def authorize_store(%__MODULE__{type: :session, organization: org}, store, _scope) do
+    if org.id == store.organization_id, do: :ok, else: {:error, :store_not_allowed}
+  end
 
   @doc """
   Stable identifier for the writer of an op. Embedded in audit

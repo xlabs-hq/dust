@@ -4,6 +4,7 @@ defmodule DustWeb.Api.DiffController do
 
   alias Dust.{Stores, Sync}
   alias DustWeb.Api.Refs
+  alias DustWeb.ApiPrincipal
 
   action_fallback DustWeb.Api.FallbackController
 
@@ -71,12 +72,11 @@ defmodule DustWeb.Api.DiffController do
 
   def show(conn, %{"org" => org_slug, "store" => store_name} = params) do
     organization = conn.assigns.organization
-    store_token = conn.assigns.store_token
+    principal = conn.assigns.api_principal
 
     with :ok <- verify_org(organization, org_slug),
          {:ok, store} <- find_store(organization, store_name),
-         :ok <- verify_token_scope(store_token, store),
-         :ok <- verify_read_permission(store_token),
+         :ok <- authorize_store(principal, store, "entries:read"),
          {:ok, from_seq} <- parse_int(params, "from_seq") do
       to_seq = parse_optional_int(params, "to_seq")
       do_diff(conn, store, from_seq, to_seq)
@@ -111,12 +111,11 @@ defmodule DustWeb.Api.DiffController do
     end
   end
 
-  defp verify_token_scope(store_token, store) do
-    if store_token.store_id == store.id, do: :ok, else: {:error, :forbidden}
-  end
-
-  defp verify_read_permission(store_token) do
-    if Stores.StoreToken.can_read?(store_token), do: :ok, else: {:error, :forbidden}
+  defp authorize_store(principal, store, scope) do
+    case ApiPrincipal.authorize_store(principal, store, scope) do
+      :ok -> :ok
+      {:error, _reason} -> {:error, :forbidden}
+    end
   end
 
   defp parse_int(params, key) do

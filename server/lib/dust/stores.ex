@@ -1,9 +1,8 @@
 defmodule Dust.Stores do
   import Ecto.Query
+  alias Dust.AccessTokens
   alias Dust.Repo
-  alias Dust.Stores.{Store, StoreToken, Device}
-
-  @token_prefix "dust_tok_"
+  alias Dust.Stores.{Device, Store}
 
   # Stores
 
@@ -96,96 +95,21 @@ defmodule Dust.Stores do
   # Tokens
 
   def create_store_token(store, attrs) do
-    raw_token = generate_token()
-    token_hash = hash_token(raw_token)
-
-    permissions =
-      StoreToken.permissions_integer(
-        Map.get(attrs, :read, true),
-        Map.get(attrs, :write, false)
-      )
-
-    result =
-      %StoreToken{}
-      |> StoreToken.changeset(%{
-        name: attrs.name,
-        token_hash: token_hash,
-        permissions: permissions,
-        expires_at: attrs[:expires_at],
-        store_id: store.id,
-        created_by_id: attrs[:created_by_id]
-      })
-      |> Repo.insert()
-
-    case result do
-      {:ok, token} -> {:ok, %{token | raw_token: raw_token}}
-      error -> error
-    end
+    AccessTokens.create_store_token(store, attrs)
   end
 
-  def authenticate_token(@token_prefix <> _ = raw_token) do
-    token_hash = hash_token(raw_token)
+  def authenticate_token(raw_token), do: AccessTokens.authenticate_token(raw_token)
 
-    from(t in StoreToken,
-      where: t.token_hash == ^token_hash,
-      where: is_nil(t.expires_at) or t.expires_at > ^DateTime.utc_now(),
-      preload: [store: :organization]
-    )
-    |> Repo.one()
-    |> case do
-      nil ->
-        {:error, :invalid_token}
+  def list_org_tokens(organization), do: AccessTokens.list_org_tokens(organization)
 
-      token ->
-        Repo.update(Ecto.Changeset.change(token, last_used_at: DateTime.utc_now()))
-        {:ok, token}
-    end
-  end
+  def list_store_tokens(store_id), do: AccessTokens.list_store_tokens(store_id)
 
-  def authenticate_token(_), do: {:error, :invalid_token}
+  def get_token!(id), do: AccessTokens.get_token!(id)
 
-  def list_org_tokens(organization) do
-    from(t in StoreToken,
-      join: s in Store,
-      on: t.store_id == s.id,
-      where: s.organization_id == ^organization.id,
-      order_by: [desc: t.inserted_at],
-      preload: [:store]
-    )
-    |> Repo.all()
-  end
+  def revoke_token(token_id), do: AccessTokens.revoke_token(token_id)
 
-  def list_store_tokens(store_id) do
-    from(t in StoreToken,
-      where: t.store_id == ^store_id,
-      order_by: [desc: t.inserted_at],
-      preload: [:store]
-    )
-    |> Repo.all()
-  end
-
-  def get_token!(id), do: Repo.get!(StoreToken, id)
-
-  def revoke_token(token_id) do
-    case Repo.get(StoreToken, token_id) do
-      nil -> {:error, :not_found}
-      token -> Repo.delete(token)
-    end
-  end
-
-  def revoke_token_in_org(token_id, organization) do
-    query =
-      from(t in StoreToken,
-        join: s in Store,
-        on: t.store_id == s.id,
-        where: t.id == ^token_id and s.organization_id == ^organization.id
-      )
-
-    case Repo.one(query) do
-      nil -> {:error, :not_found}
-      token -> Repo.delete(token)
-    end
-  end
+  def revoke_token_in_org(token_id, organization),
+    do: AccessTokens.revoke_token_in_org(token_id, organization)
 
   @doc """
   Revoke a token, but only if it belongs to the given store. Returns
@@ -193,19 +117,7 @@ defmodule Dust.Stores do
   different store, and `{:error, :not_found}` if the id is unknown.
   """
   def revoke_token_in_store(token_id, store_id) do
-    case Repo.get(StoreToken, token_id) do
-      nil -> {:error, :not_found}
-      %StoreToken{store_id: ^store_id} = token -> Repo.delete(token)
-      _other -> {:error, :forbidden}
-    end
-  end
-
-  defp generate_token do
-    @token_prefix <> Base.url_encode64(:crypto.strong_rand_bytes(32), padding: false)
-  end
-
-  defp hash_token(raw_token) do
-    :crypto.hash(:sha256, raw_token)
+    AccessTokens.revoke_token_in_store(token_id, store_id)
   end
 
   def get_org_stats(organization) do
@@ -220,10 +132,9 @@ defmodule Dust.Stores do
       |> Repo.one()
 
     tokens_count =
-      from(t in StoreToken,
-        join: s in Store,
-        on: t.store_id == s.id,
-        where: s.organization_id == ^organization.id,
+      from(t in AccessTokens.Token,
+        where: t.organization_id == ^organization.id,
+        where: is_nil(t.revoked_at),
         select: count(t.id)
       )
       |> Repo.one()

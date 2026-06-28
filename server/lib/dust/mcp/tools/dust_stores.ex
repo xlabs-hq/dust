@@ -10,6 +10,7 @@ defmodule Dust.MCP.Tools.DustStores do
     },
     annotations: %{readOnlyHint: true}
 
+  alias Dust.AccessTokens
   alias Dust.Accounts
   alias Dust.MCP.Principal
   alias Dust.Stores
@@ -23,9 +24,12 @@ defmodule Dust.MCP.Tools.DustStores do
   end
 
   defp list_for(%Principal{kind: :store_token, store_token: token}) do
-    store = token.store
-    org = store.organization
-    [%{name: "#{org.slug}/#{store.name}", status: store.status}]
+    token
+    |> AccessTokens.list_accessible_stores()
+    |> Enum.map(fn store ->
+      org = store.organization
+      %{name: "#{org.slug}/#{store.name}", status: store.status}
+    end)
   end
 
   defp list_for(%Principal{kind: :user_session, user: user}) do

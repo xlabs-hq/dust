@@ -6,10 +6,10 @@ defmodule Dust.MCP.Authz do
   (legacy store_token, OAuth user_session) so tools don't branch on the kind.
   """
 
+  alias Dust.AccessTokens
   alias Dust.Accounts
   alias Dust.MCP.Principal
   alias Dust.Stores
-  alias Dust.Stores.StoreToken
 
   @type permission :: :read | :write
 
@@ -31,15 +31,17 @@ defmodule Dust.MCP.Authz do
   end
 
   defp check_principal(%Principal{kind: :store_token, store_token: token}, store, permission) do
-    cond do
-      token.store_id != store.id ->
+    scope = scope_for(permission)
+
+    case AccessTokens.authorize_store(token, store, scope) do
+      :ok ->
+        :ok
+
+      {:error, :store_not_allowed} ->
         {:error, "Token does not have access to store"}
 
-      not has_permission?(token, permission) ->
-        {:error, "Token does not have #{permission} permission"}
-
-      true ->
-        :ok
+      {:error, {:missing_scope, scope}} ->
+        {:error, "Token is missing #{permission} permission (#{scope} scope)"}
     end
   end
 
@@ -51,6 +53,6 @@ defmodule Dust.MCP.Authz do
     end
   end
 
-  defp has_permission?(token, :read), do: StoreToken.can_read?(token)
-  defp has_permission?(token, :write), do: StoreToken.can_write?(token)
+  defp scope_for(:read), do: "entries:read"
+  defp scope_for(:write), do: "entries:write"
 end

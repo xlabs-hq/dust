@@ -1,6 +1,7 @@
 defmodule DustWeb.StoreChannel do
   use Phoenix.Channel
 
+  alias Dust.AccessTokens
   alias Dust.{Stores, Sync, Files}
   alias Dust.Sync.{Rollback, ValueCodec}
 
@@ -23,7 +24,7 @@ defmodule DustWeb.StoreChannel do
 
     # Resolve store by full name (contains "/") or by UUID
     with {:ok, store} <- resolve_store(store_ref),
-         true <- store_token.store_id == store.id and Stores.StoreToken.can_read?(store_token) do
+         :ok <- AccessTokens.authorize_store(store_token, store, "entries:read") do
       send(self(), {:catch_up, last_seq})
 
       current_seq = Sync.current_seq(store.id)
@@ -31,6 +32,7 @@ defmodule DustWeb.StoreChannel do
       socket =
         socket
         |> assign(:store_id, store.id)
+        |> assign(:store, store)
         |> assign(:last_acked_seq, last_seq)
 
       Logger.metadata(store_id: store.id, device_id: socket.assigns.device_id)
@@ -44,10 +46,13 @@ defmodule DustWeb.StoreChannel do
        %{
          store_seq: current_seq,
          capver: DustProtocol.current_capver(),
-         capver_min: DustProtocol.min_capver()
+         capver_min: DustProtocol.min_capver(),
+         permissions: AccessTokens.capabilities(store_token, store).permissions,
+         scopes: store_token.scopes,
+         store_access: AccessTokens.capabilities(store_token).store_access
        }, socket}
     else
-      _ -> {:error, %{reason: "unauthorized"}}
+      {:error, reason} -> {:error, auth_error(reason)}
     end
   end
 
@@ -55,17 +60,15 @@ defmodule DustWeb.StoreChannel do
   def handle_in("write", params, socket) do
     store_token = socket.assigns.store_token
 
-    if Stores.StoreToken.can_write?(store_token) do
-      case Dust.RateLimiter.check(store_token.id, :write) do
-        {:error, :rate_limited, info} ->
-          {:reply, {:error, %{reason: "rate_limited", retry_after_ms: info.retry_after_ms}},
-           socket}
-
-        :ok ->
-          handle_write_op(params, socket)
-      end
+    with :ok <- authorize_current_store(socket, "entries:write"),
+         :ok <- Dust.RateLimiter.check(store_token.id, :write) do
+      handle_write_op(params, socket)
     else
-      {:reply, {:error, %{reason: "unauthorized"}}, socket}
+      {:error, :rate_limited, info} ->
+        {:reply, {:error, %{reason: "rate_limited", retry_after_ms: info.retry_after_ms}}, socket}
+
+      {:error, reason} ->
+        {:reply, {:error, auth_error(reason)}, socket}
     end
   end
 
@@ -81,9 +84,9 @@ defmodule DustWeb.StoreChannel do
       ) do
     store_token = socket.assigns.store_token
 
-    with true <- Stores.StoreToken.can_write?(store_token),
+    with :ok <- authorize_current_store(socket, "files:write"),
          :ok <- Dust.RateLimiter.check(store_token.id, :write) do
-      org = store_token.store.organization
+      org = store_token.organization
 
       with :ok <- verify_store_active(socket.assigns.store_id),
            {:ok, _} <- validate_path(path),
@@ -130,19 +133,20 @@ defmodule DustWeb.StoreChannel do
           {:reply, {:error, %{reason: to_string(reason)}}, socket}
       end
     else
-      false ->
-        {:reply, {:error, %{reason: "unauthorized"}}, socket}
-
       {:error, :rate_limited, info} ->
         {:reply, {:error, %{reason: "rate_limited", retry_after_ms: info.retry_after_ms}}, socket}
+
+      {:error, {:missing_scope, _scope} = reason} ->
+        {:reply, {:error, auth_error(reason)}, socket}
+
+      {:error, :store_not_allowed = reason} ->
+        {:reply, {:error, auth_error(reason)}, socket}
     end
   end
 
   @impl true
   def handle_in("rollback", %{"path" => path, "to_seq" => to_seq}, socket) do
-    store_token = socket.assigns.store_token
-
-    if Stores.StoreToken.can_write?(store_token) do
+    if authorize_current_store(socket, "entries:write") == :ok do
       case Rollback.rollback_path(socket.assigns.store_id, path, to_seq) do
         {:ok, :noop} ->
           {:reply, {:ok, %{store_seq: Sync.current_seq(socket.assigns.store_id), noop: true}},
@@ -156,14 +160,12 @@ defmodule DustWeb.StoreChannel do
           {:reply, {:error, %{reason: to_string(reason)}}, socket}
       end
     else
-      {:reply, {:error, %{reason: "unauthorized"}}, socket}
+      {:reply, {:error, auth_error({:missing_scope, "entries:write"})}, socket}
     end
   end
 
   def handle_in("rollback", %{"to_seq" => to_seq}, socket) do
-    store_token = socket.assigns.store_token
-
-    if Stores.StoreToken.can_write?(store_token) do
+    if authorize_current_store(socket, "entries:write") == :ok do
       case Rollback.rollback_store(socket.assigns.store_id, to_seq) do
         {:ok, count} ->
           {:reply, {:ok, %{ops_written: count}}, socket}
@@ -172,7 +174,7 @@ defmodule DustWeb.StoreChannel do
           {:reply, {:error, %{reason: to_string(reason)}}, socket}
       end
     else
-      {:reply, {:error, %{reason: "unauthorized"}}, socket}
+      {:reply, {:error, auth_error({:missing_scope, "entries:write"})}, socket}
     end
   end
 
@@ -182,8 +184,7 @@ defmodule DustWeb.StoreChannel do
   end
 
   def handle_in("status", _params, socket) do
-    store_id = socket.assigns.store_id
-    status = build_status(store_id)
+    status = build_status(socket)
     {:reply, {:ok, status}, socket}
   end
 
@@ -193,7 +194,7 @@ defmodule DustWeb.StoreChannel do
         {:reply, {:error, %{reason: "invalid op"}}, socket}
 
       op ->
-        org = socket.assigns.store_token.store.organization
+        org = socket.assigns.store_token.organization
 
         # capver 3 wire shape: `path_segments` is authoritative.
         # `path` (slash-rendered string) is accepted as a fallback
@@ -503,11 +504,13 @@ defmodule DustWeb.StoreChannel do
     {value, state}
   end
 
-  defp build_status(store_id) do
+  defp build_status(socket) do
     import Ecto.Query
 
+    store_id = socket.assigns.store_id
     current_seq = Sync.current_seq(store_id)
     entry_count = Sync.entry_count(store_id)
+    capabilities = AccessTokens.capabilities(socket.assigns.store_token, socket.assigns.store)
 
     store_meta =
       Dust.Repo.one(
@@ -544,6 +547,9 @@ defmodule DustWeb.StoreChannel do
       file_storage_bytes: (store_meta && store_meta.file_storage_bytes) || 0,
       db_size_bytes: db_size,
       expires_at: store_meta && store_meta.expires_at,
+      permissions: capabilities.permissions,
+      scopes: capabilities.scopes,
+      store_access: capabilities.store_access,
       latest_snapshot_seq: snapshot && snapshot.snapshot_seq,
       latest_snapshot_at: snapshot && Map.get(snapshot, :inserted_at),
       recent_ops:
@@ -661,7 +667,7 @@ defmodule DustWeb.StoreChannel do
   defp check_billing_limits(_, _, _, _), do: :ok
 
   defp notify_org(socket) do
-    org_slug = socket.assigns.store_token.store.organization.slug
+    org_slug = socket.assigns.store_token.organization.slug
 
     Phoenix.PubSub.broadcast(
       Dust.PubSub,
@@ -669,6 +675,27 @@ defmodule DustWeb.StoreChannel do
       {:store_changed, socket.assigns.store_id}
     )
   end
+
+  defp authorize_current_store(socket, scope) do
+    AccessTokens.authorize_store(socket.assigns.store_token, socket.assigns.store, scope)
+  end
+
+  defp auth_error({:missing_scope, scope}) do
+    %{
+      reason: "missing_scope",
+      scope: scope,
+      message: "Token is missing #{scope} scope"
+    }
+  end
+
+  defp auth_error(:store_not_allowed) do
+    %{
+      reason: "store_not_allowed",
+      message: "Token does not have access to this store"
+    }
+  end
+
+  defp auth_error(_reason), do: %{reason: "unauthorized"}
 
   defp verify_store_active(store_id) do
     import Ecto.Query

@@ -188,7 +188,7 @@ defmodule DustWeb.Router do
     get "/stores/:name/webhooks", WebhookPageController, :index
     post "/stores/:name/webhooks", WebhookPageController, :create
     delete "/stores/:name/webhooks/:id", WebhookPageController, :delete
-    resources "/tokens", TokenController, only: [:index, :new, :create, :delete]
+    resources "/tokens", TokenController, only: [:index, :new, :create, :edit, :update, :delete]
     get "/settings", SettingsController, :index
   end
 

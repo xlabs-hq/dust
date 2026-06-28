@@ -5,6 +5,7 @@ defmodule DustWeb.Api.WebhookController do
   alias Dust.{Stores, Webhooks}
   alias Dust.Webhooks.DeliveryWorker
   alias DustWeb.Api.Refs
+  alias DustWeb.ApiPrincipal
 
   action_fallback DustWeb.Api.FallbackController
 
@@ -50,8 +51,7 @@ defmodule DustWeb.Api.WebhookController do
   def index(conn, %{"org" => org_slug, "store" => store_name}) do
     with :ok <- verify_org(conn, org_slug),
          {:ok, store} <- find_store(conn, store_name),
-         :ok <- verify_token_scope(conn, store),
-         :ok <- verify_read_permission(conn) do
+         :ok <- authorize_store(conn, store, "webhooks:read") do
       webhooks =
         Webhooks.list_webhooks(store)
         |> Enum.map(&serialize_webhook_without_secret/1)
@@ -108,8 +108,7 @@ defmodule DustWeb.Api.WebhookController do
   def create(conn, %{"org" => org_slug, "store" => store_name} = params) do
     with :ok <- verify_org(conn, org_slug),
          {:ok, store} <- find_store(conn, store_name),
-         :ok <- verify_token_scope(conn, store),
-         :ok <- verify_write_permission(conn) do
+         :ok <- authorize_store(conn, store, "webhooks:write") do
       do_create_webhook(conn, store, params)
     end
   end
@@ -145,8 +144,7 @@ defmodule DustWeb.Api.WebhookController do
   def delete(conn, %{"org" => org_slug, "store" => store_name, "id" => webhook_id}) do
     with :ok <- verify_org(conn, org_slug),
          {:ok, store} <- find_store(conn, store_name),
-         :ok <- verify_token_scope(conn, store),
-         :ok <- verify_write_permission(conn),
+         :ok <- authorize_store(conn, store, "webhooks:write"),
          :ok <- Webhooks.delete_webhook(webhook_id, store.id) do
       json(conn, %{ok: true})
     end
@@ -186,8 +184,7 @@ defmodule DustWeb.Api.WebhookController do
   def ping(conn, %{"org" => org_slug, "store" => store_name, "id" => webhook_id}) do
     with :ok <- verify_org(conn, org_slug),
          {:ok, store} <- find_store(conn, store_name),
-         :ok <- verify_token_scope(conn, store),
-         :ok <- verify_write_permission(conn),
+         :ok <- authorize_store(conn, store, "webhooks:write"),
          {:ok, webhook} <- Webhooks.get_webhook(webhook_id, store.id) do
       do_ping(conn, webhook, org_slug, store_name)
     end
@@ -262,8 +259,7 @@ defmodule DustWeb.Api.WebhookController do
   def deliveries(conn, %{"org" => org_slug, "store" => store_name, "id" => webhook_id} = params) do
     with :ok <- verify_org(conn, org_slug),
          {:ok, store} <- find_store(conn, store_name),
-         :ok <- verify_token_scope(conn, store),
-         :ok <- verify_read_permission(conn),
+         :ok <- authorize_store(conn, store, "webhooks:read"),
          {:ok, _webhook} <- Webhooks.get_webhook(webhook_id, store.id) do
       limit = min(parse_int(params["limit"], 20), 100)
 
@@ -292,27 +288,10 @@ defmodule DustWeb.Api.WebhookController do
     end
   end
 
-  defp verify_token_scope(conn, store) do
-    if conn.assigns.store_token.store_id == store.id do
-      :ok
-    else
-      {:error, :forbidden}
-    end
-  end
-
-  defp verify_read_permission(conn) do
-    if Stores.StoreToken.can_read?(conn.assigns.store_token) do
-      :ok
-    else
-      {:error, :forbidden}
-    end
-  end
-
-  defp verify_write_permission(conn) do
-    if Stores.StoreToken.can_write?(conn.assigns.store_token) do
-      :ok
-    else
-      {:error, :forbidden}
+  defp authorize_store(conn, store, scope) do
+    case ApiPrincipal.authorize_store(conn.assigns.api_principal, store, scope) do
+      :ok -> :ok
+      {:error, _reason} -> {:error, :forbidden}
     end
   end
 

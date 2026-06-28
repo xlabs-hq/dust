@@ -2,8 +2,10 @@ defmodule DustWeb.Api.StoreApiController do
   use DustWeb, :controller
   use Oaskit.Controller
 
+  alias Dust.AccessTokens
   alias Dust.Stores
   alias DustWeb.Api.Refs
+  alias DustWeb.ApiPrincipal
 
   action_fallback DustWeb.Api.FallbackController
 
@@ -46,13 +48,17 @@ defmodule DustWeb.Api.StoreApiController do
   )
 
   def index(conn, _params) do
-    org = conn.assigns.organization
-    stores = Stores.list_stores(org)
+    principal = conn.assigns.api_principal
+    org = ApiPrincipal.organization(principal)
 
-    json(conn, %{
-      org: org.slug,
-      stores: Enum.map(stores, &serialize_store(org, &1))
-    })
+    with :ok <- authorize_org(principal, org, "stores:read") do
+      stores = stores_for(principal, org)
+
+      json(conn, %{
+        org: org.slug,
+        stores: Enum.map(stores, &serialize_store(org, &1))
+      })
+    end
   end
 
   operation(:create,
@@ -82,12 +88,44 @@ defmodule DustWeb.Api.StoreApiController do
     ]
   )
 
-  def create(_conn, _params) do
-    # Store-scoped tokens have no authority to create new stores. Until
-    # org-admin tokens ship, this endpoint always returns 403 — store
-    # creation is dashboard-only.
-    {:error, :forbidden}
+  def create(conn, %{"name" => name}) do
+    principal = conn.assigns.api_principal
+    org = ApiPrincipal.organization(principal)
+
+    with :ok <- authorize_org(principal, org, "stores:create") do
+      case Stores.create_store(org, %{name: name}) do
+        {:ok, store} ->
+          conn
+          |> put_status(201)
+          |> json(%{store: serialize_store(org, store)})
+
+        {:error, :limit_exceeded, info} ->
+          conn |> put_status(402) |> json(%{error: "limit_exceeded"} |> Map.merge(info))
+
+        {:error, %Ecto.Changeset{}} ->
+          conn |> put_status(422) |> json(%{error: "invalid_store"})
+      end
+    end
   end
+
+  def create(_conn, _params) do
+    {:error, {:invalid_params, "name is required"}}
+  end
+
+  defp stores_for(%ApiPrincipal{type: :bearer, store_token: token}, _org) do
+    AccessTokens.list_accessible_stores(token)
+  end
+
+  defp stores_for(%ApiPrincipal{type: :session}, org), do: Stores.list_stores(org)
+
+  defp authorize_org(%ApiPrincipal{type: :bearer, store_token: token}, org, scope) do
+    case AccessTokens.authorize_org(token, org, scope) do
+      :ok -> :ok
+      {:error, _reason} -> {:error, :forbidden}
+    end
+  end
+
+  defp authorize_org(%ApiPrincipal{type: :session}, _org, _scope), do: :ok
 
   defp serialize_store(org, store) do
     %{

@@ -40,7 +40,7 @@ defmodule DustWeb.Plugs.ApiTokenAuth do
              conn
              |> assign(:api_principal, principal)
              |> assign(:store_token, store_token)
-             |> assign(:organization, store_token.store.organization)}
+             |> assign(:organization, store_token.organization)}
 
           _ ->
             :no_bearer

@@ -1,6 +1,7 @@
 defmodule DustWeb.Api.StoreApiControllerTest do
   use DustWeb.ConnCase, async: false
 
+  alias Dust.AccessTokens
   alias Dust.{Accounts, Stores}
 
   setup do
@@ -27,7 +28,7 @@ defmodule DustWeb.Api.StoreApiControllerTest do
         created_by_id: user.id
       })
 
-    %{org: org, store: store, rw_token: rw_token, ro_token: ro_token}
+    %{user: user, org: org, store: store, rw_token: rw_token, ro_token: ro_token}
   end
 
   defp api_conn(conn, token) do
@@ -159,9 +160,8 @@ defmodule DustWeb.Api.StoreApiControllerTest do
       {:ok, other_token} =
         Stores.create_store_token(store2, %{name: "other", read: true, created_by_id: user2.id})
 
-      # Different store entirely → 403, not 404, since the row exists.
       conn = conn |> api_conn(token) |> delete("/api/tokens/#{other_token.id}")
-      assert conn.status == 403
+      assert conn.status == 404
     end
 
     test "create rejects cross-store with 403", %{conn: conn, rw_token: token, org: org} do
@@ -193,6 +193,45 @@ defmodule DustWeb.Api.StoreApiControllerTest do
 
       assert conn.status == 200
       assert json_response(conn, 200)["ok"] == true
+    end
+
+    test "all-store token lists and revokes tokens across stores",
+         %{conn: conn, org: org, user: user} do
+      org = org |> Ecto.Changeset.change(plan: "pro") |> Dust.Repo.update!()
+      {:ok, first_store} = Stores.create_store(org, %{name: "all-first"})
+      {:ok, second_store} = Stores.create_store(org, %{name: "all-second"})
+
+      {:ok, _first_token} =
+        Stores.create_store_token(first_store, %{
+          name: "first-token",
+          read: true,
+          created_by_id: user.id
+        })
+
+      {:ok, second_token} =
+        Stores.create_store_token(second_store, %{
+          name: "second-token",
+          read: true,
+          created_by_id: user.id
+        })
+
+      {:ok, all_token} =
+        AccessTokens.create_token(org, %{
+          name: "all-admin",
+          scopes: ["tokens:read", "tokens:write"],
+          store_access_mode: :all,
+          created_by_id: user.id
+        })
+
+      conn = conn |> api_conn(all_token) |> get("/api/tokens")
+      assert conn.status == 200
+
+      names = conn |> json_response(200) |> Map.fetch!("tokens") |> Enum.map(& &1["name"])
+      assert "first-token" in names
+      assert "second-token" in names
+
+      conn = build_conn() |> api_conn(all_token) |> delete("/api/tokens/#{second_token.id}")
+      assert conn.status == 200
     end
   end
 end

@@ -11,12 +11,20 @@ import {
   CardTitle,
 } from "@/components/ui/Card";
 import type { SharedProps } from "@/types";
-import { Check, Copy, AlertTriangle } from "lucide-react";
+import { AlertTriangle, Check, Copy } from "lucide-react";
+
+interface TokenStore {
+  id: string;
+  name: string;
+}
 
 interface CreatedToken {
   id: string;
   name: string;
-  store_name: string;
+  store_label: string;
+  store_access_mode: "all" | "selected";
+  stores: TokenStore[];
+  scopes: string[];
   permissions: { read: boolean; write: boolean };
 }
 
@@ -41,12 +49,12 @@ export default function TokenCreated() {
   return (
     <>
       <Head title="Token Created" />
-      <div className="space-y-6 max-w-lg">
+      <div className="max-w-2xl space-y-6">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">
             Token Created
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">
+          <p className="mt-1 text-sm text-muted-foreground">
             Your new API token has been generated
           </p>
         </div>
@@ -54,17 +62,16 @@ export default function TokenCreated() {
         <Card className="border-amber-500/50">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-amber-600 dark:text-amber-400">
-              <AlertTriangle className="w-5 h-5" />
+              <AlertTriangle className="h-5 w-5" />
               Copy your token now
             </CardTitle>
             <CardDescription>
-              This is the only time the token value will be displayed. Store it
-              somewhere safe.
+              This is the only time the token value will be displayed.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex items-center gap-2">
-              <code className="flex-1 rounded-md bg-muted p-3 font-mono text-sm break-all select-all">
+              <code className="flex-1 select-all break-all rounded-md bg-muted p-3 font-mono text-sm">
                 {raw_token}
               </code>
               <Button
@@ -74,31 +81,24 @@ export default function TokenCreated() {
                 title="Copy token"
               >
                 {copied ? (
-                  <Check className="w-4 h-4 text-green-500" />
+                  <Check className="h-4 w-4 text-green-500" />
                 ) : (
-                  <Copy className="w-4 h-4" />
+                  <Copy className="h-4 w-4" />
                 )}
               </Button>
             </div>
 
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Name</span>
-                <span className="font-medium">{token.name}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Store</span>
-                <span className="font-mono">{token.store_name}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-muted-foreground">Permissions</span>
-                <div className="flex gap-1">
-                  {token.permissions.read && (
-                    <Badge variant="secondary">read</Badge>
-                  )}
-                  {token.permissions.write && (
-                    <Badge variant="secondary">write</Badge>
-                  )}
+            <div className="space-y-3 text-sm">
+              <Detail label="Name" value={token.name} />
+              <Detail label="Store Access" value={token.store_label} mono />
+              <div className="flex items-start justify-between gap-4">
+                <span className="text-muted-foreground">Scopes</span>
+                <div className="flex max-w-sm flex-wrap justify-end gap-1">
+                  {token.scopes.map((scope) => (
+                    <Badge key={scope} variant="outline">
+                      {scope}
+                    </Badge>
+                  ))}
                 </div>
               </div>
             </div>
@@ -111,5 +111,22 @@ export default function TokenCreated() {
         </Card>
       </div>
     </>
+  );
+}
+
+function Detail({
+  label,
+  value,
+  mono,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
+  return (
+    <div className="flex justify-between gap-4">
+      <span className="text-muted-foreground">{label}</span>
+      <span className={mono ? "font-mono" : "font-medium"}>{value}</span>
+    </div>
   );
 }

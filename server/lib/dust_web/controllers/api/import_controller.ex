@@ -4,6 +4,7 @@ defmodule DustWeb.Api.ImportController do
 
   alias Dust.{Stores, Sync}
   alias DustWeb.Api.Refs
+  alias DustWeb.ApiPrincipal
 
   action_fallback DustWeb.Api.FallbackController
 
@@ -80,12 +81,11 @@ defmodule DustWeb.Api.ImportController do
 
   def create(conn, %{"org" => org_slug, "store" => store_name}) do
     organization = conn.assigns.organization
-    store_token = conn.assigns.store_token
+    principal = conn.assigns.api_principal
 
     with :ok <- verify_org(organization, org_slug),
          {:ok, store} <- find_store(organization, store_name),
-         :ok <- verify_token_scope(store_token, store),
-         :ok <- verify_write_permission(store_token),
+         :ok <- authorize_store(principal, store, "entries:write"),
          {:ok, body, conn} <- Plug.Conn.read_body(conn) do
       lines = String.split(body, "\n")
       {:ok, summary} = Sync.Import.from_jsonl(store.id, lines, "system:import")
@@ -129,19 +129,10 @@ defmodule DustWeb.Api.ImportController do
     end
   end
 
-  defp verify_token_scope(store_token, store) do
-    if store_token.store_id == store.id do
-      :ok
-    else
-      {:error, :forbidden}
-    end
-  end
-
-  defp verify_write_permission(store_token) do
-    if Stores.StoreToken.can_write?(store_token) do
-      :ok
-    else
-      {:error, :forbidden}
+  defp authorize_store(principal, store, scope) do
+    case ApiPrincipal.authorize_store(principal, store, scope) do
+      :ok -> :ok
+      {:error, _reason} -> {:error, :forbidden}
     end
   end
 end

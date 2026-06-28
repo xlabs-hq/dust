@@ -15,6 +15,7 @@ defmodule Dust.MCP.Tools.DustStatus do
 
   alias Dust.MCP.Authz
   alias Dust.MCP.Principal
+  alias Dust.AccessTokens
   alias Dust.Sync
   alias GenMCP.MCP
 
@@ -38,9 +39,17 @@ defmodule Dust.MCP.Tools.DustStatus do
   end
 
   defp resolve(%Principal{kind: :store_token, store_token: token}, nil) do
-    store = token.store
-    org = store.organization
-    {:ok, store, "#{org.slug}/#{store.name}"}
+    case AccessTokens.list_accessible_stores(token) do
+      [store] ->
+        org = store.organization
+        {:ok, store, "#{org.slug}/#{store.name}"}
+
+      [] ->
+        {:error, "Token does not have access to any stores"}
+
+      _stores ->
+        {:error, "store argument is required for tokens with access to multiple stores"}
+    end
   end
 
   defp resolve(%Principal{kind: :store_token} = principal, full_name)

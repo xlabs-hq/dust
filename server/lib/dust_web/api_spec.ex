@@ -296,7 +296,25 @@ defmodule DustWeb.ApiSpec do
         properties: %{
           id: %{type: :string, format: :uuid},
           name: %{type: :string},
-          store_name: %{type: :string},
+          store_name: %{
+            type: :string,
+            deprecated: true,
+            description:
+              "Compatibility label. Use `store_access_mode` and `stores` for new clients."
+          },
+          store_access_mode: %{type: :string, enum: ["all", "selected"]},
+          stores: %{
+            type: :array,
+            items: %{
+              type: :object,
+              properties: %{
+                id: %{type: :string, format: :uuid},
+                name: %{type: :string}
+              },
+              required: [:id, :name]
+            }
+          },
+          scopes: %{type: :array, items: %{type: :string}},
           permissions: %{
             type: :object,
             properties: %{

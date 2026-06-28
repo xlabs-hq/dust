@@ -46,6 +46,10 @@ defmodule DustWeb.StoreChannelTest do
       assert reply.store_seq == 2
       assert reply.capver == DustProtocol.current_capver()
       assert reply.capver_min == DustProtocol.min_capver()
+      assert reply.permissions == %{read: true, write: true}
+      assert "entries:read" in reply.scopes
+      assert "entries:write" in reply.scopes
+      assert reply.store_access.mode == :selected
 
       # Should receive catch-up events followed by catch_up_complete
       assert_push "event", %{store_seq: 1, path: "a"}
@@ -63,6 +67,45 @@ defmodule DustWeb.StoreChannelTest do
 
       assert reply.store_seq == 1
       assert_push "event", %{store_seq: 1, path: "x"}
+    end
+
+    test "read-only token exposes write=false and returns missing_scope on write", %{
+      store: store,
+      token: token
+    } do
+      {:ok, read_only} =
+        Stores.create_store_token(store, %{
+          name: "ro",
+          read: true,
+          write: false,
+          created_by_id: token.created_by_id
+        })
+
+      {:ok, store_token} = Stores.authenticate_token(read_only.raw_token)
+
+      socket =
+        socket(DustWeb.StoreSocket, "test", %{
+          store_token: store_token,
+          device_id: "dev_ro",
+          capver: DustProtocol.current_capver()
+        })
+
+      {:ok, reply, socket} =
+        subscribe_and_join(socket, DustWeb.StoreChannel, "store:#{store.id}", %{
+          "last_store_seq" => 0
+        })
+
+      assert reply.permissions == %{read: true, write: false}
+
+      ref =
+        push(socket, "write", %{
+          "op" => "set",
+          "path" => "a",
+          "value" => "1",
+          "client_op_id" => "ro-write"
+        })
+
+      assert_reply ref, :error, %{reason: "missing_scope", scope: "entries:write"}
     end
 
     test "rejects join for wrong store_id", %{socket: socket} do

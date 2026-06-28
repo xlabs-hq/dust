@@ -2,8 +2,10 @@ defmodule DustWeb.Api.TokenApiController do
   use DustWeb, :controller
   use Oaskit.Controller
 
+  alias Dust.AccessTokens
   alias Dust.Stores
   alias DustWeb.Api.Refs
+  alias DustWeb.ApiPrincipal
 
   action_fallback DustWeb.Api.FallbackController
 
@@ -34,10 +36,11 @@ defmodule DustWeb.Api.TokenApiController do
   )
 
   def index(conn, _params) do
-    store_token = conn.assigns.store_token
+    principal = conn.assigns.api_principal
+    org = ApiPrincipal.organization(principal)
 
-    with :ok <- verify_write_permission(store_token) do
-      tokens = Stores.list_store_tokens(store_token.store_id)
+    with :ok <- authorize_org(principal, org, "tokens:read") do
+      tokens = list_tokens_for(principal, org)
       json(conn, %{tokens: Enum.map(tokens, &serialize_token/1)})
     end
   end
@@ -98,14 +101,14 @@ defmodule DustWeb.Api.TokenApiController do
     ]
   )
 
-  def create(conn, %{"store_name" => store_name, "name" => name} = params) do
-    org = conn.assigns.organization
-    store_token = conn.assigns.store_token
+  def create(conn, %{"name" => name} = params) do
+    principal = conn.assigns.api_principal
+    org = ApiPrincipal.organization(principal)
 
-    with :ok <- verify_write_permission(store_token),
-         :ok <- verify_same_store(store_token, store_name),
-         {:ok, store} <- find_store(org, store_name) do
-      create_token(conn, store, store_token, store_name, name, params)
+    with :ok <- authorize_org(principal, org, "tokens:write"),
+         {:ok, token_attrs} <- token_attrs_from_params(principal, org, name, params),
+         :ok <- verify_delegation(principal, token_attrs) do
+      create_token(conn, org, token_attrs)
     end
   end
 
@@ -113,24 +116,8 @@ defmodule DustWeb.Api.TokenApiController do
     {:error, {:invalid_params, "store_name and name are required"}}
   end
 
-  # Restrict cross-store token creation. The calling token must be
-  # scoped to the same store as the one it's creating tokens for.
-  defp verify_same_store(store_token, target_store_name) do
-    case store_token.store && store_token.store.name do
-      ^target_store_name -> :ok
-      _ -> {:error, :forbidden}
-    end
-  end
-
-  defp create_token(conn, store, store_token, store_name, name, params) do
-    attrs = %{
-      name: name,
-      read: params["read"] != false,
-      write: params["write"] == true,
-      created_by_id: store_token.created_by_id
-    }
-
-    case Stores.create_store_token(store, attrs) do
+  defp create_token(conn, org, attrs) do
+    case AccessTokens.create_token(org, attrs) do
       {:ok, token} ->
         conn
         |> put_status(201)
@@ -138,11 +125,10 @@ defmodule DustWeb.Api.TokenApiController do
           id: token.id,
           name: token.name,
           raw_token: token.raw_token,
-          store_name: store_name,
-          permissions: %{
-            read: Stores.StoreToken.can_read?(token),
-            write: Stores.StoreToken.can_write?(token)
-          }
+          store_access_mode: token.store_access_mode,
+          stores: serialize_token_stores(token),
+          scopes: token.scopes,
+          permissions: serialize_permissions(token)
         })
 
       {:error, changeset} ->
@@ -176,39 +162,162 @@ defmodule DustWeb.Api.TokenApiController do
   )
 
   def delete(conn, %{"id" => id}) do
-    store_token = conn.assigns.store_token
+    principal = conn.assigns.api_principal
+    org = ApiPrincipal.organization(principal)
 
-    with :ok <- verify_write_permission(store_token),
-         {:ok, _} <- Stores.revoke_token_in_store(id, store_token.store_id) do
+    with :ok <- authorize_org(principal, org, "tokens:write"),
+         {:ok, target} <- find_manageable_token(principal, org, id),
+         {:ok, _} <- AccessTokens.revoke_token_in_org(target.id, org) do
       json(conn, %{ok: true})
     end
   end
 
-  defp find_store(org, store_name) do
-    case Stores.get_store_by_name(org, store_name) do
+  defp list_tokens_for(%ApiPrincipal{type: :bearer, store_token: token}, _org) do
+    AccessTokens.list_visible_tokens(token)
+  end
+
+  defp list_tokens_for(%ApiPrincipal{type: :session}, org), do: AccessTokens.list_org_tokens(org)
+
+  defp find_manageable_token(%ApiPrincipal{type: :session}, org, id) do
+    case AccessTokens.get_token_in_org(id, org) do
       nil -> {:error, :not_found}
-      store -> {:ok, store}
+      token -> {:ok, token}
     end
   end
 
-  defp verify_write_permission(store_token) do
-    if Stores.StoreToken.can_write?(store_token), do: :ok, else: {:error, :forbidden}
+  defp find_manageable_token(%ApiPrincipal{type: :bearer, store_token: caller}, org, id) do
+    case AccessTokens.get_token_in_org(id, org) do
+      nil ->
+        {:error, :not_found}
+
+      target ->
+        if AccessTokens.can_manage_token?(caller, target) do
+          {:ok, target}
+        else
+          {:error, :forbidden}
+        end
+    end
+  end
+
+  defp token_attrs_from_params(principal, org, name, params) do
+    scopes = scopes_from_params(params)
+    mode = store_access_mode_from_params(params)
+
+    with {:ok, store_ids} <- store_ids_from_params(org, mode, params) do
+      {:ok,
+       %{
+         name: name,
+         scopes: scopes,
+         store_access_mode: mode,
+         store_ids: store_ids,
+         created_by_id: created_by_id(principal)
+       }}
+    end
+  end
+
+  defp scopes_from_params(%{"scopes" => scopes}) when is_list(scopes), do: scopes
+
+  defp scopes_from_params(params) do
+    read? = Map.get(params, "read", true) not in [false, "false", "0", 0]
+    write? = Map.get(params, "write", false) in [true, "true", "1", 1]
+    AccessTokens.legacy_scopes(read?, write?)
+  end
+
+  defp store_access_mode_from_params(%{"store_access_mode" => "all"}), do: :all
+  defp store_access_mode_from_params(_params), do: :selected
+
+  defp store_ids_from_params(_org, :all, _params), do: {:ok, []}
+
+  defp store_ids_from_params(org, :selected, params) do
+    cond do
+      is_list(params["store_ids"]) ->
+        {:ok, params["store_ids"]}
+
+      is_list(params["store_names"]) ->
+        store_ids_from_names(org, params["store_names"])
+
+      is_binary(params["store_name"]) ->
+        store_ids_from_names(org, [params["store_name"]])
+
+      true ->
+        {:error, {:invalid_params, "selected store access requires store_ids or store_name"}}
+    end
+  end
+
+  defp store_ids_from_names(org, store_names) do
+    stores =
+      Enum.map(store_names, fn store_name ->
+        Stores.get_store_by_name(org, store_name)
+      end)
+
+    if Enum.any?(stores, &is_nil/1) do
+      {:error, :not_found}
+    else
+      {:ok, Enum.map(stores, & &1.id)}
+    end
+  end
+
+  defp created_by_id(%ApiPrincipal{type: :bearer, store_token: token}), do: token.created_by_id
+  defp created_by_id(%ApiPrincipal{type: :session, user: user}), do: user.id
+
+  defp verify_delegation(%ApiPrincipal{type: :session}, _attrs), do: :ok
+
+  defp verify_delegation(%ApiPrincipal{type: :bearer, store_token: caller}, attrs) do
+    if AccessTokens.can_delegate?(
+         caller,
+         attrs.scopes,
+         attrs.store_access_mode,
+         attrs.store_ids
+       ) do
+      :ok
+    else
+      {:error, :forbidden}
+    end
+  end
+
+  defp authorize_org(%ApiPrincipal{type: :session}, _org, _scope), do: :ok
+
+  defp authorize_org(%ApiPrincipal{type: :bearer, store_token: token}, org, scope) do
+    case AccessTokens.authorize_org(token, org, scope) do
+      :ok -> :ok
+      {:error, _reason} -> {:error, :forbidden}
+    end
   end
 
   defp serialize_token(token) do
     %{
       id: token.id,
       name: token.name,
-      store_name: token.store.name,
-      permissions: %{
-        read: Stores.StoreToken.can_read?(token),
-        write: Stores.StoreToken.can_write?(token)
-      },
+      store_name: legacy_store_name(token),
+      store_access_mode: token.store_access_mode,
+      stores: serialize_token_stores(token),
+      scopes: token.scopes,
+      permissions: serialize_permissions(token),
       expires_at: token.expires_at,
       last_used_at: token.last_used_at,
       inserted_at: token.inserted_at
     }
   end
+
+  defp serialize_permissions(token) do
+    %{
+      read: AccessTokens.has_scope?(token, "entries:read"),
+      write: AccessTokens.has_scope?(token, "entries:write")
+    }
+  end
+
+  defp serialize_token_stores(%{store_access_mode: :all}), do: []
+
+  defp serialize_token_stores(token) do
+    token.store_grants
+    |> Enum.map(fn grant ->
+      %{id: grant.store.id, name: grant.store.name}
+    end)
+  end
+
+  defp legacy_store_name(%{store_access_mode: :all}), do: "*"
+  defp legacy_store_name(%{store: %{name: name}}), do: name
+  defp legacy_store_name(token), do: token.store_ids |> Enum.join(",")
 
   defp format_errors(changeset) do
     Ecto.Changeset.traverse_errors(changeset, fn {msg, opts} ->

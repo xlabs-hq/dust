@@ -2,7 +2,8 @@ defmodule DustWeb.FileController do
   use DustWeb, :controller
   use Oaskit.Controller
 
-  alias Dust.{Files, Stores, Sync}
+  alias Dust.AccessTokens
+  alias Dust.{Files, Sync}
   alias DustWeb.Api.Refs
 
   operation(:show,
@@ -39,8 +40,8 @@ defmodule DustWeb.FileController do
   def show(conn, %{"hash" => hash}) do
     store_token = conn.assigns.store_token
 
-    with true <- Stores.StoreToken.can_read?(store_token),
-         true <- Sync.has_file_ref?(store_token.store_id, hash),
+    with true <- AccessTokens.has_scope?(store_token, "files:read"),
+         %{} <- AccessTokens.find_accessible_store(store_token, &Sync.has_file_ref?(&1.id, hash)),
          {:ok, content} <- Files.download(hash) do
       blob = Files.get_blob(hash)
       content_type = (blob && blob.content_type) || "application/octet-stream"
@@ -53,6 +54,9 @@ defmodule DustWeb.FileController do
     else
       {:error, :not_found} ->
         conn |> put_status(404) |> json(%{error: "not_found"})
+
+      nil ->
+        conn |> put_status(403) |> json(%{error: "forbidden"})
 
       false ->
         conn |> put_status(403) |> json(%{error: "forbidden"})

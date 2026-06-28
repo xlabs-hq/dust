@@ -3,6 +3,8 @@ defmodule Dust.Stores.StoreToken do
 
   import Bitwise
 
+  alias Dust.AccessTokens
+
   @read_permission 1
   @write_permission 2
 
@@ -20,7 +22,10 @@ defmodule Dust.Stores.StoreToken do
     timestamps()
   end
 
+  def can_read?(%Dust.AccessTokens.Token{} = token), do: AccessTokens.can_read?(token)
   def can_read?(%__MODULE__{permissions: p}), do: (p &&& @read_permission) != 0
+
+  def can_write?(%Dust.AccessTokens.Token{} = token), do: AccessTokens.can_write?(token)
   def can_write?(%__MODULE__{permissions: p}), do: (p &&& @write_permission) != 0
 
   def permissions_integer(read?, write?) do
