@@ -5,6 +5,8 @@ All notable changes to `dustlayer` are documented here. This project adheres to
 
 ## [Unreleased]
 
+## 0.1.2 - 2026-06-28
+
 ## 0.1.1 - 2026-06-27
 
 ## 0.1.0 - 2026-06-27
