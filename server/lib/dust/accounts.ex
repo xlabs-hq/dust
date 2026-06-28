@@ -7,6 +7,33 @@ defmodule Dust.Accounts do
 
   def get_user!(id), do: Repo.get!(User, id)
 
+  @doc """
+  Lists all users with a count of the active organizations each belongs to.
+  Returns maps suitable for an admin listing, ordered by email.
+  """
+  def list_users do
+    org_counts =
+      from m in OrganizationMembership,
+        where: is_nil(m.deleted_at),
+        group_by: m.user_id,
+        select: %{user_id: m.user_id, count: count(m.id)}
+
+    from(u in User,
+      left_join: c in subquery(org_counts),
+      on: c.user_id == u.id,
+      order_by: [asc: u.email],
+      select: %{
+        id: u.id,
+        email: u.email,
+        first_name: u.first_name,
+        last_name: u.last_name,
+        inserted_at: u.inserted_at,
+        org_count: coalesce(c.count, 0)
+      }
+    )
+    |> Repo.all()
+  end
+
   def get_user_by_email(email) do
     Repo.get_by(User, email: email)
   end
@@ -138,6 +165,53 @@ defmodule Dust.Accounts do
 
   # --- Organizations ---
 
+  @doc """
+  Lists all organizations with active-member and store counts, ordered by slug.
+  Returns maps suitable for an admin listing.
+  """
+  def list_organizations do
+    member_counts =
+      from m in OrganizationMembership,
+        where: is_nil(m.deleted_at),
+        group_by: m.organization_id,
+        select: %{organization_id: m.organization_id, count: count(m.id)}
+
+    store_counts =
+      from s in Dust.Stores.Store,
+        group_by: s.organization_id,
+        select: %{organization_id: s.organization_id, count: count(s.id)}
+
+    from(o in Organization,
+      left_join: mc in subquery(member_counts),
+      on: mc.organization_id == o.id,
+      left_join: sc in subquery(store_counts),
+      on: sc.organization_id == o.id,
+      order_by: [asc: o.slug],
+      select: %{
+        id: o.id,
+        name: o.name,
+        slug: o.slug,
+        plan: o.plan,
+        inserted_at: o.inserted_at,
+        member_count: coalesce(mc.count, 0),
+        store_count: coalesce(sc.count, 0)
+      }
+    )
+    |> Repo.all()
+  end
+
+  def get_organization!(id), do: Repo.get!(Organization, id)
+
+  @doc """
+  Changes an organization's plan. The plan is validated against the known plans
+  in `Dust.Billing.Limits`; an unknown plan returns an `:error` changeset.
+  """
+  def update_organization_plan(%Organization{} = org, plan) do
+    org
+    |> Organization.plan_changeset(%{plan: plan})
+    |> Repo.update()
+  end
+
   def get_organization_by_slug!(slug) do
     Repo.get_by!(Organization, slug: slug)
   end
@@ -197,6 +271,20 @@ defmodule Dust.Accounts do
       join: u in assoc(m, :user),
       preload: [:user],
       order_by: [asc: m.inserted_at]
+    )
+    |> Repo.all()
+  end
+
+  @doc """
+  Lists a user's active memberships with the organization preloaded, so callers
+  can show each org alongside the user's role in it. Ordered by org slug.
+  """
+  def list_user_memberships(%User{} = user) do
+    from(m in OrganizationMembership,
+      where: m.user_id == ^user.id and is_nil(m.deleted_at),
+      join: o in assoc(m, :organization),
+      preload: [organization: o],
+      order_by: [asc: o.slug]
     )
     |> Repo.all()
   end

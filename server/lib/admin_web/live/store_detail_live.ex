@@ -18,6 +18,11 @@ defmodule AdminWeb.StoreDetailLive do
     entry_count = store.entry_count
     op_count = store.op_count
 
+    # The recorded counters live in Postgres; the actual rows live in the
+    # per-store SQLite DB. If the record claims data but the DB returns nothing,
+    # the store's database file is missing or empty in this environment.
+    data_missing? = (entry_count > 0 or op_count > 0) and entries == [] and ops == []
+
     {:ok,
      assign(socket,
        page_title: "Store: #{store.name}",
@@ -26,6 +31,7 @@ defmodule AdminWeb.StoreDetailLive do
        ops: ops,
        entry_count: entry_count,
        op_count: op_count,
+       data_missing?: data_missing?,
        entries_page: 0,
        ops_page: 0,
        entries_per_page: @entries_per_page,
@@ -88,7 +94,13 @@ defmodule AdminWeb.StoreDetailLive do
 
     <div class="mb-6">
       <h1 class="text-2xl font-bold text-gray-900">
-        {String.upcase(@store.organization.slug)} / {@store.name}
+        <a
+          href={~p"/orgs/#{@store.organization.id}"}
+          class="text-blue-600 hover:text-blue-800"
+        >
+          {String.upcase(@store.organization.slug)}
+        </a>
+        <span class="text-gray-400">/</span> {@store.name}
       </h1>
       <div class="mt-2 flex items-center space-x-4 text-sm text-gray-500">
         <span>Status: <span class="font-medium text-gray-700">{@store.status}</span></span>
@@ -96,6 +108,17 @@ defmodule AdminWeb.StoreDetailLive do
         <span>Ops: <span class="font-medium text-gray-700">{@op_count}</span></span>
         <span>ID: <code class="text-xs bg-gray-100 px-1 py-0.5 rounded">{@store.id}</code></span>
       </div>
+    </div>
+
+    <div
+      :if={@data_missing?}
+      id="data-missing-warning"
+      class="mb-6 rounded border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+    >
+      This store records <span class="font-semibold">{@entry_count} entries</span>
+      and <span class="font-semibold">{@op_count} ops</span>, but no data was found in its
+      database. The per-store SQLite file is missing or empty in this environment, so there
+      is nothing to display below.
     </div>
 
     <%!-- Entries table --%>
@@ -198,7 +221,7 @@ defmodule AdminWeb.StoreDetailLive do
                 </code>
               </td>
               <td class="px-4 py-2 text-sm text-gray-500">
-                {Calendar.strftime(op.inserted_at, "%Y-%m-%d %H:%M:%S")}
+                {format_ts(op.inserted_at)}
               </td>
             </tr>
           </tbody>
@@ -240,4 +263,19 @@ defmodule AdminWeb.StoreDetailLive do
   defp truncate_device(nil), do: "-"
   defp truncate_device(id) when byte_size(id) > 12, do: String.slice(id, 0, 12) <> "..."
   defp truncate_device(id), do: id
+
+  # Timestamps from the per-store SQLite cache arrive as ISO8601 strings, while
+  # rows loaded directly from Ecto are datetime structs. Handle both.
+  defp format_ts(nil), do: "-"
+
+  defp format_ts(ts) when is_binary(ts) do
+    case DateTime.from_iso8601(ts) do
+      {:ok, datetime, _offset} -> format_ts(datetime)
+      {:error, _reason} -> ts
+    end
+  end
+
+  defp format_ts(%{__struct__: mod} = ts) when mod in [DateTime, NaiveDateTime] do
+    Calendar.strftime(ts, "%Y-%m-%d %H:%M:%S")
+  end
 end

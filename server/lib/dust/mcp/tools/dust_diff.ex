@@ -45,9 +45,6 @@ defmodule Dust.MCP.Tools.DustDiff do
 
       {:error, reason} when is_binary(reason) ->
         {:error, reason, channel}
-
-      {:error, reason} ->
-        {:error, inspect(reason), channel}
     end
   end
 end

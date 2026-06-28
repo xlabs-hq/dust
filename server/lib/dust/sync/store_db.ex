@@ -7,8 +7,6 @@ defmodule Dust.Sync.StoreDB do
   are opened on demand for queries.
   """
 
-  require Logger
-
   # Read at runtime so production can override via STORE_DATA_DIR env var
   defp store_data_dir_config, do: Application.get_env(:dust, :store_data_dir, "priv/stores")
 

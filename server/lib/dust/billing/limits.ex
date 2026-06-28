@@ -24,8 +24,19 @@ defmodule Dust.Billing.Limits do
     }
   }
 
+  @default_plan "free"
+
+  @doc "The default plan assigned to new organizations."
+  def default_plan, do: @default_plan
+
+  @doc "All plans with their limits, keyed by plan name."
+  def plans, do: @plans
+
+  @doc "The list of known plan names, ordered from least to most generous."
+  def plan_names, do: ["free", "pro", "team"]
+
   def for_plan(plan) when is_binary(plan) do
-    Map.get(@plans, plan, @plans["free"])
+    Map.get(@plans, plan, @plans[@default_plan])
   end
 
   def check_store_count(organization) do

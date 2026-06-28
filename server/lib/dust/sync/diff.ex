@@ -17,18 +17,18 @@ defmodule Dust.Sync.Diff do
       before_state =
         if from_seq > 0, do: Rollback.compute_historical_state(store_id, from_seq), else: %{}
 
-      after_state = Rollback.compute_historical_state(store_id, to_seq) || %{}
+      after_state = Rollback.compute_historical_state(store_id, to_seq)
 
       all_paths =
         MapSet.union(
-          MapSet.new(Map.keys(before_state || %{})),
+          MapSet.new(Map.keys(before_state)),
           MapSet.new(Map.keys(after_state))
         )
 
       changes =
         all_paths
         |> Enum.map(fn path ->
-          before_val = unwrap_val(Map.get(before_state || %{}, path))
+          before_val = unwrap_val(Map.get(before_state, path))
           after_val = unwrap_val(Map.get(after_state, path))
 
           if before_val != after_val do

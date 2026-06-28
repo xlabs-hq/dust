@@ -93,7 +93,6 @@ defmodule Dust.Sync.Rollback do
   def compute_historical_value(store_id, path, to_seq) do
     {:ok, path} = Sync.normalize_path(path)
     state = compute_historical_state(store_id, to_seq)
-    state = state || %{}
 
     case Map.get(state, path) do
       nil ->

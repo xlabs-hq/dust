@@ -21,4 +21,18 @@ defmodule Dust.Accounts.Organization do
     |> Ecto.Changeset.unique_constraint(:workos_organization_id)
     |> Ecto.Changeset.validate_format(:slug, ~r/^[a-z0-9][a-z0-9-]*$/)
   end
+
+  @doc """
+  Changeset for changing only an organization's plan.
+
+  `:plan` is intentionally excluded from `changeset/2` so it can never be set
+  through the normal user-facing flows; plan changes go through this admin path
+  and are validated against the known plans in `Dust.Billing.Limits`.
+  """
+  def plan_changeset(org, attrs) do
+    org
+    |> Ecto.Changeset.cast(attrs, [:plan])
+    |> Ecto.Changeset.validate_required([:plan])
+    |> Ecto.Changeset.validate_inclusion(:plan, Dust.Billing.Limits.plan_names())
+  end
 end
