@@ -1338,4 +1338,90 @@ defmodule Dust.SyncEngineTest do
       timeout_ms -> []
     end
   end
+
+  describe "acked-op reply is robust to ack/echo ordering" do
+    # Regression: the server broadcasts the committed "event" BEFORE it sends the
+    # phx_reply ack, so the echo (:server_event) can reconcile/delete the pending
+    # op before the ack (:write_accepted) runs. The ack then found nothing and the
+    # caller hung forever. Both signals must be able to answer the waiter.
+    test "echo arriving before the phx_reply ack still answers the caller" do
+      store = "test/store"
+      task = Task.async(fn -> SyncEngine.put(store, "k", "v", []) end)
+      client_op_id = await_pending_op(store)
+
+      # Echo first (deletes the pending op)...
+      SyncEngine.handle_server_event(store, %{
+        "client_op_id" => client_op_id,
+        "op" => "set",
+        "path" => "k",
+        "value" => "v",
+        "store_seq" => 7
+      })
+
+      # ...then the ack lands against an already-reconciled op (must be a no-op).
+      SyncEngine.handle_write_accepted(store, client_op_id, %{"store_seq" => 7})
+
+      assert {:ok, 7} = Task.await(task, 1_000)
+    end
+
+    test "ack arriving before the echo answers exactly once (no double-reply)" do
+      store = "test/store"
+      task = Task.async(fn -> SyncEngine.put(store, "k", "v", []) end)
+      client_op_id = await_pending_op(store)
+
+      SyncEngine.handle_write_accepted(store, client_op_id, %{"store_seq" => 9})
+
+      SyncEngine.handle_server_event(store, %{
+        "client_op_id" => client_op_id,
+        "op" => "set",
+        "path" => "k",
+        "value" => "v",
+        "store_seq" => 9
+      })
+
+      assert {:ok, 9} = Task.await(task, 1_000)
+    end
+
+    test "a lease ack delivered only via the committed echo still answers the caller" do
+      store = "test/store"
+      # Lease fast-fails :unavailable unless connected, so mark connected first.
+      SyncEngine.set_status(store, :connected)
+      _ = SyncEngine.status(store)
+
+      task = Task.async(fn -> SyncEngine.lease(store, "lock", ttl_ms: 30_000) end)
+      client_op_id = await_pending_op(store)
+
+      # Only the echo arrives (carrying the lease envelope) — no separate ack.
+      SyncEngine.handle_server_event(store, %{
+        "client_op_id" => client_op_id,
+        "op" => "lease",
+        "path" => "lock",
+        "value" => %{
+          "_type" => "lease",
+          "token" => 11,
+          "holder" => nil,
+          "expires_at" => 1_700_000_000_000
+        },
+        "store_seq" => 11
+      })
+
+      assert {:ok, %Dust.Lease{key: "lock", token: 11}} = Task.await(task, 1_000)
+    end
+  end
+
+  defp await_pending_op(store, tries \\ 100) do
+    state = :sys.get_state(SyncEngine.via(store))
+
+    case Map.keys(state.pending_ops) do
+      [id | _] ->
+        id
+
+      [] when tries > 0 ->
+        Process.sleep(5)
+        await_pending_op(store, tries - 1)
+
+      [] ->
+        flunk("no pending op appeared — the acked call never enqueued")
+    end
+  end
 end

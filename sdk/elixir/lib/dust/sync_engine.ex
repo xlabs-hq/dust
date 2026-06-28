@@ -1,5 +1,11 @@
 defmodule Dust.SyncEngine do
   use GenServer
+  require Logger
+
+  # How long an acked op (one carrying a waiting :from) may go without a server
+  # ack or committed echo before the caller is answered {:error, :timeout}.
+  # Generous: real acks land in milliseconds; this only catches a dropped reply.
+  @ack_timeout_ms 30_000
 
   @default_capabilities %{
     permissions: %{read: false, write: false},
@@ -618,6 +624,28 @@ defmodule Dust.SyncEngine do
     end
   end
 
+  # Backstop: if neither the phx_reply ack nor the committed echo answered a
+  # waiting caller within the deadline, answer it {:error, :timeout} rather than
+  # let it hang. Fires harmlessly (no-op) once the op is already answered or
+  # reconciled. This is what lets lease/renew/release call with :infinity safely.
+  @impl true
+  def handle_info({:ack_timeout, client_op_id}, state) do
+    case Map.get(state.pending_ops, client_op_id) do
+      %{from: from} = op_attrs ->
+        Logger.warning(
+          "[Dust] no server ack/echo for #{op_attrs[:op]} #{client_op_id} within " <>
+            "#{@ack_timeout_ms}ms — answering caller {:error, :timeout}"
+        )
+
+        GenServer.reply(from, {:error, :timeout})
+        answered = Map.delete(op_attrs, :from)
+        {:noreply, %{state | pending_ops: Map.put(state.pending_ops, client_op_id, answered)}}
+
+      _already_answered_or_reconciled ->
+        {:noreply, state}
+    end
+  end
+
   @impl true
   def handle_info(_msg, state), do: {:noreply, state}
 
@@ -719,28 +747,22 @@ defmodule Dust.SyncEngine do
   def handle_cast({:write_accepted, client_op_id, reply}, state) do
     case Map.get(state.pending_ops, client_op_id) do
       nil ->
+        # The committed echo (:server_event) can arrive before this phx_reply
+        # ack and reconcile (delete) the pending op first — in which case it
+        # already answered the waiter. Expected under that ordering; logged, not
+        # silently dropped.
+        Logger.debug(
+          "[Dust] write ack #{client_op_id} arrived after the committed echo reconciled it"
+        )
+
         {:noreply, state}
 
       op_attrs ->
-        # Reply to any caller waiting for the server ack, shaped per op.
-        case Map.get(op_attrs, :from) do
-          nil ->
-            :ok
-
-          from ->
-            GenServer.reply(from, build_ack_reply(op_attrs, reply))
-        end
-
-        # Leave pending_ops intact — it's cleared by :server_event reconciliation
-        # so rollback on later rejection (by reason like :rate_limited) still works.
-        # But once we've replied successfully, drop the :from so subsequent events
-        # don't double-reply.
-        pending =
-          Map.update(state.pending_ops, client_op_id, op_attrs, fn attrs ->
-            Map.delete(attrs, :from)
-          end)
-
-        {:noreply, %{state | pending_ops: pending}}
+        # Answer the waiter from the ack (at-most-once via :from). Leave the op
+        # in pending_ops — :server_event reconciliation deletes it — but strip
+        # :from so the echo doesn't double-reply.
+        answered = answer_waiter(op_attrs, reply)
+        {:noreply, %{state | pending_ops: Map.put(state.pending_ops, client_op_id, answered)}}
     end
   end
 
@@ -792,8 +814,18 @@ defmodule Dust.SyncEngine do
         state.cache.delete(state.cache_target, state.store, path)
     end
 
-    # Reconcile pending ops
+    # Reconcile pending ops. The committed echo can beat the phx_reply ack, so
+    # answer any waiting caller HERE (from the echo's canonical value/seq) before
+    # dropping the op — otherwise a caller blocked on the ack would hang forever,
+    # since the ack would land against an already-deleted op.
     was_pending = Map.has_key?(state.pending_ops, client_op_id)
+
+    _answered =
+      answer_waiter(
+        Map.get(state.pending_ops, client_op_id),
+        ack_reply_from_event(value, store_seq)
+      )
+
     pending = Map.delete(state.pending_ops, client_op_id)
 
     # Append to activity buffer for dashboard
@@ -987,6 +1019,33 @@ defmodule Dust.SyncEngine do
       _ -> op_msg
     end
   end
+
+  # Answer a caller blocked on an op's server ack, if one is waiting. At-most-once:
+  # pops :from so whichever of {phx_reply ack, committed echo} lands second is a
+  # no-op. The server can deliver those two in either order (it broadcasts the
+  # echo before replying), so BOTH the :write_accepted and :server_event handlers
+  # call this. Returns op_attrs with :from removed.
+  defp answer_waiter(nil, _reply), do: nil
+
+  defp answer_waiter(op_attrs, reply) do
+    case Map.pop(op_attrs, :from) do
+      {nil, attrs} ->
+        attrs
+
+      {from, attrs} ->
+        GenServer.reply(from, build_ack_reply(attrs, reply))
+        attrs
+    end
+  end
+
+  # Shape a committed echo (canonical value + store_seq) into the same reply map
+  # the phx_reply ack carries, so build_ack_reply works from either source. A
+  # lease echo's value is the lease envelope (token/expires_at/holder); a scalar
+  # set's value isn't a map, so only store_seq is meaningful.
+  defp ack_reply_from_event(value, store_seq) when is_map(value),
+    do: Map.put(value, "store_seq", store_seq)
+
+  defp ack_reply_from_event(_value, store_seq), do: %{"store_seq" => store_seq}
 
   defp lease_extra(opts) do
     %{ttl_ms: Keyword.get(opts, :ttl_ms, 30_000), holder: Keyword.get(opts, :holder)}
@@ -1244,11 +1303,20 @@ defmodule Dust.SyncEngine do
   defp reason_to_atom(_), do: :unknown
 
   defp send_to_connection(store, op_attrs) do
+    arm_ack_deadline(op_attrs)
+
     case GenServer.whereis(Dust.Connection) do
       nil -> :ok
       pid -> send(pid, {:send_write, store, with_path_segments(op_attrs)})
     end
   end
+
+  # Only acked ops (those carrying a waiting :from) need the deadline. Re-arming
+  # on resend after reconnect is fine — a fresh deadline per attempt.
+  defp arm_ack_deadline(%{from: _, client_op_id: client_op_id}),
+    do: Process.send_after(self(), {:ack_timeout, client_op_id}, @ack_timeout_ms)
+
+  defp arm_ack_deadline(_op_attrs), do: nil
 
   # capver 3 wire shape: send `path_segments` (authoritative) alongside
   # `path` (slash-rendered, for back-compat / display). The server

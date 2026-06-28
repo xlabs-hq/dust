@@ -231,8 +231,17 @@ defmodule Dust.Connection do
           {:ok, reply} when is_map(reply) ->
             Dust.SyncEngine.handle_write_accepted(store_name, client_op_id, reply)
 
-          _ ->
-            :ok
+          # An ack we don't recognise (bare :ok/:error, or a non-map payload) on
+          # a tracked write ref. Don't swallow it: a blocked caller must get a
+          # tagged error rather than hang. Surface as a rejection and log loudly.
+          other ->
+            Logger.warning(
+              "[Dust.Connection] unexpected reply for #{client_op_id}: #{inspect(other)}"
+            )
+
+            Dust.SyncEngine.handle_write_rejected(store_name, client_op_id, %{
+              "reason" => "unexpected_reply"
+            })
         end
 
         {:ok, socket}
