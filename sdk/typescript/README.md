@@ -36,6 +36,24 @@ const unsub = dust.on("org/store", "users/*", (event) => {
 unsub()
 ```
 
+## Authentication and Capabilities
+
+Tokens need `entries:read` to join and read a store. Add `entries:write` for
+writes, leases, rollback, and `singleFlight`.
+
+```typescript
+import { AuthorizationError } from "@dust-sync/sdk"
+
+try {
+  await dust.put("org/store", "key", "value")
+} catch (err) {
+  if (err instanceof AuthorizationError && err.reason === "missing_scope") {
+    console.error(err.message) // Token is missing entries:write scope
+    console.error(err.scope)   // entries:write
+  }
+}
+```
+
 ## API
 
 ### Reads
@@ -165,10 +183,13 @@ await dust.singleFlight(store, `pages/${slug}`, async () => {
 })
 ```
 
+`singleFlight` acquires a lease and publishes the result, so the token must
+include `entries:write`.
+
 `fn` returns `{ publish: value }` or `{ abort: reason }`. Prefer `{ abort }`
 over throwing for transient failures (it releases the lease immediately;
 others re-elect at once). `singleFlight` rejects with `SingleFlightAbort`,
-`SingleFlightTimeout`, or `LeaseError`.
+`SingleFlightTimeout`, `LeaseError`, or `AuthorizationError`.
 
 The low-level lease is available directly too:
 
@@ -190,8 +211,11 @@ const dust = new Dust({
   format: "msgpack", // or "json" (default)
 })
 
-// Check connection status
-const { connected, seq } = dust.status("org/store")
+// Check connection status and token capabilities after join
+const { connected, seq, permissions, scopes, storeAccess } = dust.status("org/store")
+// permissions => { read: true, write: false }
+// scopes => ["entries:read"]
+// storeAccess => { mode: "selected", storeIds: ["..."] }
 
 // Close when done
 dust.close()

@@ -61,11 +61,17 @@ defmodule Dust.TestingTest do
   end
 
   test "set_status controls status response" do
-    Dust.Testing.set_status("test/store", :connected, store_seq: 42)
+    Dust.Testing.set_status("test/store", :connected,
+      store_seq: 42,
+      permissions: %{read: true, write: false},
+      scopes: ["entries:read"]
+    )
 
     status = TestDust.status("test/store")
     assert status.connection == :connected
     assert status.last_store_seq == 42
+    assert status.permissions == %{read: true, write: false}
+    assert status.scopes == ["entries:read"]
   end
 
   test "build_event creates a properly shaped event map" do

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { Dust, SingleFlightAbort } from '../src/index'
+import { AuthorizationError, Dust, SingleFlightAbort } from '../src/index'
 
 describe('Dust.singleFlight', () => {
   function createDust(): any {
@@ -114,5 +114,31 @@ describe('Dust.singleFlight', () => {
     )
 
     expect(flight).toEqual({ value: { r: 7 }, source: 'computed', stale: false, coordinated: false })
+  })
+
+  it('does not run locally when lease is rejected for missing write scope', async () => {
+    const dust = createDust()
+    let ran = false
+    stubByOp(dust, {
+      lease: () => pushError({
+        reason: 'missing_scope',
+        scope: 'entries:write',
+        message: 'Token is missing entries:write scope',
+      }),
+    })
+
+    await expect(
+      dust.singleFlight(
+        's',
+        'k',
+        () => {
+          ran = true
+          return { publish: { r: 7 } }
+        },
+        { onUnavailable: 'runLocal' },
+      ),
+    ).rejects.toBeInstanceOf(AuthorizationError)
+
+    expect(ran).toBe(false)
   })
 })

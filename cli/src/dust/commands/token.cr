@@ -16,38 +16,74 @@ module Dust
           puts "Usage: dust token <subcommand>"
           puts ""
           puts "Subcommands:"
-          puts "  create <store> <name> [options]  Create a new store token"
+          puts "  create <org/store|org/*> <name> [options]"
+          puts "                                   Create a new token"
           puts "  list                             List existing tokens"
           puts "  revoke <id>                      Revoke a token"
           puts ""
           puts "Create options:"
-          puts "  --read-only    Create a read-only token (default: read+write)"
+          puts "  --read-only      Create a read-only token (default: read+write)"
+          puts "  --all-stores     Grant access to all stores in the account"
+          puts "  --scope SCOPE    Add a canonical scope (repeatable)"
         else
           Output.error("Unknown token subcommand: #{subcommand}. Use: create, list, revoke")
         end
       end
 
-      # dust token create <org/store> <name> [--read-only]
+      # dust token create <org/store|org/*> <name> [--read-only] [--all-stores] [--scope SCOPE]
       def self.create(config : Config, args : Array(String))
         Output.require_auth!(config)
-        Output.require_args!(args, 2, "dust token create <org/store> <name> [--read-only]")
+        Output.require_args!(args, 2, "dust token create <org/store|org/*> <name> [--read-only] [--all-stores] [--scope SCOPE]")
 
-        store_name = args[0]
+        store_ref = args[0]
         name = args[1]
-        read_only = args.includes?("--read-only")
+        read_only = false
+        all_stores = false
+        scopes = [] of String
 
-        parts = store_name.split("/")
+        i = 2
+        while i < args.size
+          case args[i]
+          when "--read-only"
+            read_only = true
+          when "--all-stores"
+            all_stores = true
+          when "--scope"
+            i += 1
+            Output.error("missing value for --scope") if i >= args.size
+            scopes << args[i]
+          else
+            Output.error("Unknown token create option: #{args[i]}")
+          end
+
+          i += 1
+        end
+
+        parts = store_ref.split("/")
         if parts.size != 2
           Output.error("Store must be in org/store format")
         end
 
+        store_name = parts[1]
+        all_stores = true if store_name == "*"
+
         base_url = derive_http_url(config.server_url)
         body = {
-          "store_name" => JSON::Any.new(parts[1]),
-          "name"       => JSON::Any.new(name),
-          "read"       => JSON::Any.new(true),
-          "write"      => JSON::Any.new(!read_only),
+          "name"              => JSON::Any.new(name),
+          "store_access_mode" => JSON::Any.new(all_stores ? "all" : "selected"),
         } of String => JSON::Any
+
+        if scopes.empty?
+          body["read"] = JSON::Any.new(true)
+          body["write"] = JSON::Any.new(!read_only)
+        else
+          body["scopes"] = JSON::Any.new(scopes.map { |scope| JSON::Any.new(scope) })
+        end
+
+        unless all_stores
+          body["store_name"] = JSON::Any.new(store_name)
+          body["store_names"] = JSON::Any.new([JSON::Any.new(store_name)])
+        end
 
         response = HTTP::Client.post(
           "#{base_url}/api/tokens",
@@ -64,8 +100,9 @@ module Dust
           puts "Token created."
           puts ""
           puts "  Name:        #{result["name"]}"
-          puts "  Store:       #{result["store_name"]}"
+          puts "  Access:      #{access_string(result)}"
           puts "  Permissions: #{result["permissions"]}"
+          puts "  Scopes:      #{scopes_string(result["scopes"]?)}"
           puts "  Token:       #{result["raw_token"]}"
           puts ""
           puts "Save this token now -- it will not be shown again."
@@ -106,16 +143,17 @@ module Dust
           return
         end
 
-        printf "%-38s %-16s %-12s %-6s %-20s\n", "ID", "Name", "Store", "Perms", "Last Used"
-        printf "%-38s %-16s %-12s %-6s %-20s\n", "-" * 36, "-" * 14, "-" * 10, "-" * 5, "-" * 18
+        printf "%-38s %-16s %-18s %-6s %-28s %-20s\n", "ID", "Name", "Access", "Perms", "Scopes", "Last Used"
+        printf "%-38s %-16s %-18s %-6s %-28s %-20s\n", "-" * 36, "-" * 14, "-" * 16, "-" * 5, "-" * 26, "-" * 18
 
         tokens.each do |token|
           id = token["id"].as_s[0..35]
           name = truncate(token["name"].as_s, 14)
-          store = truncate(token["store_name"].as_s, 10)
+          access = truncate(access_string(token), 16)
           perms = permission_string(token["permissions"])
+          scopes = truncate(scopes_string(token["scopes"]?), 26)
           last_used = token["last_used_at"].raw.nil? ? "never" : token["last_used_at"].as_s
-          printf "%-38s %-16s %-12s %-6s %-20s\n", id, name, store, perms, last_used
+          printf "%-38s %-16s %-18s %-6s %-28s %-20s\n", id, name, access, perms, scopes, last_used
         end
       end
 
@@ -147,6 +185,36 @@ module Dust
         r = perms["read"].as_bool ? "r" : "-"
         w = perms["write"].as_bool ? "w" : "-"
         "#{r}#{w}"
+      end
+
+      private def self.access_string(token : JSON::Any) : String
+        mode = token["store_access_mode"]?.try(&.as_s?) || "selected"
+        return "all stores" if mode == "all"
+
+        names = [] of String
+
+        if stores = token["stores"]?
+          stores.as_a.each do |store|
+            if name = store["name"]?.try(&.as_s?)
+              names << name
+            end
+          end
+        end
+
+        if names.empty?
+          if store_name = token["store_name"]?.try(&.as_s?)
+            names << store_name
+          end
+        end
+
+        names.empty? ? "selected stores" : names.join(",")
+      end
+
+      private def self.scopes_string(scopes : JSON::Any?) : String
+        return "-" unless scopes
+
+        values = scopes.as_a.map(&.as_s)
+        values.empty? ? "-" : values.join(",")
       end
 
       private def self.truncate(str : String, max : Int32) : String

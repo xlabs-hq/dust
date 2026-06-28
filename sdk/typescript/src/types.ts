@@ -60,6 +60,33 @@ export interface PresentEvent {
 export interface Status {
   connected: boolean
   seq: number
+  permissions?: Permissions
+  scopes?: string[]
+  storeAccess?: StoreAccess
+}
+
+export type StoreAccessMode = 'all' | 'selected'
+
+export interface StoreAccess {
+  mode: StoreAccessMode
+  storeIds: string[]
+}
+
+export interface Permissions {
+  read: boolean
+  write: boolean
+}
+
+export interface Capabilities {
+  permissions: Permissions
+  scopes: string[]
+  storeAccess: StoreAccess
+}
+
+export interface JoinInfo extends Capabilities {
+  storeSeq: number
+  capver: number
+  capverMin: number
 }
 
 export type EventCallback = (event: Event) => void
@@ -95,6 +122,41 @@ export class ExistsError extends Error {
     super('exists')
     this.name = 'ExistsError'
     this.currentRevision = currentRevision
+  }
+}
+
+export type AuthorizationReason = 'unauthorized' | 'store_not_allowed' | 'missing_scope'
+
+function authorizationMessage(
+  reason: AuthorizationReason,
+  scope: string | null,
+  response: unknown,
+): string {
+  if (response !== null && typeof response === 'object') {
+    const message = (response as { message?: unknown }).message
+    if (typeof message === 'string' && message.length > 0) return message
+  }
+
+  if (reason === 'missing_scope' && scope) return `Token is missing ${scope} scope`
+  if (reason === 'store_not_allowed') return 'Token does not have access to this store'
+  return 'unauthorized'
+}
+
+/**
+ * Thrown when a bearer token is valid but lacks the required store access or
+ * scope for an operation.
+ */
+export class AuthorizationError extends Error {
+  readonly reason: AuthorizationReason
+  readonly scope: string | null
+  readonly response: unknown
+
+  constructor(reason: AuthorizationReason, scope: string | null = null, response?: unknown) {
+    super(authorizationMessage(reason, scope, response))
+    this.name = 'AuthorizationError'
+    this.reason = reason
+    this.scope = scope
+    this.response = response
   }
 }
 

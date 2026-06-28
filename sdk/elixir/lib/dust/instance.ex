@@ -87,6 +87,10 @@ defmodule Dust.Instance do
       defdelegate enum(store, pattern, opts), to: Dust.SyncEngine
       defdelegate range(store, from, to, opts \\ []), to: Dust.SyncEngine
       defdelegate status(store), to: Dust.SyncEngine
+      defdelegate lease(store, key, opts \\ []), to: Dust.SyncEngine
+      defdelegate renew(store, lease, opts \\ []), to: Dust.SyncEngine
+      defdelegate release(store, lease), to: Dust.SyncEngine
+      defdelegate single_flight(store, key, fun, opts \\ []), to: Dust.SingleFlight, as: :run
     end
   end
 end

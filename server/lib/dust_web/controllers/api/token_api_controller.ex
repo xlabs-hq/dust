@@ -18,9 +18,9 @@ defmodule DustWeb.Api.TokenApiController do
 
   operation(:index,
     operation_id: "tokens.list",
-    summary: "List API tokens for the calling token's store",
+    summary: "List API tokens visible to the caller",
     description:
-      "Returns tokens scoped to **the calling token's store** only. Cross-store listing requires dashboard access. Requires `write` permission — read tokens cannot enumerate other tokens (an information-disclosure surface).",
+      "Returns token metadata visible to the caller. Session callers see all active account tokens. Bearer-token callers require `tokens:read` and only see tokens whose store access is within their own delegation boundary.",
     tags: ["Tokens"],
     responses: [
       ok:
@@ -28,7 +28,7 @@ defmodule DustWeb.Api.TokenApiController do
            type: :object,
            properties: %{tokens: %{type: :array, items: @token_ref}},
            required: [:tokens]
-         }, description: "List of tokens scoped to the caller's store"},
+         }, description: "List of tokens visible to the caller"},
       unauthorized: @unauthorized,
       forbidden: @forbidden,
       too_many_requests: @rate_limited
@@ -49,10 +49,17 @@ defmodule DustWeb.Api.TokenApiController do
     operation_id: "tokens.create",
     summary: "Create a new API token",
     description: """
-    Creates a token for **the calling token's store** only —
-    `store_name` must match the calling token's store, or the request
-    is rejected with `403`. Cross-store token creation requires
-    dashboard access; granular org-admin tokens are on the roadmap.
+    Creates a scoped API token. Token authority has two dimensions:
+    canonical `scopes` and `store_access_mode` (`selected` or `all`).
+    For selected store access, pass `store_ids`, `store_names`, or the
+    legacy single `store_name`.
+
+    Legacy `read` / `write` booleans are still accepted when `scopes`
+    is omitted. They expand to the compatibility scope sets.
+
+    Session callers can create any token in the account. Bearer-token
+    callers require `tokens:write` and can delegate only scopes and
+    store access they already have.
 
     The `raw_token` is returned **only on creation** — store it
     immediately. The server keeps a one-way hash and cannot recover
@@ -64,13 +71,54 @@ defmodule DustWeb.Api.TokenApiController do
       {%{
          type: :object,
          properties: %{
-           store_name: %{type: :string, description: "Store the token will scope to."},
+           store_name: %{
+             type: :string,
+             deprecated: true,
+             description:
+               "Compatibility single store name for selected access. Prefer `store_names` or `store_ids`."
+           },
+           store_names: %{
+             type: :array,
+             items: %{type: :string},
+             description: "Store names for selected access."
+           },
+           store_ids: %{
+             type: :array,
+             items: %{type: :string, format: :uuid},
+             description: "Store IDs for selected access."
+           },
+           store_access_mode: %{
+             type: :string,
+             enum: ["selected", "all"],
+             default: "selected"
+           },
            name: %{type: :string, description: "Human-readable label for the token."},
-           read: %{type: :boolean, default: true},
-           write: %{type: :boolean, default: false}
+           scopes: %{
+             type: :array,
+             items: %{type: :string},
+             description:
+               "Canonical scopes. Examples: `entries:read`, `entries:write`, `files:read`, `files:write`, `webhooks:read`, `webhooks:write`, `audit:read`, `stores:read`, `stores:clone`, `tokens:read`, `tokens:write`."
+           },
+           read: %{
+             type: :boolean,
+             default: true,
+             deprecated: true,
+             description: "Legacy compatibility flag used only when `scopes` is omitted."
+           },
+           write: %{
+             type: :boolean,
+             default: false,
+             deprecated: true,
+             description: "Legacy compatibility flag used only when `scopes` is omitted."
+           }
          },
-         required: [:store_name, :name],
-         example: %{store_name: "config", name: "ci-deploy", read: true, write: true}
+         required: [:name],
+         example: %{
+           store_names: ["config"],
+           store_access_mode: "selected",
+           name: "ci-deploy",
+           scopes: ["entries:read", "entries:write"]
+         }
        }, description: "Token creation payload"},
     responses: [
       created:
@@ -83,14 +131,26 @@ defmodule DustWeb.Api.TokenApiController do
                type: :string,
                description: "Plaintext token. Only returned on creation."
              },
-             store_name: %{type: :string},
+             store_access_mode: %{type: :string, enum: ["all", "selected"]},
+             stores: %{
+               type: :array,
+               items: %{
+                 type: :object,
+                 properties: %{
+                   id: %{type: :string, format: :uuid},
+                   name: %{type: :string}
+                 },
+                 required: [:id, :name]
+               }
+             },
+             scopes: %{type: :array, items: %{type: :string}},
              permissions: %{
                type: :object,
                properties: %{read: %{type: :boolean}, write: %{type: :boolean}},
                required: [:read, :write]
              }
            },
-           required: [:id, :name, :raw_token, :store_name, :permissions]
+           required: [:id, :name, :raw_token, :store_access_mode, :stores, :scopes, :permissions]
          }, description: "Token created"},
       bad_request: @bad_request,
       unauthorized: @unauthorized,
@@ -113,7 +173,7 @@ defmodule DustWeb.Api.TokenApiController do
   end
 
   def create(_conn, _params) do
-    {:error, {:invalid_params, "store_name and name are required"}}
+    {:error, {:invalid_params, "name is required"}}
   end
 
   defp create_token(conn, org, attrs) do
@@ -142,7 +202,7 @@ defmodule DustWeb.Api.TokenApiController do
     operation_id: "tokens.revoke",
     summary: "Revoke an API token",
     description:
-      "Revokes a token scoped to **the calling token's store**. Returns `403` if the target token belongs to a different store, even within the same organization. Cross-store revocation requires dashboard access.",
+      "Revokes a token. Session callers can revoke any account token. Bearer-token callers require `tokens:write` and can revoke only tokens whose store access is within their own delegation boundary.",
     tags: ["Tokens"],
     parameters: [
       id: [in: :path, schema: %{type: :string, format: :uuid}, required: true]

@@ -7,6 +7,31 @@ export { encode, decode } from './codec'
 export { generateOpId, inferType } from './dust'
 export { parseLegacyDotted, parseRendered, render, fromSegments } from './path'
 export type { PathInput, Segments } from './path'
-export type { DustOptions, EnumOptions, Entry, Event, Page, PresentEvent, Status, EventCallback, Lease, Flight, SfResult } from './types'
-export { ConflictError, ExistsError, LeaseError, SingleFlightAbort, SingleFlightTimeout } from './types'
+export type {
+  AuthorizationReason,
+  Capabilities,
+  DustOptions,
+  EnumOptions,
+  Entry,
+  Event,
+  EventCallback,
+  Flight,
+  JoinInfo,
+  Lease,
+  Page,
+  Permissions,
+  PresentEvent,
+  SfResult,
+  Status,
+  StoreAccess,
+  StoreAccessMode,
+} from './types'
+export {
+  AuthorizationError,
+  ConflictError,
+  ExistsError,
+  LeaseError,
+  SingleFlightAbort,
+  SingleFlightTimeout,
+} from './types'
 export type { WireMessage, Format } from './codec'

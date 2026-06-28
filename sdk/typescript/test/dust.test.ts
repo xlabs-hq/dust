@@ -609,6 +609,27 @@ describe('Dust', () => {
       expect(s.seq).toBe(42)
     })
 
+    it('returns capabilities after join', async () => {
+      const dust = createDust() as any
+      dust.connection.join = async () => ({
+        storeSeq: 42,
+        capver: 3,
+        capverMin: 1,
+        permissions: { read: true, write: false },
+        scopes: ['entries:read'],
+        storeAccess: { mode: 'selected', storeIds: ['store-id-1'] },
+      })
+      dust.waitForCatchUp = async () => {}
+
+      await dust.ensureJoined('test/store')
+
+      expect(dust.status('test/store')).toMatchObject({
+        permissions: { read: true, write: false },
+        scopes: ['entries:read'],
+        storeAccess: { mode: 'selected', storeIds: ['store-id-1'] },
+      })
+    })
+
     it('returns 0 seq for unknown store', () => {
       const dust = createDust()
       const s = dust.status('unknown')
@@ -621,11 +642,17 @@ describe('Dust', () => {
       const dust = createDust() as any
       dust.joinedStores.set('s', Promise.resolve())
       dust.catchUpComplete.set('s', true)
+      dust.capabilities.set('s', {
+        permissions: { read: true, write: false },
+        scopes: ['entries:read'],
+        storeAccess: { mode: 'selected', storeIds: ['store-id-1'] },
+      })
 
       dust.close()
 
       expect(dust.joinedStores.size).toBe(0)
       expect(dust.catchUpComplete.size).toBe(0)
+      expect(dust.capabilities.size).toBe(0)
     })
   })
 
@@ -635,6 +662,11 @@ describe('Dust', () => {
       // Simulate a store that was previously joined
       dust.joinedStores.set('test/store', Promise.resolve())
       dust.catchUpComplete.set('test/store', true)
+      dust.capabilities.set('test/store', {
+        permissions: { read: true, write: false },
+        scopes: ['entries:read'],
+        storeAccess: { mode: 'selected', storeIds: ['store-id-1'] },
+      })
       dust.registeredHandlers.add('store:test/store')
 
       // Track join attempts via ensureJoined
@@ -651,6 +683,7 @@ describe('Dust', () => {
       // joinedStores should have a new promise (not the old resolved one)
       expect(dust.joinedStores.has('test/store')).toBe(true)
       expect(joinAttempts).toBe(1)
+      expect(dust.capabilities.size).toBe(0)
     })
 
     it('ensureJoined clears failed promise on rejection', async () => {

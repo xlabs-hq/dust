@@ -32,6 +32,8 @@ channels:
         $ref: '#/components/messages/HelloResponse'
       join:
         $ref: '#/components/messages/Join'
+      joinReply:
+        $ref: '#/components/messages/JoinReply'
       write:
         $ref: '#/components/messages/Write'
       writeReply:
@@ -64,6 +66,14 @@ operations:
     messages:
       - $ref: '#/channels/storeSync/messages/join'
     description: Client joins a store topic, providing last known store_seq for catch-up.
+
+  receiveJoinReply:
+    action: receive
+    channel:
+      $ref: '#/channels/storeSync'
+    messages:
+      - $ref: '#/channels/storeSync/messages/joinReply'
+    description: Server replies to a join with current sequence and token capabilities.
 
   sendWrite:
     action: send
@@ -146,6 +156,49 @@ components:
           last_store_seq:
             type: integer
             description: Last store_seq the client has seen. Server sends events after this.
+
+    JoinReply:
+      name: join_reply
+      payload:
+        type: object
+        required: [store_seq, capver, capver_min, permissions, scopes, store_access]
+        properties:
+          store_seq:
+            type: integer
+            description: Current store sequence at join time.
+          capver:
+            type: integer
+            description: Server capability version selected for the connection.
+          capver_min:
+            type: integer
+            description: Minimum supported capability version.
+          permissions:
+            type: object
+            required: [read, write]
+            properties:
+              read:
+                type: boolean
+                description: True when this token can read entries in this store.
+              write:
+                type: boolean
+                description: True when this token can write entries in this store.
+          scopes:
+            type: array
+            items:
+              type: string
+            description: Canonical scopes granted to the token.
+          store_access:
+            type: object
+            required: [mode, store_ids]
+            properties:
+              mode:
+                type: string
+                enum: [all, selected]
+              store_ids:
+                type: array
+                items:
+                  type: string
+                description: Selected store IDs; empty when `mode` is `all`.
 
     Write:
       name: write
@@ -297,7 +350,9 @@ components:
       name: write_reply
       description: |
         Reply to a write push. On success, returns the assigned `store_seq`.
-        On failure, returns an `error` object with a `reason` code.
+        On failure, returns an `error` object with a `reason` code. Authorization
+        failures preserve `reason`, `scope`, and `message` so clients can report
+        missing scopes without collapsing them to generic unauthorized errors.
       payload:
         oneOf:
           - type: object
@@ -322,7 +377,14 @@ components:
                       - if_match_multi_leaf
                       - invalid_op
                       - unauthorized
+                      - store_not_allowed
+                      - missing_scope
                       - rate_limited
+                      - exists
+                      - held
+                      - occupied
+                      - not_held
+                      - fenced
                     description: |
                       Failure reason code.
                       - `conflict`: `if_match` did not match the target entry's
@@ -334,6 +396,18 @@ components:
                       - `if_match_multi_leaf`: `if_match` was sent on a `set` op
                         with a dict/map value, which would flatten to multiple
                         leaves and cannot be CAS'd atomically in Phase 5.
+                      - `missing_scope`: token lacks a required scope. Includes
+                        `scope` and `message`.
+                      - `store_not_allowed`: token is not granted this store.
+                      - `exists`: `if_absent` failed because the key exists.
+                      - `held` / `not_held` / `occupied` / `fenced`: lease or
+                        fencing outcomes.
+                  scope:
+                    type: string
+                    description: Required scope, present on `missing_scope`.
+                  message:
+                    type: string
+                    description: Human-readable authorization diagnostic.
                   current_revision:
                     type: [integer, "null"]
                     description: |

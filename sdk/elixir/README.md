@@ -93,6 +93,29 @@ MyApp.Dust.on("org/store", "users/*", fn event ->
 end)
 ```
 
+## Authentication and Capabilities
+
+Tokens need `entries:read` to join and read a store. Add `entries:write` for
+writes, leases, rollback, and `single_flight`.
+
+```elixir
+status = MyApp.Dust.status("org/store")
+# %{
+#   connection: :connected,
+#   permissions: %{read: true, write: false},
+#   scopes: ["entries:read"],
+#   store_access: %{mode: :selected, store_ids: ["..."]}
+# }
+
+case MyApp.Dust.lease("org/store", "jobs/nightly") do
+  {:error, {:missing_scope, "entries:write", message}} ->
+    Logger.warning(message)
+
+  other ->
+    other
+end
+```
+
 ## Coordination: leases & single-flight
 
 `single_flight` computes an expensive thing **once across your fleet** and
@@ -138,6 +161,11 @@ case MyApp.Dust.lease("org/store", "jobs/nightly", ttl_ms: 60_000) do
   {:error, :held} -> :someone_else_has_it
 end
 ```
+
+`single_flight` uses the same lease/write path, so it also requires
+`entries:write`. Missing write scope returns
+`{:error, {:missing_scope, "entries:write", message}}`; it does not trigger
+the `on_unavailable: :run_local` fallback.
 
 `fence: lease` rejects a write (`{:error, :fenced}`) if the lease was lost
 mid-run, so a stale holder can't clobber a newer one's result.

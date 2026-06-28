@@ -42,6 +42,15 @@ defmodule Dust.Testing do
     store_seq = Keyword.get(opts, :store_seq, 0)
     Dust.SyncEngine.set_status(store, connection_status)
 
+    capabilities =
+      opts
+      |> Keyword.take([:permissions, :scopes, :store_access])
+      |> Map.new()
+
+    if map_size(capabilities) > 0 do
+      Dust.SyncEngine.set_capabilities(store, capabilities)
+    end
+
     if store_seq > 0 do
       Dust.SyncEngine.set_store_seq(store, store_seq)
     end

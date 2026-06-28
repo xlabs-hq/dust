@@ -51,6 +51,28 @@ defmodule Dust.ConnectionTest do
     assert status.connection == :connected
   end
 
+  test "stores join capabilities in SyncEngine status", %{conn: conn} do
+    connect_and_assert_join(
+      conn,
+      "store:test/mystore",
+      %{"last_store_seq" => 0},
+      {:ok,
+       %{
+         "store_seq" => 5,
+         "permissions" => %{"read" => true, "write" => false},
+         "scopes" => ["entries:read"],
+         "store_access" => %{"mode" => "selected", "store_ids" => ["store-id-1"]}
+       }}
+    )
+
+    Process.sleep(50)
+
+    status = SyncEngine.status("test/mystore")
+    assert status.permissions == %{read: true, write: false}
+    assert status.scopes == ["entries:read"]
+    assert status.store_access == %{mode: :selected, store_ids: ["store-id-1"]}
+  end
+
   test "forwards server events to SyncEngine", %{conn: conn} do
     # Set up a callback to capture the event
     test_pid = self()

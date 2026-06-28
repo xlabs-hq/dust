@@ -548,7 +548,33 @@ Set `DUST_API_KEY=dust_tok_...` as an environment variable. The SDK reads it aut
 
 ### Scoped Tokens
 
-Generate tokens with per-store, per-permission scope from the web dashboard at `/:org/tokens`.
+Generate tokens from the web dashboard at `/:org/tokens` or with `dust token create`.
+Token authority has two independent dimensions:
+
+- **Scopes** describe what the token can do. Common scopes are `entries:read`,
+  `entries:write`, `files:read`, `files:write`, `webhooks:read`,
+  `webhooks:write`, `audit:read`, `stores:read`, `stores:clone`,
+  `tokens:read`, and `tokens:write`.
+- **Store access** describes where the token can act: all stores in the account
+  or a selected set of stores.
+
+SDK reads require `entries:read`. Writes, leases, rollback, and
+`singleFlight`/`single_flight` require `entries:write`; a read-only token can
+connect, join, and read, but write-like operations fail with a structured
+`missing_scope` error.
+
+After a WebSocket join, the server returns capability metadata:
+
+```json
+{
+  "permissions": { "read": true, "write": false },
+  "scopes": ["entries:read"],
+  "store_access": { "mode": "selected", "store_ids": ["..."] }
+}
+```
+
+The SDKs expose this from `status(store)` so applications can fail fast or
+show a clear diagnostic before attempting a write.
 
 ### MCP OAuth
 

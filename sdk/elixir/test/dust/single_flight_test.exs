@@ -160,4 +160,33 @@ defmodule Dust.SingleFlightTest do
                on_unavailable: :run_local
              )
   end
+
+  test "run_local does not degrade when lease is rejected for missing write scope" do
+    test_pid = self()
+
+    task =
+      Task.async(fn ->
+        Dust.single_flight(
+          @store,
+          "k",
+          fn _lease ->
+            send(test_pid, :ran)
+            {:publish, %{"r" => 7}}
+          end,
+          on_unavailable: :run_local
+        )
+      end)
+
+    assert_receive {:send_write, @store, %{op: :lease, client_op_id: id}}, 500
+
+    SyncEngine.handle_write_rejected(@store, id, %{
+      "reason" => "missing_scope",
+      "scope" => "entries:write"
+    })
+
+    assert {:error, {:missing_scope, "entries:write", "Token is missing entries:write scope"}} =
+             Task.await(task, 500)
+
+    refute_receive :ran, 100
+  end
 end

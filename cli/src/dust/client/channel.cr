@@ -6,6 +6,9 @@ module Dust
   class StoreChannel
     getter topic : String
     property store_seq : Int64 = 0_i64
+    property permissions : Hash(String, Bool) = {} of String => Bool
+    property scopes : Array(String) = [] of String
+    property store_access : Hash(String, JSON::Any) = {} of String => JSON::Any
 
     def initialize(@channel : Phoenix::Channel, @topic : String)
     end

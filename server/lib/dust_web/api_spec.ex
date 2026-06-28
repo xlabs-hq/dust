@@ -55,19 +55,21 @@ defmodule DustWeb.ApiSpec do
         All endpoints require a Bearer token in the `Authorization`
         header. Create tokens at `/:org/tokens` in the dashboard.
 
-        Tokens are scoped to a single store and carry `read` and/or
-        `write` permissions:
+        Tokens have two independent authority dimensions:
 
-        * **`read`** — read entries, list webhooks/audit log, export.
-        * **`read+write`** — additionally write entries, register
-          webhooks, run import/clone/diff, and manage tokens **for
-          the same store**.
+        * **Scopes** — what the token can do, such as `entries:read`,
+          `entries:write`, `files:read`, `files:write`,
+          `webhooks:read`, `webhooks:write`, `audit:read`,
+          `stores:read`, `stores:clone`, `tokens:read`, and
+          `tokens:write`.
+        * **Store access** — where the token can act: all stores in
+          the account or a selected set of stores.
 
-        Cross-store operations are not available with API tokens in
-        this version: `tokens.create` and `tokens.revoke` only work
-        for the calling token's own store, and `stores.create` is
-        disabled entirely (dashboard-only). Granular org-admin
-        tokens, which will re-enable these flows, are on the roadmap.
+        Legacy `read` / `write` booleans are still accepted when
+        creating tokens. New clients should send canonical `scopes`
+        plus `store_access_mode` and `store_names` or `store_ids`.
+        Bearer-token callers can only delegate scopes and store
+        access they already have.
 
         ### CORS
 
@@ -131,7 +133,7 @@ defmodule DustWeb.ApiSpec do
           "bearerAuth" => %{
             type: "http",
             scheme: "bearer",
-            description: "Bearer token scoped to a single store."
+            description: "Bearer token scoped by canonical scopes and store access."
           }
         },
         schemas: shared_schemas(),
@@ -314,7 +316,12 @@ defmodule DustWeb.ApiSpec do
               required: [:id, :name]
             }
           },
-          scopes: %{type: :array, items: %{type: :string}},
+          scopes: %{
+            type: :array,
+            items: %{type: :string},
+            description:
+              "Canonical scopes such as `entries:read`, `entries:write`, `files:read`, `files:write`, `webhooks:read`, `webhooks:write`, `audit:read`, `stores:read`, `stores:clone`, `tokens:read`, and `tokens:write`."
+          },
           permissions: %{
             type: :object,
             properties: %{
@@ -327,7 +334,16 @@ defmodule DustWeb.ApiSpec do
           last_used_at: %{type: ["string", "null"], format: "date-time"},
           inserted_at: %{type: :string, format: "date-time"}
         },
-        required: [:id, :name, :store_name, :permissions, :inserted_at]
+        required: [
+          :id,
+          :name,
+          :store_name,
+          :store_access_mode,
+          :stores,
+          :scopes,
+          :permissions,
+          :inserted_at
+        ]
       },
       "Webhook" => %{
         type: :object,

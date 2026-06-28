@@ -145,7 +145,7 @@ module Dust
           STDERR.puts %({"error":"held"})
           exit 1
         else
-          Output.error("Lease failed: #{lease_reason(result)}")
+          Output.error("Lease failed: #{reply_error_message(result)}")
         end
       end
 
@@ -187,7 +187,7 @@ module Dust
           STDERR.puts %({"error":"not_held"})
           exit 1
         else
-          Output.error("Renew failed: #{lease_reason(result)}")
+          Output.error("Renew failed: #{reply_error_message(result)}")
         end
       end
 
@@ -199,7 +199,11 @@ module Dust
         token = args[2].to_i64
 
         fields = {"token" => JSON::Any.new(token)} of String => JSON::Any
-        _ = lease_op(config, store, "release", key, fields)
+        result = lease_op(config, store, "release", key, fields)
+        unless result["status"].as_s == "ok"
+          Output.error("Release failed: #{reply_error_message(result)}")
+        end
+
         # Release is idempotent — ok whether it deleted the lease or was a no-op.
         Output.success("OK")
       end
@@ -533,7 +537,7 @@ module Dust
               STDERR.puts %({"error":"#{reason}"})
               exit 1
             end
-            Output.error("Write failed: #{reason}")
+            Output.error("Write failed: #{reply_error_message(result)}")
           end
 
           result
@@ -570,6 +574,31 @@ module Dust
           nil
         else
           result["response"]?.try(&.["reason"]?.try(&.as_s)) || "unknown"
+        end
+      end
+
+      private def self.reply_error_message(result : JSON::Any) : String
+        response = result["response"]?
+        return "unknown" unless response
+
+        response_error_message(response)
+      end
+
+      private def self.response_error_message(response : JSON::Any) : String
+        object = response.as_h?
+        return response.to_s unless object
+
+        if message = object["message"]?.try(&.as_s?)
+          return message unless message.empty?
+        end
+
+        reason = object["reason"]?.try(&.as_s?) || "unknown"
+        scope = object["scope"]?.try(&.as_s?)
+
+        if reason == "missing_scope" && scope
+          "#{reason} (#{scope})"
+        else
+          reason
         end
       end
 

@@ -2,8 +2,17 @@ import { Connection } from './connection'
 import { MemoryCache } from './cache'
 import { match } from './glob'
 import { normalizePath, normalizePattern, parseRendered, type PathInput } from './path'
-import { ConflictError, ExistsError, LeaseError, SingleFlightAbort, SingleFlightTimeout } from './types'
+import {
+  AuthorizationError,
+  ConflictError,
+  ExistsError,
+  LeaseError,
+  SingleFlightAbort,
+  SingleFlightTimeout,
+} from './types'
 import type {
+  AuthorizationReason,
+  Capabilities,
   DustOptions,
   EnumOptions,
   Entry,
@@ -34,6 +43,7 @@ export class Dust {
   private subscriptions = new Map<string, Set<Subscription>>()
   private joinedStores = new Map<string, Promise<void>>()
   private catchUpComplete = new Map<string, boolean>()
+  private capabilities = new Map<string, Capabilities>()
 
   constructor(opts: DustOptions) {
     this.connection = new Connection(opts)
@@ -481,9 +491,15 @@ export class Dust {
   }
 
   status(store: string): Status {
+    const capabilities = this.capabilities.get(store)
     return {
       connected: this.connection.connected,
       seq: this.cache.lastSeq(store),
+      ...(capabilities ? {
+        permissions: capabilities.permissions,
+        scopes: capabilities.scopes,
+        storeAccess: capabilities.storeAccess,
+      } : {}),
     }
   }
 
@@ -491,6 +507,7 @@ export class Dust {
     this.connection.close()
     this.joinedStores.clear()
     this.catchUpComplete.clear()
+    this.capabilities.clear()
   }
 
   // -- Internal --
@@ -592,11 +609,22 @@ export class Dust {
       >
       return { kind: 'ok', resp }
     } catch (err) {
+      if (err instanceof AuthorizationError) throw err
+
       const resp = (err as { response?: unknown })?.response
       const reason =
         resp !== null && typeof resp === 'object'
           ? (resp as { reason?: unknown }).reason
           : undefined
+
+      if (isAuthorizationReason(reason)) {
+        const scope = (resp as { scope?: unknown }).scope
+        throw new AuthorizationError(
+          reason,
+          typeof scope === 'string' ? scope : null,
+          resp,
+        )
+      }
 
       if (reason === 'held') return { kind: 'held' }
       if (reason === 'not_held') return { kind: 'not_held' }
@@ -628,7 +656,12 @@ export class Dust {
     this.registerEventHandler(store)
 
     this.catchUpComplete.delete(store)
-    await this.connection.join(store, lastSeq)
+    const joinInfo = await this.connection.join(store, lastSeq)
+    this.capabilities.set(store, {
+      permissions: joinInfo.permissions,
+      scopes: joinInfo.scopes,
+      storeAccess: joinInfo.storeAccess,
+    })
 
     // Wait for catch-up to complete (with timeout)
     await this.waitForCatchUp(store)
@@ -651,6 +684,7 @@ export class Dust {
     // Clear all join state
     this.joinedStores.clear()
     this.catchUpComplete.clear()
+    this.capabilities.clear()
     // Re-join each store (event handlers are already registered)
     for (const store of stores) {
       this.ensureJoined(store).catch(() => {
@@ -787,6 +821,10 @@ function leaseFromReply(
     holder: (resp.holder as string | null | undefined) ?? fallbackHolder,
     expiresAt: resp.expires_at as number,
   }
+}
+
+function isAuthorizationReason(reason: unknown): reason is AuthorizationReason {
+  return reason === 'unauthorized' || reason === 'store_not_allowed' || reason === 'missing_scope'
 }
 
 export function inferType(value: unknown): string {

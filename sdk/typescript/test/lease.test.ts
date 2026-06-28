@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { Dust, LeaseError } from '../src/index'
+import { AuthorizationError, Dust, LeaseError } from '../src/index'
 import type { Lease } from '../src/index'
 
 describe('Dust lease primitives', () => {
@@ -55,6 +55,24 @@ describe('Dust lease primitives', () => {
     stubPush(dust, new Error('Timeout waiting for reply'))
 
     await expect(dust.lease('s', 'lock/a')).rejects.toBeInstanceOf(LeaseError)
+  })
+
+  it('lease preserves AuthorizationError for a missing write scope', async () => {
+    const dust = createDust() as any
+    stubPush(dust, pushError({
+      reason: 'missing_scope',
+      scope: 'entries:write',
+      message: 'Token is missing entries:write scope',
+    }))
+
+    await expect(dust.lease('s', 'lock/a')).rejects.toMatchObject({
+      name: 'AuthorizationError',
+      reason: 'missing_scope',
+      scope: 'entries:write',
+      message: 'Token is missing entries:write scope',
+    })
+
+    await expect(dust.lease('s', 'lock/a')).rejects.toBeInstanceOf(AuthorizationError)
   })
 
   it('renew keeps the token and returns the refreshed lease', async () => {

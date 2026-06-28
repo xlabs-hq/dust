@@ -127,6 +127,8 @@ defmodule Dust.Connection do
     # Flush any queued writes for this store
     socket = flush_outbox(socket, store_name)
 
+    Dust.SyncEngine.set_capabilities(store_name, capabilities_from_join(reply))
+
     # Update the SyncEngine's status to :connected (also triggers resend of pending_ops)
     Dust.SyncEngine.set_status(store_name, :connected)
 
@@ -216,11 +218,11 @@ defmodule Dust.Connection do
         socket = assign(socket, :pending_refs, pending_refs)
 
         case reply do
-          {:error, %{"reason" => reason}} ->
-            Dust.SyncEngine.handle_write_rejected(store_name, client_op_id, reason)
+          {:error, %{"reason" => _reason} = payload} ->
+            Dust.SyncEngine.handle_write_rejected(store_name, client_op_id, payload)
 
-          {:error, %{reason: reason}} ->
-            Dust.SyncEngine.handle_write_rejected(store_name, client_op_id, reason)
+          {:error, %{reason: _reason} = payload} ->
+            Dust.SyncEngine.handle_write_rejected(store_name, client_op_id, payload)
 
           # Pass the whole reply map through — lease acquire/renew carry
           # token/expires_at/holder, a no-op release carries {released: false},
@@ -371,6 +373,14 @@ defmodule Dust.Connection do
 
   defp put_if_present(params, _key, nil), do: params
   defp put_if_present(params, key, value), do: Map.put(params, key, value)
+
+  defp capabilities_from_join(reply) do
+    %{
+      permissions: reply["permissions"] || Map.get(reply, :permissions, %{}),
+      scopes: reply["scopes"] || Map.get(reply, :scopes, []),
+      store_access: reply["store_access"] || Map.get(reply, :store_access, %{})
+    }
+  end
 
   # SyncEngine populates :path_segments alongside :path for capver 3
   # writes. Channels prefer segments when present and fall back to

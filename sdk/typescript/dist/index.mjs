@@ -27,6 +27,60 @@ function decode(data, format) {
   };
 }
 
+// src/types.ts
+var ConflictError = class extends Error {
+  constructor(currentRevision = null) {
+    super("conflict");
+    this.name = "ConflictError";
+    this.currentRevision = currentRevision;
+  }
+};
+var ExistsError = class extends Error {
+  constructor(currentRevision = null) {
+    super("exists");
+    this.name = "ExistsError";
+    this.currentRevision = currentRevision;
+  }
+};
+function authorizationMessage(reason, scope, response) {
+  if (response !== null && typeof response === "object") {
+    const message = response.message;
+    if (typeof message === "string" && message.length > 0) return message;
+  }
+  if (reason === "missing_scope" && scope) return `Token is missing ${scope} scope`;
+  if (reason === "store_not_allowed") return "Token does not have access to this store";
+  return "unauthorized";
+}
+var AuthorizationError = class extends Error {
+  constructor(reason, scope = null, response) {
+    super(authorizationMessage(reason, scope, response));
+    this.name = "AuthorizationError";
+    this.reason = reason;
+    this.scope = scope;
+    this.response = response;
+  }
+};
+var LeaseError = class extends Error {
+  constructor(reason) {
+    super(reason);
+    this.name = "LeaseError";
+    this.reason = reason;
+  }
+};
+var SingleFlightAbort = class extends Error {
+  constructor(reason) {
+    super("single_flight aborted");
+    this.name = "SingleFlightAbort";
+    this.reason = reason;
+  }
+};
+var SingleFlightTimeout = class extends Error {
+  constructor() {
+    super("single_flight wait timed out");
+    this.name = "SingleFlightTimeout";
+  }
+};
+
 // src/connection.ts
 var Connection = class {
   constructor(opts) {
@@ -90,14 +144,14 @@ var Connection = class {
     };
     this.send(msg);
     const reply = await this.waitForReply(ref);
-    if (reply.status !== "ok") throw new Error(`Join failed: ${JSON.stringify(reply.response)}`);
+    if (reply.status !== "ok") {
+      const authError = authorizationErrorFromResponse(reply.response);
+      if (authError) throw authError;
+      throw new Error(`Join failed: ${JSON.stringify(reply.response)}`);
+    }
     const channel = this.channels.get(topic);
     if (channel) channel.joined = true;
-    return {
-      storeSeq: reply.response.store_seq,
-      capver: reply.response.capver,
-      capverMin: reply.response.capver_min
-    };
+    return joinInfoFromResponse(reply.response);
   }
   async push(topic, event, payload) {
     await this.connect();
@@ -113,6 +167,8 @@ var Connection = class {
     this.send(msg);
     const reply = await this.waitForReply(ref);
     if (reply.status !== "ok") {
+      const authError = authorizationErrorFromResponse(reply.response);
+      if (authError) throw authError;
       const errorInfo = typeof reply.response === "object" && reply.response !== null ? JSON.stringify(reply.response) : String(reply.response);
       const err = new Error(`Push failed: ${errorInfo}`);
       err.response = reply.response;
@@ -264,6 +320,55 @@ function generateDeviceId() {
     () => Math.floor(Math.random() * 16).toString(16)
   ).join("");
   return `dev_${hex}`;
+}
+function joinInfoFromResponse(response) {
+  return {
+    storeSeq: numberOr(response.store_seq, 0),
+    capver: numberOr(response.capver, 1),
+    capverMin: numberOr(response.capver_min, 1),
+    permissions: permissionsFrom(response.permissions),
+    scopes: stringArrayFrom(response.scopes),
+    storeAccess: storeAccessFrom(response.store_access)
+  };
+}
+function permissionsFrom(value) {
+  if (value !== null && typeof value === "object") {
+    const permissions = value;
+    return {
+      read: permissions.read === true,
+      write: permissions.write === true
+    };
+  }
+  return { read: false, write: false };
+}
+function storeAccessFrom(value) {
+  if (value !== null && typeof value === "object") {
+    const access = value;
+    return {
+      mode: access.mode === "all" ? "all" : "selected",
+      storeIds: stringArrayFrom(access.store_ids)
+    };
+  }
+  return { mode: "selected", storeIds: [] };
+}
+function numberOr(value, fallback) {
+  return typeof value === "number" ? value : fallback;
+}
+function stringArrayFrom(value) {
+  return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
+}
+function authorizationErrorFromResponse(response) {
+  if (response === null || typeof response !== "object") return null;
+  const payload = response;
+  if (!isAuthorizationReason(payload.reason)) return null;
+  return new AuthorizationError(
+    payload.reason,
+    typeof payload.scope === "string" ? payload.scope : null,
+    response
+  );
+}
+function isAuthorizationReason(reason) {
+  return reason === "unauthorized" || reason === "store_not_allowed" || reason === "missing_scope";
 }
 
 // src/path.ts
@@ -540,42 +645,6 @@ function matchPath(compiled, path) {
   }
 }
 
-// src/types.ts
-var ConflictError = class extends Error {
-  constructor(currentRevision = null) {
-    super("conflict");
-    this.name = "ConflictError";
-    this.currentRevision = currentRevision;
-  }
-};
-var ExistsError = class extends Error {
-  constructor(currentRevision = null) {
-    super("exists");
-    this.name = "ExistsError";
-    this.currentRevision = currentRevision;
-  }
-};
-var LeaseError = class extends Error {
-  constructor(reason) {
-    super(reason);
-    this.name = "LeaseError";
-    this.reason = reason;
-  }
-};
-var SingleFlightAbort = class extends Error {
-  constructor(reason) {
-    super("single_flight aborted");
-    this.name = "SingleFlightAbort";
-    this.reason = reason;
-  }
-};
-var SingleFlightTimeout = class extends Error {
-  constructor() {
-    super("single_flight wait timed out");
-    this.name = "SingleFlightTimeout";
-  }
-};
-
 // src/dust.ts
 var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 var Dust = class {
@@ -583,6 +652,7 @@ var Dust = class {
     this.subscriptions = /* @__PURE__ */ new Map();
     this.joinedStores = /* @__PURE__ */ new Map();
     this.catchUpComplete = /* @__PURE__ */ new Map();
+    this.capabilities = /* @__PURE__ */ new Map();
     this.registeredHandlers = /* @__PURE__ */ new Set();
     this.connection = new Connection(opts);
     this.cache = new MemoryCache();
@@ -927,15 +997,22 @@ var Dust = class {
     return this.cache.browse(store, { ...opts, from: fromNorm, to: toNorm });
   }
   status(store) {
+    const capabilities = this.capabilities.get(store);
     return {
       connected: this.connection.connected,
-      seq: this.cache.lastSeq(store)
+      seq: this.cache.lastSeq(store),
+      ...capabilities ? {
+        permissions: capabilities.permissions,
+        scopes: capabilities.scopes,
+        storeAccess: capabilities.storeAccess
+      } : {}
     };
   }
   close() {
     this.connection.close();
     this.joinedStores.clear();
     this.catchUpComplete.clear();
+    this.capabilities.clear();
   }
   // -- Internal --
   async write(store, op, path, value, opts) {
@@ -999,8 +1076,17 @@ var Dust = class {
       const resp = await this.connection.push(`store:${store}`, "write", payload);
       return { kind: "ok", resp };
     } catch (err) {
+      if (err instanceof AuthorizationError) throw err;
       const resp = err?.response;
       const reason = resp !== null && typeof resp === "object" ? resp.reason : void 0;
+      if (isAuthorizationReason2(reason)) {
+        const scope = resp.scope;
+        throw new AuthorizationError(
+          reason,
+          typeof scope === "string" ? scope : null,
+          resp
+        );
+      }
       if (reason === "held") return { kind: "held" };
       if (reason === "not_held") return { kind: "not_held" };
       if (reason === "occupied") return { kind: "error", reason: "occupied" };
@@ -1022,7 +1108,12 @@ var Dust = class {
     const lastSeq = this.cache.lastSeq(store);
     this.registerEventHandler(store);
     this.catchUpComplete.delete(store);
-    await this.connection.join(store, lastSeq);
+    const joinInfo = await this.connection.join(store, lastSeq);
+    this.capabilities.set(store, {
+      permissions: joinInfo.permissions,
+      scopes: joinInfo.scopes,
+      storeAccess: joinInfo.storeAccess
+    });
     await this.waitForCatchUp(store);
   }
   registerEventHandler(store) {
@@ -1037,6 +1128,7 @@ var Dust = class {
     const stores = Array.from(this.joinedStores.keys());
     this.joinedStores.clear();
     this.catchUpComplete.clear();
+    this.capabilities.clear();
     for (const store of stores) {
       this.ensureJoined(store).catch(() => {
       });
@@ -1143,6 +1235,9 @@ function leaseFromReply(key, resp, fallbackHolder = null) {
     expiresAt: resp.expires_at
   };
 }
+function isAuthorizationReason2(reason) {
+  return reason === "unauthorized" || reason === "store_not_allowed" || reason === "missing_scope";
+}
 function inferType(value) {
   if (value === null || value === void 0) return "null";
   if (typeof value === "boolean") return "boolean";
@@ -1153,6 +1248,7 @@ function inferType(value) {
   return "unknown";
 }
 export {
+  AuthorizationError,
   ConflictError,
   Connection,
   Dust,

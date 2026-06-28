@@ -102,6 +102,28 @@ interface PresentEvent {
 interface Status {
     connected: boolean;
     seq: number;
+    permissions?: Permissions;
+    scopes?: string[];
+    storeAccess?: StoreAccess;
+}
+type StoreAccessMode = 'all' | 'selected';
+interface StoreAccess {
+    mode: StoreAccessMode;
+    storeIds: string[];
+}
+interface Permissions {
+    read: boolean;
+    write: boolean;
+}
+interface Capabilities {
+    permissions: Permissions;
+    scopes: string[];
+    storeAccess: StoreAccess;
+}
+interface JoinInfo extends Capabilities {
+    storeSeq: number;
+    capver: number;
+    capverMin: number;
 }
 type EventCallback = (event: Event) => void;
 /**
@@ -125,6 +147,17 @@ declare class ConflictError extends Error {
 declare class ExistsError extends Error {
     readonly currentRevision: number | null;
     constructor(currentRevision?: number | null);
+}
+type AuthorizationReason = 'unauthorized' | 'store_not_allowed' | 'missing_scope';
+/**
+ * Thrown when a bearer token is valid but lacks the required store access or
+ * scope for an operation.
+ */
+declare class AuthorizationError extends Error {
+    readonly reason: AuthorizationReason;
+    readonly scope: string | null;
+    readonly response: unknown;
+    constructor(reason: AuthorizationReason, scope?: string | null, response?: unknown);
 }
 /**
  * A held lease — a point-in-time snapshot capability handle. Authority lives
@@ -190,6 +223,7 @@ declare class Dust {
     private subscriptions;
     private joinedStores;
     private catchUpComplete;
+    private capabilities;
     constructor(opts: DustOptions);
     get(store: string, path: PathInput): Promise<unknown>;
     entry(store: string, path: PathInput): Promise<Entry | null>;
@@ -332,11 +366,7 @@ declare class Connection {
     constructor(opts: DustOptions);
     connect(): Promise<void>;
     private doConnect;
-    join(store: string, lastSeq: number): Promise<{
-        storeSeq: number;
-        capver: number;
-        capverMin: number;
-    }>;
+    join(store: string, lastSeq: number): Promise<JoinInfo>;
     push(topic: string, event: string, payload: Record<string, unknown>): Promise<unknown>;
     onEvent(topic: string, handler: (event: string, payload: unknown) => void): () => void;
     close(): void;
@@ -450,4 +480,4 @@ type Format = 'msgpack' | 'json';
 declare function encode(msg: WireMessage, format: Format): Buffer | string;
 declare function decode(data: Buffer | ArrayBuffer | string, format: Format): WireMessage;
 
-export { type Cache, ConflictError, Connection, Dust, type DustOptions, type Entry, type EnumOptions, type Event, type EventCallback, ExistsError, type Flight, type Format, type Lease, LeaseError, MemoryCache, type Page, type PathInput, type PresentEvent, type Segments, type SfResult, SingleFlightAbort, SingleFlightTimeout, type Status, type WireMessage, compile, decode, encode, fromSegments, generateDeviceId, generateOpId, inferType, match, parseLegacyDotted, parseRendered, render };
+export { AuthorizationError, type AuthorizationReason, type Cache, type Capabilities, ConflictError, Connection, Dust, type DustOptions, type Entry, type EnumOptions, type Event, type EventCallback, ExistsError, type Flight, type Format, type JoinInfo, type Lease, LeaseError, MemoryCache, type Page, type PathInput, type Permissions, type PresentEvent, type Segments, type SfResult, SingleFlightAbort, SingleFlightTimeout, type Status, type StoreAccess, type StoreAccessMode, type WireMessage, compile, decode, encode, fromSegments, generateDeviceId, generateOpId, inferType, match, parseLegacyDotted, parseRendered, render };

@@ -119,7 +119,14 @@ defmodule Dust.InstanceTest do
       enum: 3,
       range: 3,
       range: 4,
-      status: 1
+      status: 1,
+      lease: 2,
+      lease: 3,
+      renew: 2,
+      renew: 3,
+      release: 2,
+      single_flight: 3,
+      single_flight: 4
     ]
 
     missing =

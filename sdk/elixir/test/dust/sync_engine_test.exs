@@ -186,6 +186,22 @@ defmodule Dust.SyncEngineTest do
     assert status.connection == :disconnected
     assert status.last_store_seq == 0
     assert status.pending_ops >= 0
+    assert status.permissions == %{read: false, write: false}
+    assert status.scopes == []
+    assert status.store_access == %{mode: :selected, store_ids: []}
+  end
+
+  test "status reports manually set capabilities" do
+    SyncEngine.set_capabilities("test/store", %{
+      "permissions" => %{"read" => true, "write" => false},
+      "scopes" => ["entries:read"],
+      "store_access" => %{"mode" => "selected", "store_ids" => ["store-id-1"]}
+    })
+
+    status = SyncEngine.status("test/store")
+    assert status.permissions == %{read: true, write: false}
+    assert status.scopes == ["entries:read"]
+    assert status.store_access == %{mode: :selected, store_ids: ["store-id-1"]}
   end
 
   test "works with Ecto cache adapter (module target)" do
@@ -344,6 +360,31 @@ defmodule Dust.SyncEngineTest do
 
     # Should receive a rejection callback
     assert_receive {:event, %{error: %{code: :rejected, message: "rate_limited"}}}, 500
+  end
+
+  test "handle_write_rejected callback uses missing scope message" do
+    test_pid = self()
+    SyncEngine.on("test/store", "key", fn event -> send(test_pid, {:event, event}) end)
+
+    :ok = SyncEngine.put("test/store", "key", "optimistic")
+    assert_receive {:event, %{committed: false, source: :local}}, 500
+
+    state = :sys.get_state(SyncEngine.via("test/store") |> GenServer.whereis())
+    [{client_op_id, _op}] = Map.to_list(state.pending_ops)
+
+    SyncEngine.handle_write_rejected("test/store", client_op_id, %{
+      "reason" => "missing_scope",
+      "scope" => "entries:write"
+    })
+
+    assert_receive {:event,
+                    %{
+                      error: %{
+                        code: :rejected,
+                        message: "Token is missing entries:write scope"
+                      }
+                    }},
+                   500
   end
 
   # Decimal tests
@@ -1160,6 +1201,19 @@ defmodule Dust.SyncEngineTest do
 
       SyncEngine.handle_write_rejected("test/store", id, "held")
       assert Task.await(task, 500) == {:error, :held}
+    end
+
+    test "lease rejection preserves missing scope details" do
+      task = Task.async(fn -> SyncEngine.lease("test/store", "lock/a", ttl_ms: 60_000) end)
+      assert_receive {:send_write, "test/store", %{op: :lease, client_op_id: id}}, 500
+
+      SyncEngine.handle_write_rejected("test/store", id, %{
+        "reason" => "missing_scope",
+        "scope" => "entries:write"
+      })
+
+      assert {:error, {:missing_scope, "entries:write", "Token is missing entries:write scope"}} =
+               Task.await(task, 500)
     end
 
     test "renew forwards the token and returns the refreshed lease" do

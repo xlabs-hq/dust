@@ -182,8 +182,7 @@ module Dust
 
           status = result["status"].as_s
           unless status == "ok"
-            reason = result["response"]?.try(&.["reason"]?.try(&.as_s)) || "unknown error"
-            Output.error("Rollback failed: #{reason}")
+            Output.error("Rollback failed: #{reply_error_message(result)}")
           end
 
           response = result["response"]
@@ -215,6 +214,27 @@ module Dust
         scheme = (uri.scheme == "wss") ? "https" : "http"
         port_str = uri.port ? ":#{uri.port}" : ""
         "#{scheme}://#{uri.host}#{port_str}"
+      end
+
+      private def self.reply_error_message(result : JSON::Any) : String
+        response = result["response"]?
+        return "unknown" unless response
+
+        object = response.as_h?
+        return response.to_s unless object
+
+        if message = object["message"]?.try(&.as_s?)
+          return message unless message.empty?
+        end
+
+        reason = object["reason"]?.try(&.as_s?) || "unknown"
+        scope = object["scope"]?.try(&.as_s?)
+
+        if reason == "missing_scope" && scope
+          "#{reason} (#{scope})"
+        else
+          reason
+        end
       end
     end
   end

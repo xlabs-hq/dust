@@ -1,6 +1,12 @@
 defmodule Dust.SyncEngine do
   use GenServer
 
+  @default_capabilities %{
+    permissions: %{read: false, write: false},
+    scopes: [],
+    store_access: %{mode: :selected, store_ids: []}
+  }
+
   defstruct [
     :store,
     :cache,
@@ -20,7 +26,8 @@ defmodule Dust.SyncEngine do
     # registers each subscription and auto-unregister it on :DOWN, so a
     # crashed subscriber (e.g. a single_flight awaiter) never leaks an ETS
     # row + CallbackWorker. The only rescue-free cleanup path.
-    :callback_monitors
+    :callback_monitors,
+    capabilities: @default_capabilities
   ]
 
   def start_link(opts) do
@@ -174,6 +181,10 @@ defmodule Dust.SyncEngine do
     GenServer.cast(via(store), {:set_status, new_status})
   end
 
+  def set_capabilities(store, capabilities) when is_map(capabilities) do
+    GenServer.cast(via(store), {:set_capabilities, capabilities})
+  end
+
   def handle_write_rejected(store, client_op_id, reason) do
     GenServer.cast(via(store), {:write_rejected, client_op_id, reason})
   end
@@ -240,7 +251,8 @@ defmodule Dust.SyncEngine do
       activity_buffer: activity_buffer,
       http_url: derive_http_url(Keyword.get(opts, :url)),
       token: Keyword.get(opts, :token),
-      callback_monitors: %{}
+      callback_monitors: %{},
+      capabilities: @default_capabilities
     }
 
     {:ok, state}
@@ -535,7 +547,10 @@ defmodule Dust.SyncEngine do
       last_store_seq: state.last_store_seq,
       pending_ops: map_size(state.pending_ops),
       entry_count: entry_count,
-      store: state.store
+      store: state.store,
+      permissions: state.capabilities.permissions,
+      scopes: state.capabilities.scopes,
+      store_access: state.capabilities.store_access
     }
 
     {:reply, status, state}
@@ -624,6 +639,11 @@ defmodule Dust.SyncEngine do
   end
 
   @impl true
+  def handle_cast({:set_capabilities, capabilities}, state) do
+    {:noreply, %{state | capabilities: normalize_capabilities(capabilities)}}
+  end
+
+  @impl true
   def handle_cast({:snapshot, snapshot}, state) do
     snapshot_seq = snapshot["snapshot_seq"]
     entries = snapshot["entries"]
@@ -643,6 +663,8 @@ defmodule Dust.SyncEngine do
 
   @impl true
   def handle_cast({:write_rejected, client_op_id, reason}, state) do
+    error = rejection_reason(reason)
+
     case Map.pop(state.pending_ops, client_op_id) do
       {nil, _pending} ->
         # Already reconciled or unknown op
@@ -653,7 +675,7 @@ defmodule Dust.SyncEngine do
         # someone else's live lease — reply the error, touch nothing.
         case Map.get(op_attrs, :from) do
           nil -> :ok
-          from -> GenServer.reply(from, {:error, reason_to_atom(reason)})
+          from -> GenServer.reply(from, {:error, error})
         end
 
         {:noreply, %{state | pending_ops: pending}}
@@ -680,13 +702,13 @@ defmodule Dust.SyncEngine do
           committed: false,
           source: :server,
           client_op_id: client_op_id,
-          error: %{code: :rejected, message: to_string(reason)}
+          error: %{code: :rejected, message: rejection_message(error)}
         })
 
         # If a put/4 caller is awaiting a reply, surface the error.
         case Map.get(op_attrs, :from) do
           nil -> :ok
-          from -> GenServer.reply(from, {:error, reason_to_atom(reason)})
+          from -> GenServer.reply(from, {:error, error})
         end
 
         {:noreply, %{state | pending_ops: pending}}
@@ -1124,10 +1146,86 @@ defmodule Dust.SyncEngine do
     %{state | pending_ops: pending}
   end
 
+  defp normalize_capabilities(capabilities) when is_map(capabilities) do
+    %{
+      permissions: normalize_permissions(capability_value(capabilities, :permissions)),
+      scopes: normalize_scopes(capability_value(capabilities, :scopes)),
+      store_access: normalize_store_access(capability_value(capabilities, :store_access))
+    }
+  end
+
+  defp normalize_permissions(permissions) when is_map(permissions) do
+    %{
+      read: truthy?(capability_value(permissions, :read)),
+      write: truthy?(capability_value(permissions, :write))
+    }
+  end
+
+  defp normalize_permissions(_), do: @default_capabilities.permissions
+
+  defp normalize_scopes(scopes) when is_list(scopes), do: Enum.map(scopes, &to_string/1)
+  defp normalize_scopes(_), do: []
+
+  defp normalize_store_access(store_access) when is_map(store_access) do
+    %{
+      mode: normalize_store_access_mode(capability_value(store_access, :mode)),
+      store_ids: normalize_store_ids(capability_value(store_access, :store_ids))
+    }
+  end
+
+  defp normalize_store_access(_), do: @default_capabilities.store_access
+
+  defp normalize_store_access_mode(mode) when mode in [:all, "all"], do: :all
+  defp normalize_store_access_mode(_), do: :selected
+
+  defp normalize_store_ids(store_ids) when is_list(store_ids),
+    do: Enum.map(store_ids, &to_string/1)
+
+  defp normalize_store_ids(_), do: []
+
+  defp capability_value(map, key) do
+    Map.get(map, key, Map.get(map, to_string(key)))
+  end
+
+  defp truthy?(value), do: value in [true, "true", "1", 1]
+
+  defp rejection_reason(%{"reason" => reason} = payload) do
+    reason_with_context(reason, payload["scope"], payload["message"])
+  end
+
+  defp rejection_reason(%{reason: reason} = payload) do
+    reason_with_context(reason, payload[:scope], payload[:message])
+  end
+
+  defp rejection_reason(reason), do: reason_to_atom(reason)
+
+  defp reason_with_context(reason, scope, message)
+       when reason in ["missing_scope", :missing_scope] do
+    {:missing_scope, scope, message || missing_scope_message(scope)}
+  end
+
+  defp reason_with_context(reason, _scope, message)
+       when reason in ["store_not_allowed", :store_not_allowed] do
+    {:store_not_allowed, message || "Token does not have access to this store"}
+  end
+
+  defp reason_with_context(reason, _scope, _message), do: reason_to_atom(reason)
+
+  defp missing_scope_message(scope) when is_binary(scope), do: "Token is missing #{scope} scope"
+  defp missing_scope_message(_scope), do: "Token is missing required scope"
+
+  defp rejection_message({_reason, _scope, message}) when is_binary(message), do: message
+  defp rejection_message({_reason, message}) when is_binary(message), do: message
+  defp rejection_message(reason) when is_atom(reason), do: Atom.to_string(reason)
+  defp rejection_message(reason) when is_binary(reason), do: reason
+  defp rejection_message(_reason), do: "unknown"
+
   defp reason_to_atom(reason) when is_atom(reason), do: reason
   defp reason_to_atom("conflict"), do: :conflict
   defp reason_to_atom("rate_limited"), do: :rate_limited
   defp reason_to_atom("unauthorized"), do: :unauthorized
+  defp reason_to_atom("store_not_allowed"), do: :store_not_allowed
+  defp reason_to_atom("missing_scope"), do: :missing_scope
   defp reason_to_atom("invalid_op"), do: :invalid_op
   defp reason_to_atom("capver_mismatch"), do: :capver_mismatch
   defp reason_to_atom("if_match_unsupported_op"), do: :if_match_unsupported_op

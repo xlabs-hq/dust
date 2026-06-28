@@ -1,6 +1,13 @@
 import WebSocket from 'ws'
 import { encode, decode, WireMessage, Format } from './codec'
-import type { DustOptions } from './types'
+import { AuthorizationError } from './types'
+import type {
+  AuthorizationReason,
+  DustOptions,
+  JoinInfo,
+  Permissions,
+  StoreAccess,
+} from './types'
 
 interface PendingReply {
   resolve: (payload: unknown) => void
@@ -70,7 +77,7 @@ export class Connection {
     })
   }
 
-  async join(store: string, lastSeq: number): Promise<{ storeSeq: number; capver: number; capverMin: number }> {
+  async join(store: string, lastSeq: number): Promise<JoinInfo> {
     await this.connect()
     const topic = `store:${store}`
     const ref = this.nextRef()
@@ -91,16 +98,16 @@ export class Connection {
       status: string
       response: Record<string, unknown>
     }
-    if (reply.status !== 'ok') throw new Error(`Join failed: ${JSON.stringify(reply.response)}`)
+    if (reply.status !== 'ok') {
+      const authError = authorizationErrorFromResponse(reply.response)
+      if (authError) throw authError
+      throw new Error(`Join failed: ${JSON.stringify(reply.response)}`)
+    }
 
     const channel = this.channels.get(topic)
     if (channel) channel.joined = true
 
-    return {
-      storeSeq: reply.response.store_seq as number,
-      capver: reply.response.capver as number,
-      capverMin: reply.response.capver_min as number,
-    }
+    return joinInfoFromResponse(reply.response)
   }
 
   async push(topic: string, event: string, payload: Record<string, unknown>): Promise<unknown> {
@@ -119,6 +126,9 @@ export class Connection {
 
     const reply = (await this.waitForReply(ref)) as { status: string; response: unknown }
     if (reply.status !== 'ok') {
+      const authError = authorizationErrorFromResponse(reply.response)
+      if (authError) throw authError
+
       const errorInfo =
         typeof reply.response === 'object' && reply.response !== null
           ? JSON.stringify(reply.response)
@@ -300,4 +310,64 @@ export function generateDeviceId(): string {
     Math.floor(Math.random() * 16).toString(16),
   ).join('')
   return `dev_${hex}`
+}
+
+function joinInfoFromResponse(response: Record<string, unknown>): JoinInfo {
+  return {
+    storeSeq: numberOr(response.store_seq, 0),
+    capver: numberOr(response.capver, 1),
+    capverMin: numberOr(response.capver_min, 1),
+    permissions: permissionsFrom(response.permissions),
+    scopes: stringArrayFrom(response.scopes),
+    storeAccess: storeAccessFrom(response.store_access),
+  }
+}
+
+function permissionsFrom(value: unknown): Permissions {
+  if (value !== null && typeof value === 'object') {
+    const permissions = value as { read?: unknown; write?: unknown }
+    return {
+      read: permissions.read === true,
+      write: permissions.write === true,
+    }
+  }
+
+  return { read: false, write: false }
+}
+
+function storeAccessFrom(value: unknown): StoreAccess {
+  if (value !== null && typeof value === 'object') {
+    const access = value as { mode?: unknown; store_ids?: unknown }
+    return {
+      mode: access.mode === 'all' ? 'all' : 'selected',
+      storeIds: stringArrayFrom(access.store_ids),
+    }
+  }
+
+  return { mode: 'selected', storeIds: [] }
+}
+
+function numberOr(value: unknown, fallback: number): number {
+  return typeof value === 'number' ? value : fallback
+}
+
+function stringArrayFrom(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+}
+
+function authorizationErrorFromResponse(response: unknown): AuthorizationError | null {
+  if (response === null || typeof response !== 'object') return null
+
+  const payload = response as { reason?: unknown; scope?: unknown }
+  if (!isAuthorizationReason(payload.reason)) return null
+
+  return new AuthorizationError(
+    payload.reason,
+    typeof payload.scope === 'string' ? payload.scope : null,
+    response,
+  )
+}
+
+function isAuthorizationReason(reason: unknown): reason is AuthorizationReason {
+  return reason === 'unauthorized' || reason === 'store_not_allowed' || reason === 'missing_scope'
 }

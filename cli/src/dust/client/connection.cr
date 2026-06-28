@@ -67,6 +67,9 @@ module Dust
       select
       when resp = result.receive
         store_channel.store_seq = resp["store_seq"].as_i64
+        store_channel.permissions = parse_permissions(resp["permissions"]?)
+        store_channel.scopes = parse_scopes(resp["scopes"]?)
+        store_channel.store_access = parse_store_access(resp["store_access"]?)
       when err = join_error.receive
         raise "Join failed: #{err}"
       when timeout(10.seconds)
@@ -113,6 +116,27 @@ module Dust
         # Pre-launch break — no back-compat to capver 2 servers.
         "capver" => "3",
       }
+    end
+
+    private def parse_permissions(value : JSON::Any?) : Hash(String, Bool)
+      permissions = {} of String => Bool
+      return permissions unless value
+
+      value.as_h.each do |key, item|
+        permissions[key] = item.as_bool
+      end
+
+      permissions
+    end
+
+    private def parse_scopes(value : JSON::Any?) : Array(String)
+      return [] of String unless value
+      value.as_a.map(&.as_s)
+    end
+
+    private def parse_store_access(value : JSON::Any?) : Hash(String, JSON::Any)
+      return {} of String => JSON::Any unless value
+      value.as_h
     end
   end
 end
