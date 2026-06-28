@@ -33,10 +33,24 @@ Legend: 🟢 worked well · 🟡 minor friction · 🔴 blocker/needs doc.
   around it by gating the child behind our own config flag; a first-class
   `enabled: false` (start supervised but don't connect) would be cleaner.
   *(To confirm as we wire it.)*
-- 🟡 **`Dust.Cache.Ecto` required opts under-shown.** The `Dust.Instance`
-  moduledoc only demonstrates `{Dust.Cache.Memory, []}`. The Ecto backend's
-  `{Dust.Cache.Ecto, repo: MyApp.Repo}` shape + the required `synced_at`
-  migration aren't in one "production setup with the Ecto cache" place.
+- 🔴 **`Dust.Cache.Ecto` config shape is a trap — and it only bites in prod.**
+  The cache tuple's second element is dispatched by type in `SyncEngine.init/1`:
+  a **list** → `cache_mod.start_link(opts)` (stateful caches like Memory); an
+  **atom** → used directly as the `cache_target`. `Dust.Cache.Ecto` is stateless
+  and its functions take the **Repo module** as that target
+  (`read(repo, store, path)`), so the correct config is
+  `{Dust.Cache.Ecto, MyApp.Repo}` — an atom. We wrote the natural-looking
+  `{Dust.Cache.Ecto, repo: MyApp.Repo}` (a keyword list), which hits the
+  `start_link` branch and crashes at boot with
+  `UndefinedFunctionError: Dust.Cache.Ecto.start_link/1`. Worse, it's invisible
+  until the cache actually starts: our dev keeps Dust disabled and tests use the
+  Memory cache, so this only surfaced when we drove the real Ecto cache against
+  the cloud (it would have crashed prod on the `DUST_ENABLED=true` flip). Asks:
+  (1) accept `{Dust.Cache.Ecto, repo: MyRepo}` too (extract the repo) since the
+  keyword form is what everyone will type; or (2) validate the cache tuple at
+  init with a clear error ("Dust.Cache.Ecto expects the Repo module, e.g.
+  `{Dust.Cache.Ecto, MyApp.Repo}`"); and (3) show the exact shape + the required
+  `synced_at` migration in one "production setup with the Ecto cache" doc.
 
 ## Testing
 
