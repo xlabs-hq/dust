@@ -13,7 +13,11 @@ defmodule AdminWeb.Router do
   scope "/", AdminWeb do
     pipe_through :browser
 
-    live "/", DashboardLive, :index
+    live "/", OrgsLive, :index
+    live "/orgs", OrgsLive, :index
+    live "/orgs/:id", OrgDetailLive, :show
+    live "/users", UsersLive, :index
+    live "/users/:id", UserDetailLive, :show
     live "/stores", StoresLive, :index
     live "/stores/:id", StoreDetailLive, :show
     live "/ops", OpsLive, :index

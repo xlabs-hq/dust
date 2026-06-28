@@ -45,7 +45,6 @@ defmodule Dust.MCP.Tools.DustImport do
           {:result, MCP.call_tool_result(text: Jason.encode!(response)), channel}
         else
           {:error, reason} when is_binary(reason) -> {:error, reason, channel}
-          {:error, reason} -> {:error, inspect(reason), channel}
         end
     end
   end

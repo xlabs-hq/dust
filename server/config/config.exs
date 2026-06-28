@@ -30,6 +30,10 @@ config :dust, DustWeb.Endpoint,
 config :dust, AdminWeb.Endpoint,
   url: [host: "localhost"],
   adapter: Bandit.PhoenixAdapter,
+  render_errors: [
+    formats: [html: DustWeb.ErrorHTML, json: DustWeb.ErrorJSON],
+    layout: false
+  ],
   pubsub_server: Dust.PubSub,
   live_view: [signing_salt: "dust_admin_lv_salt"]
 

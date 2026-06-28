@@ -9,8 +9,16 @@
     <.live_title default="Dust Admin">
       {assigns[:page_title]}
     </.live_title>
-    <script src="https://cdn.tailwindcss.com">
-    </script>
+    <PhoenixVite.Components.assets
+      names={["js/admin.js", "css/admin.css"]}
+      manifest={{:dust, "priv/static/.vite/manifest.json"}}
+      dev_server={PhoenixVite.Components.has_vite_watcher?(DustWeb.Endpoint)}
+      to_url={
+        if PhoenixVite.Components.has_vite_watcher?(DustWeb.Endpoint),
+          do: fn p -> "http://localhost:5288#{p}" end,
+          else: &AdminWeb.Endpoint.static_path/1
+      }
+    />
   </head>
   <body class="bg-gray-50 min-h-screen">
     <nav class="bg-gray-900 text-white">
@@ -20,10 +28,16 @@
             <span class="text-lg font-semibold tracking-tight">Dust Admin</span>
             <div class="flex space-x-1">
               <a
-                href="/"
+                href="/orgs"
                 class="px-3 py-2 rounded text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700"
               >
-                Dashboard
+                Organizations
+              </a>
+              <a
+                href="/users"
+                class="px-3 py-2 rounded text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700"
+              >
+                Users
               </a>
               <a
                 href="/stores"

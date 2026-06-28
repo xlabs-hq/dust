@@ -48,17 +48,14 @@ defmodule DustWeb.WorkOSAuthController do
            WorkOS.UserManagement.list_users(%{email: email}),
          org_id when is_binary(org_id) <- get_sso_org_id(user) do
       # User belongs to an SSO-enforced org — redirect to SSO
-      case WorkOS.UserManagement.get_authorization_url(%{
-             organization_id: org_id,
-             redirect_uri: redirect_uri(conn),
-             client_id: WorkOS.client_id()
-           }) do
-        {:ok, url} ->
-          json(conn, %{mode: "sso", redirect_url: url})
+      {:ok, url} =
+        WorkOS.UserManagement.get_authorization_url(%{
+          organization_id: org_id,
+          redirect_uri: redirect_uri(conn),
+          client_id: WorkOS.client_id()
+        })
 
-        {:error, _} ->
-          json(conn, %{mode: "password"})
-      end
+      json(conn, %{mode: "sso", redirect_url: url})
     else
       _ ->
         # No user found or no SSO org — proceed with password
@@ -257,21 +254,14 @@ defmodule DustWeb.WorkOSAuthController do
     if dev_bypass?() do
       dev_login(conn)
     else
-      case WorkOS.UserManagement.get_authorization_url(%{
-             provider: "authkit",
-             redirect_uri: redirect_uri(conn),
-             client_id: WorkOS.client_id()
-           }) do
-        {:ok, authorization_url} ->
-          redirect(conn, external: authorization_url)
+      {:ok, authorization_url} =
+        WorkOS.UserManagement.get_authorization_url(%{
+          provider: "authkit",
+          redirect_uri: redirect_uri(conn),
+          client_id: WorkOS.client_id()
+        })
 
-        {:error, reason} ->
-          Logger.error("WorkOS authorization URL error: #{inspect(reason)}")
-
-          conn
-          |> put_flash(:error, "Authentication error. Please try again.")
-          |> redirect(to: ~p"/auth/login")
-      end
+      redirect(conn, external: authorization_url)
     end
   end
 

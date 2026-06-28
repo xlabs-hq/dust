@@ -57,7 +57,11 @@ defmodule AdminWeb.StoresLive do
           </tr>
         </thead>
         <tbody class="bg-white divide-y divide-gray-200">
-          <tr :for={store <- @stores} class="hover:bg-gray-50">
+          <tr
+            :for={store <- @stores}
+            class="hover:bg-gray-50 cursor-pointer"
+            phx-click={JS.navigate(~p"/stores/#{store.id}")}
+          >
             <td class="px-4 py-3 text-sm text-gray-600">{store.org_slug}</td>
             <td class="px-4 py-3 text-sm">
               <a href={~p"/stores/#{store.id}"} class="text-blue-600 hover:text-blue-800 font-medium">

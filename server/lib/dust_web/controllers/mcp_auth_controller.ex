@@ -255,14 +255,6 @@ defmodule DustWeb.MCPAuthController do
       {:error, reason}
       when reason in [:invalid_grant, :already_used, :pkce_mismatch, :client_mismatch] ->
         json_error(conn, :bad_request, "invalid_grant", to_string(reason))
-
-      {:error, _} ->
-        json_error(
-          conn,
-          :bad_request,
-          "invalid_grant",
-          "Authorization grant could not be exchanged"
-        )
     end
   end
 

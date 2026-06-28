@@ -20,6 +20,11 @@ config :dust, DustWeb.Endpoint,
   secret_key_base: "PNDr0la80Um5unpyydRTIXKvv2vQ/5HnJIiqGoa4ESvNo5PMClRLy7tyuMhudqKG",
   server: false
 
+config :dust, AdminWeb.Endpoint,
+  http: [ip: {127, 0, 0, 1}, port: 4003],
+  secret_key_base: "admin-test-secret-at-least-64-bytes-long-for-dust-admin-testing-only",
+  server: false
+
 # In test we don't send emails
 config :dust, Dust.Mailer, adapter: Swoosh.Adapters.Test
 

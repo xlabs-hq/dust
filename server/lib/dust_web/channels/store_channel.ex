@@ -1,6 +1,5 @@
 defmodule DustWeb.StoreChannel do
   use Phoenix.Channel
-  require Logger
 
   alias Dust.{Stores, Sync, Files}
   alias Dust.Sync.{Rollback, ValueCodec}
@@ -472,7 +471,7 @@ defmodule DustWeb.StoreChannel do
     else
       state = Rollback.compute_historical_state(store_id, last_seq)
 
-      (state || %{})
+      state
       |> Map.take(needs_seed)
       |> Enum.into(%{}, fn {path, wrapped} -> {path, ValueCodec.unwrap(wrapped)} end)
     end
